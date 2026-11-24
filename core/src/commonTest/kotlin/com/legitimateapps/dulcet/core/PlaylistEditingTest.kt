@@ -533,7 +533,7 @@ class PlaylistEditingTest {
 
 internal class PlaylistEnv(
     val server: FakePlaylistServer,
-    private val database: DulcetDatabaseStore,
+    internal val database: DulcetDatabaseStore,
     private val store: SeenCacheStore,
     private val scope: CoroutineScope,
     val clock: ManualWallClock,

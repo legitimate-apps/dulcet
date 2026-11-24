@@ -92,6 +92,146 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         print("OFFLINE-SETTINGS idiom=\(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone") automatic=off-relaunch-on clear=invoked")
     }
 
+    /// Downloads one playlist with Automatic Downloads off, browses Downloaded, then (in the
+    /// `offline` phase, run after the disposable server is stopped) reads the page status line,
+    /// Downloaded and Search with no server. Skipped unless `DULCET_PLAYLIST_DOWNLOAD_PROOF` names a phase.
+    @MainActor
+    func testPlaylistDownloadAndOfflineReading() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phase = environment["DULCET_PLAYLIST_DOWNLOAD_PROOF"] else {
+            throw XCTSkip("Requires the disposable playlist-download fixture")
+        }
+        let app = XCUIApplication()
+        if phase == "online" {
+            let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+            let host = URLComponents(string: url)?.host ?? ""
+            XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+            app.launchArguments += ["-dulcet-debug-connect-account",
+                "-dulcet-debug-account-server-url", url,
+                "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+                "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        }
+        launchInInteractionScope(app)
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
+        let status = app.descendants(matching: .any)["dulcet.playlist.downloadStatus"].firstMatch
+        if phase == "online" {
+            XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+            // Automatic Downloads off, so only the playlist the person downloads comes down.
+            XCTAssertTrue(openDestination("Connection", sidebar: "dulcet.sidebar.settings", in: app, compact: compact))
+            let storageLink = app.buttons["dulcet.account.downloadsStorage"].firstMatch
+            XCTAssertTrue(storageLink.waitForExistence(timeout: 10)); storageLink.tap()
+            let settingsForm = app.descendants(matching: .any)["dulcet.settings.downloadsStorage"].firstMatch
+            XCTAssertTrue(settingsForm.waitForExistence(timeout: 20))
+            let automatic = app.switches["dulcet.offline.automaticDownloads"].firstMatch
+            XCTAssertTrue(scrollIntoView(automatic, in: app, verticalMargin: 16, scrollContainer: settingsForm))
+            if automatic.value as? String == "1" { automatic.switches.firstMatch.tap() }
+            XCTAssertTrue(waitFor(timeout: 5) { automatic.value as? String == "0" })
+            step("pd-playlist-before", app) { self.openPlaylist("Road Trip", in: app, compact: compact) }
+            step("pd-menu", app) {
+                return self.openPlaylistMore(in: app) && self.menuAction("Download", in: app).waitForExistence(timeout: 8) && self.settle(app, seconds: 0.6)
+            }
+            _ = tapNativeMenuAction("Download", in: app)
+            step("pd-downloading", app) { status.waitForExistence(timeout: 10) }
+            step("pd-downloaded", app) {
+                self.waitFor(timeout: 90) { status.label.hasPrefix("Downloaded") } && self.settle(app)
+            }
+            print("DULCET PLAYLIST DOWNLOAD status=\(status.label)")
+            step("pd-menu-remove", app) {
+                return self.openPlaylistMore(in: app) && self.menuAction("Remove Download", in: app).waitForExistence(timeout: 8) && self.settle(app, seconds: 0.6)
+            }
+            dismissOverlay(in: app)
+            // A second playlist downloaded and then removed leaves Road Trip's songs alone.
+            step("pd-evening-downloaded", app) {
+                guard self.openPlaylist("Evening", in: app, compact: compact) else { return false }
+                guard self.openPlaylistMore(in: app), self.menuAction("Download", in: app).waitForExistence(timeout: 8) else { return false }
+                _ = self.tapNativeMenuAction("Download", in: app)
+                return self.waitFor(timeout: 90) { status.label.hasPrefix("Downloaded") } && self.settle(app)
+            }
+            step("pd-evening-removed", app) {
+                _ = self.settle(app, seconds: 1)
+                guard self.openPlaylistMore(in: app), self.menuAction("Remove Download", in: app).waitForExistence(timeout: 8) else { return false }
+                _ = self.tapNativeMenuAction("Remove Download", in: app)
+                return status.waitForNonExistence(timeout: 20) && self.settle(app)
+            }
+        } else {
+            step("pd-offline-library", app) {
+                self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact)
+                    && app.buttons["dulcet.library.downloaded"].firstMatch.waitForExistence(timeout: 30) && self.settle(app)
+            }
+            step("pd-offline-playlist", app) {
+                self.openPlaylist("Road Trip", in: app, compact: compact)
+                    && self.waitFor(timeout: 20) { status.label.hasPrefix("Downloaded") }
+                    && app.staticTexts["You\u{2019}re offline"].firstMatch.waitForExistence(timeout: 30) && self.settle(app)
+            }
+        }
+        let sections = app.segmentedControls["dulcet.downloaded.section"].firstMatch
+        step("pd-\(phase)-downloaded-albums", app) {
+            guard self.openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact) else { return false }
+            guard self.openSectionLink(app.buttons["dulcet.library.downloaded"].firstMatch, in: app) else { return false }
+            return sections.waitForExistence(timeout: 15) && self.settle(app, seconds: 2)
+        }
+        for name in ["Artists", "Playlists", "Songs"] {
+            step("pd-\(phase)-downloaded-\(name.lowercased())", app) {
+                let segment = sections.buttons[name].firstMatch
+                guard segment.waitForExistence(timeout: 5) else { return false }
+                segment.tap()
+                return self.settle(app, seconds: 2)
+            }
+        }
+        sections.buttons["Albums"].firstMatch.tap()
+        if phase != "online" {
+            for query in ["Conformance", "Double"] {
+                step("pd-offline-search-\(query.lowercased())", app) {
+                    guard self.openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else { return false }
+                    let field = dulcetSearchField(in: app)
+                    guard field.waitForExistence(timeout: 10) else { return false }
+                    field.tap()
+                    if let current = field.value as? String, !current.isEmpty, current != "Search" {
+                        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+                    }
+                    field.typeText(query)
+                    self.dismissKeyboard(in: app)
+                    return app.buttons["dulcet.search.result.0"].firstMatch.waitForExistence(timeout: 20) && self.settle(app)
+                }
+                let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "dulcet.search.result."))
+                for row in rows.allElementsBoundByIndex {
+                    print("DULCET OFFLINE SEARCH query=\(query) label=\(row.label) value=\(String(describing: row.value))")
+                }
+            }
+        }
+    }
+
+    /// A native menu's actions carry their labels, not their identifiers.
+    private func menuAction(_ label: String, in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
+    @MainActor
+    private func openPlaylistMore(in app: XCUIApplication) -> Bool {
+        let more = app.buttons["dulcet.playlist.more"].firstMatch
+        guard more.waitForExistence(timeout: 10) else { return false }
+        let play = app.buttons.matching(NSPredicate(format: "label == 'Play Next'")).firstMatch
+        for _ in 0..<3 {
+            _ = settle(app, seconds: 1.5)
+            more.tap()
+            if play.waitForExistence(timeout: 5) { return true }
+        }
+        return false
+    }
+
+    @MainActor
+    private func openPlaylist(_ name: String, in app: XCUIApplication, compact: Bool) -> Bool {
+        guard openPlaylists(in: app, compact: compact) else { return false }
+        let row = app.buttons.matching(identifier: "dulcet.library.playlist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", name)).firstMatch
+        guard row.waitForExistence(timeout: 30), scrollIntoView(row, in: app) else { return false }
+        row.tap()
+        return app.staticTexts["dulcet.playlist.title"].firstMatch.waitForExistence(timeout: 15)
+            && app.buttons["dulcet.reader.track"].firstMatch.waitForExistence(timeout: 20)
+            && settle(app)
+    }
+
     @MainActor
     func testListenNowLaunchAlbumAndRelaunch() throws {
         continueAfterFailure = false
@@ -134,6 +274,84 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
         XCTAssertTrue(home.waitForExistence(timeout: 10))
         try provePlaylistContextIfAdvertised(in: app, compact: compact, environment: environment)
+    }
+
+    /// A search result opens inside the Search tab, as in the platform's own Music app: the tab
+    /// bar stays on Search, Back returns to the same results with the same query, and the page
+    /// and the query are both still there after another tab and back.
+    @MainActor
+    func testSearchResultOpensInsideSearch() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_SEARCH_STACK_PROOF"] == "1" else { throw XCTSkip("Requires a disposable fixture") }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        let query = environment["DULCET_SEARCH_STACK_QUERY"] ?? "Alpha"
+        XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))
+        let field = dulcetSearchField(in: app)
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText(query)
+        dismissKeyboard(in: app)
+        let firstResult = app.buttons["dulcet.search.result.0"].firstMatch
+        XCTAssertTrue(firstResult.waitForExistence(timeout: 20), app.debugDescription)
+        _ = settle(app)
+        print("DULCET SEARCH STACK result0=\(firstResult.label)")
+        firstResult.tap()
+
+        let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
+        let albumTitle = app.staticTexts["dulcet.album.title"].firstMatch
+        XCTAssertTrue(waitFor(timeout: 20) { artistTitle.exists || albumTitle.exists }, app.debugDescription)
+        _ = settle(app)
+        let searchTab = app.tabBars.buttons["Search"].firstMatch
+        let libraryTab = app.tabBars.buttons["Library"].firstMatch
+        let back = app.navigationBars.buttons.element(boundBy: 0)
+        print("DULCET SEARCH STACK page searchSelected=\(searchTab.isSelected) librarySelected=\(libraryTab.isSelected) back=\(back.exists ? back.label : "none")")
+        XCTAssertTrue(searchTab.isSelected, "the result opens inside Search")
+        XCTAssertFalse(libraryTab.isSelected, "the tab bar does not jump to Library")
+        shoot("search-stack-page", app)
+
+        XCTAssertTrue(openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact))
+        XCTAssertTrue(openSearchTab(in: app))
+        XCTAssertTrue(waitFor(timeout: 10) { artistTitle.exists || albumTitle.exists },
+                      "the page opened from Search is still there after another tab")
+
+        XCTAssertTrue(back.waitForExistence(timeout: 5) && back.isHittable, app.debugDescription)
+        back.tap()
+        XCTAssertTrue(firstResult.waitForExistence(timeout: 10), "Back returns to the results")
+        XCTAssertTrue(waitFor(timeout: 5) { (dulcetSearchField(in: app).value as? String) == query },
+                      "the field still shows \(query): \(String(describing: dulcetSearchField(in: app).value))")
+        _ = settle(app)
+        shoot("search-stack-back", app)
+
+        XCTAssertTrue(openDestination("Library", sidebar: "dulcet.sidebar.library", in: app, compact: compact))
+        XCTAssertTrue(openSearchTab(in: app))
+        XCTAssertTrue(firstResult.waitForExistence(timeout: 10), "the results survive another tab")
+        XCTAssertTrue(waitFor(timeout: 5) { (dulcetSearchField(in: app).value as? String) == query },
+                      "the query survives another tab: \(String(describing: dulcetSearchField(in: app).value))")
+        _ = settle(app)
+        shoot("search-stack-return", app)
+    }
+
+    /// Chooses the Search tab even while a page covers its field.
+    @MainActor
+    private func openSearchTab(in app: XCUIApplication) -> Bool {
+        let tab = [app.tabBars.buttons["Search"].firstMatch,
+                   app.descendants(matching: .any)["dulcet.tab.search"].firstMatch]
+        guard waitFor(timeout: 10, { tab.contains { $0.exists && $0.isHittable } }),
+              let button = tab.first(where: { $0.exists && $0.isHittable }) else { return false }
+        button.tap()
+        return settle(app)
     }
 
     /// The ordinary-server Home proof remains unchanged. On the advertised disposable server,

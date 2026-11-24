@@ -240,7 +240,8 @@ class ReaderSessionReviewTest {
 
     /**
      * §16.14: rows carry playability, and offline rows that cannot play are dimmed and badged. A
-     * search's track rows carry it by the windows' rule; album rows carry none.
+     * search's track rows carry it by the windows' rule; offline, an album says whether one of its
+     * songs is on this device, and online it carries none.
      */
     @Test
     fun searchTrackRowsCarryPlayabilityOnlineAndOffline() = sessionTest { env ->
@@ -274,9 +275,17 @@ class ReaderSessionReviewTest {
             "offline, a track that is not downloaded cannot play",
         )
 
-        search.updateQuery("Album 0001")
-        assertTrue(pubs.last.rows.any { it.item.type == SearchResultType.Album }, "fixture: album rows")
-        assertTrue(pubs.last.rows.filter { it.item.type != SearchResultType.Track }.all { it.playability == null }, "only tracks carry playability")
+        search.updateQuery("Album 000")
+        val albums = pubs.last.rows.filter { it.item.type == SearchResultType.Album }.associate { it.item.id.rawId to it.playability }
+        assertEquals(LibraryPlayability.Downloaded, albums["album-0001"], "an album with a song on this device plays")
+        assertTrue(albums.size > 1, "fixture: other albums match too: $albums")
+        assertTrue(albums.filterKeys { it != "album-0001" }.values.all { it == LibraryPlayability.UnavailableOffline },
+            "offline, an album with nothing on this device is not offered as playable: $albums")
+
+        session.setOnline(true)
+        advanceUntilIdle()
+        assertTrue(pubs.last.rows.filter { it.item.type != SearchResultType.Track }.all { it.playability == null },
+            "online, only tracks carry playability")
     }
 
     @Test

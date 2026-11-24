@@ -3376,6 +3376,15 @@ extension DulcetAccountDataSource: DulcetOfflineLibraryControlling {
     }
 }
 
+extension DulcetAccountDataSource: DulcetPlaylistDownloading {
+    public func playlistDownload(_ playlistRawID: String) -> DulcetPlaylistDownload? {
+        (downloadController as? any DulcetPlaylistDownloading)?.playlistDownload(playlistRawID)
+    }
+    public func setPlaylistDownload(_ playlistRawID: String, wanted: Bool) {
+        (downloadController as? any DulcetPlaylistDownloading)?.setPlaylistDownload(playlistRawID, wanted: wanted)
+        downloadStateChangeHandler?()
+    }
+}
 
 /// Display-only route metadata; saved-account ownership is never replaced by these addresses.
 public struct DulcetConnectionRow: Identifiable, Sendable {

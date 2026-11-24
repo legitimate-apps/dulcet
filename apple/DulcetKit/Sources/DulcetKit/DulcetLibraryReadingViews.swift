@@ -38,7 +38,7 @@ struct DulcetReaderScreen<Content: View>: View {
         dulcetFocusReachable(content(model))
             .safeAreaInset(edge: .top, spacing: 0) {
                 if showsDestinationStatus {
-                    DulcetReaderStatusView(window: model.window, localCollection: model.query == .downloaded)
+                    DulcetReaderStatusView(window: model.window, localCollection: model.query.isDownloaded)
 #if os(tvOS)
                         .focusSection()
 #endif
@@ -121,11 +121,9 @@ struct DulcetReaderStatusView: View {
     }
 
     private func lines(_ window: DulcetLibraryWindow) -> [String] {
-#if os(macOS)
-        // Downloaded is the local files collection. Server-library age/change warnings
-        // describe a different catalogue; its subtitle and the shell convey offline use.
+        // Downloaded is what is on this device: the server library's freshness says nothing
+        // about it, and the account banner already says when the device is offline.
         if localCollection { return [] }
-#endif
         if accountMessageShown { return [] }
         let freshness = DulcetReaderCopy.visibleFreshnessLine(window.freshness)
         let coverage: String? = switch window.coverage {
@@ -136,10 +134,7 @@ struct DulcetReaderStatusView: View {
     }
 
     private func offersRetry(_ window: DulcetLibraryWindow) -> Bool {
-#if os(macOS)
         if localCollection { return false }
-#endif
-        if localCollection, case .cached(.offline, _) = window.freshness { return false }
         guard !accountMessageShown,
               window.freshness.offersRetry else { return false }
         // Offline with the network down there is nothing to retry until it returns.
@@ -1332,6 +1327,7 @@ struct DulcetReaderItemMenuItems: View {
             Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
                 .accessibilityIdentifier("dulcet.album.download")
         }
+        DulcetPlaylistDownloadMenuItem(item: item)
         if item.kind == .album, let artistID = item.artistID {
             Button(DulcetStrings.goToArtist, systemImage: "music.mic") { store.showReaderPage(.artist(artistID)) }
         }
@@ -1369,6 +1365,7 @@ struct DulcetReaderItemMenuItems: View {
                 Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
                     .accessibilityIdentifier("dulcet.album.download")
             }
+            DulcetPlaylistDownloadMenuItem(item: item)
         }
         Section {
             if item.kind == .album, let artistID = item.artistID {
@@ -2011,7 +2008,7 @@ struct DulcetReaderRouteView: View {
         case let .discover(destination): DulcetDiscoverReaderDestinationView(destination: destination)
 #endif
         case .songs: DulcetLibrarySongsPage(downloaded: false)
-        case .downloaded: DulcetLibrarySongsPage(downloaded: true)
+        case .downloaded: DulcetDownloadedPage()
         case let .listenNowShelf(shelf): DulcetListenNowShelfPage(shelf: shelf)
         case let .section(section): DulcetReaderSectionView(section: section)
         case let .album(id): DulcetReaderTrackListPage(query: .album(rawID: id.rawID), kind: .album, id: id)

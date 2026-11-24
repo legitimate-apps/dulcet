@@ -37,6 +37,42 @@ public protocol DulcetOfflineLibraryControlling: AnyObject {
     func clearStreamingCache()
 }
 
+/// One playlist's download as its page shows it (spec §14.5.2).
+public struct DulcetPlaylistDownload: Sendable, Equatable {
+    /// The playlist's songs are kept on this device: by its own Download or by Automatic Downloads.
+    public var wanted: Bool
+    /// Kept only because Automatic Downloads is on.
+    public var automatic: Bool
+    public var songCount: Int
+    public var downloadedCount: Int
+    public var pendingCount: Int
+    /// False while this device has not read the playlist's songs yet.
+    public var songsKnown: Bool
+
+    public init(wanted: Bool, automatic: Bool = false, songCount: Int = 0, downloadedCount: Int = 0,
+                pendingCount: Int = 0, songsKnown: Bool = true) {
+        self.wanted = wanted
+        self.automatic = automatic
+        self.songCount = songCount
+        self.downloadedCount = downloadedCount
+        self.pendingCount = pendingCount
+        self.songsKnown = songsKnown
+    }
+
+    /// Every song the device knows is here.
+    public var isComplete: Bool { wanted && songsKnown && songCount > 0 && downloadedCount >= songCount }
+    /// Songs are still on their way.
+    public var isDownloading: Bool { wanted && !isComplete && (pendingCount > 0 || !songsKnown) }
+}
+
+@MainActor
+public protocol DulcetPlaylistDownloading: AnyObject {
+    /// Nil where this device keeps no downloads or cannot read them now.
+    func playlistDownload(_ playlistRawID: String) -> DulcetPlaylistDownload?
+    /// Download the playlist, or remove its download. Songs downloaded on their own stay.
+    func setPlaylistDownload(_ playlistRawID: String, wanted: Bool)
+}
+
 /// Observes the already validated engine response. It neither creates a request nor changes the
 /// result, range, completion timing, or cancellation delivered to the player.
 public final class DulcetCachingPlaybackResource: DulcetProgressivePlaybackResourceLoading, @unchecked Sendable {

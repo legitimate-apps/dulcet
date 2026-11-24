@@ -1766,6 +1766,8 @@ internal class PlaylistEditor(
         val settled = database.transactionWithResult {
             val latest = outbox.find(sent.playlistId, PlaylistRowKind.Create) as PendingPlaylistRow.Create? ?: sent
             outbox.remove(sent.playlistId, PlaylistRowKind.Create)
+            // A download chosen while the create was pending follows the playlist to its server id.
+            carryPlaylistDownloadIntent(database, cache.serverId, sent.playlistId, id, kept = !latest.cancelled)
             if (latest.cancelled && inferred) return@transactionWithResult false
             outbox.all().filterIsInstance<PendingPlaylistRow.Create>().forEach { other ->
                 val seen = other.seenBeforeSend

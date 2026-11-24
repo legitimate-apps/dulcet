@@ -132,7 +132,9 @@ saved collection scope. The UI explains the server-random limit.
 
 ## Artist depth
 
-Top Songs requests `getTopSongs` using the artist name. If the server does not answer
+Top Songs requests `getTopSongs` using the artist name. Dulcet Server answers with the artist's
+songs ranked by the caller's own listening and, for songs nobody has played, spread across the artist's
+records rather than alphabetically (`TopSongsRankingTest`). If the server does not answer
 with songs, the fallback ranks known tracks for that artist using the account's plays
 and favorites. It is limited to metadata seen on the device, not a global popularity list.
 

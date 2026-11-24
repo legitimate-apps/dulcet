@@ -3169,6 +3169,36 @@ from the matching current remote attempt restores playback reachability. URL con
 progress, and stale or preloaded events are insufficient. If a local row outlives its file, validation
 still runs before playback, and its remote fallback remains subject to the same OS/contact gates.
 
+### 14.5.2 Playlist downloads and browsing Downloaded
+
+A playlist has its own Download, whatever the Automatic Downloads setting. Its intent is one row per
+account and playlist in `library_depth_entry` (category `download.playlist`, value `1` downloaded or
+`0` removed), removed with the account's data, kept through a seen-cache reset or namespace purge,
+and never exported as a user preference. A playlist created on this device keeps its intent under
+the local id until the create settles, when the intent moves to the server's id. The intent follows
+the playlist as this device last read it, not a snapshot taken at the tap: every projection
+(§14.5.1) uses the cached songs plus pending local edits, so a song added on this device downloads
+at the next reconcile without another tap and a song removed is released. Songs another client adds
+on the server download only after something re-reads that playlist (opening it, or an edit's
+read-back); detail hydration fills only playlists whose songs are unknown and does not re-read one
+already cached. Downloaded playlists are projected even with Automatic Downloads
+off; with it on, every account playlist is projected except one whose download the person removed
+(`0`). Ownership is the automatic reason (§14.5.1): Remove Download, or turning Automatic Downloads
+off, releases only songs no other playlist, My Library member or explicit download still holds.
+Unknown playlist membership never releases a downloaded playlist's songs. A playlist page shows
+progress from the core's count of the playlist's songs, those whose retained file is here (a
+streamed copy never counts) and those still queued or running.
+
+**OBSERVED** (2026-11-24, unit tests `PlaylistDownloadTest`, `PlaylistDownloadSettleTest`): a
+playlist the person adds a song to on this device queues that song at the next projection; removing
+a downloaded playlist keeps a song downloaded on its own; a download chosen before a create synced
+holds the songs under the server's id; a namespace purge keeps every choice.
+
+Downloaded is browsed by album, artist, playlist and song, as Music's Downloaded is. Albums and
+artists are derived from the downloaded songs (an album with none on the device is not listed;
+an artist is the album artist, else the song's artist); playlists are those whose download is wanted
+and that have at least one downloaded song. Shuffle All plays every downloaded song.
+
 ### 14.6 Storage budget and eviction priority
 
 One disk budget per account, user-configurable, with a strict priority order:
@@ -4514,7 +4544,7 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | freshness | meaning | presented as |
 |---|---|---|
 | `live` | read from the server in this session under the current epoch | nothing extra |
-| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line, the reason first: "Couldn't reach your server. Last updated 3 days ago", with no age under a minute (Android; Apple's words are still "Showing what you last saw 3 days ago — you're offline"), or with no `asOf`, "Couldn't reach your server. Showing what this device had saved, age unknown" |
+| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line, the reason first: "Couldn't reach your server. Last updated 3 days ago", with no age under a minute (Android), or with no `asOf`, "Couldn't reach your server. Showing what this device had saved, age unknown". Apple shows a line only where it helps the listener: "You're offline", or "Couldn't refresh · <reason>" with Try Again after a failed read; `revalidating`, `stale` and `owed` show nothing, the age stays in the accessibility value, and Downloaded never shows one (§28, 2026-11-24) |
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
 | `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
@@ -4547,7 +4577,7 @@ or "sync".
 | downloads | always complete: pinned metadata and artwork |
 | the queue | always resolvable for display: every entry's metadata is pinned |
 | a home screen | each row its own cached page with its own label (§16.9) |
-| search | local search over the seen-cache, scope-labelled (§16.15) |
+| search | local search over the seen-cache, scope-labelled (§16.15); offline, each album and artist row carries playability too: `downloaded` when one of its songs is on this device, otherwise `unavailable offline`, dimmed and badged like a track (§28, 2026-11-24) |
 | mutations | favourites, ratings and playlist edits apply instantly and queue in the outbox (§16.20, §18.6); a queued playlist edit that meets a list changed elsewhere is refused on reconnect, with words, never written over it |
 
 **No spinner before a cached paint — online included.** When an open has anything cached, the first
@@ -4758,7 +4788,7 @@ than a committed generation. What changes is that **the result carries an honest
 |---|---|---|
 | `serverAndDevice` | the server search completed and local rows were merged | none needed, or "Your server" |
 | `deviceWhileServerPending` | fewer than two characters, or the server request is in flight | "On this device" until replaced |
-| `deviceOffline` | the server is unreachable | "Searching what's available offline — 1,204 albums and 9,870 tracks on this device" |
+| `deviceOffline` | the server is unreachable | Android: "Searching what's available offline — 1,204 albums and 9,870 tracks on this device". Apple: "You're offline · downloaded music plays now", because most of what is searched is only remembered, not downloaded; each row says whether it plays (§28, 2026-11-24) |
 | `deviceServerFailed(kind)` | the server search failed | the device label plus the §18.12 kind |
 
 The counts in the offline label are the seen-cache's own, so the person can tell "no match" from "no
@@ -8038,6 +8068,33 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-24 — Playlist downloads, browsable Downloaded, plain status lines (§14.5.2, §16.14).**
+A playlist can be downloaded and its download removed from its menu, with or without Automatic
+Downloads; the download follows the playlist as this device last read it rather than freezing a
+snapshot, because a playlist is a living list and a listener who downloads it means "keep this
+playlist with me". Additions on this device download at the next reconcile; additions made on the
+server download only once something re-reads that playlist, because hydration does not re-read a
+playlist already cached. The choice survives a cache reset, and a playlist created offline carries
+it to its server id when the create syncs. Turning Automatic Downloads off keeps downloaded playlists. Removing the download
+of a playlist that Automatic Downloads holds keeps it off this device while the setting stays on.
+Downloaded is browsed by album, artist, playlist and song. Apple's page status line now shows only
+"You're offline" or a failed refresh; the age and the "library has changed" reason are no longer
+drawn. Offline search marks albums and artists with nothing on this device "Not available offline"
+instead of listing them as on this device, and Apple's offline search line no longer counts the
+remembered albums and songs as "on this device".
+
+**2026-11-24 — Dulcet Server `getTopSongs` ranks by listening, then spreads across records (§29).**
+The server ordered an artist's songs by the caller's play count and then by title, so an artist the
+caller had not played came back A to Z, and the artist page's Play followed that list. It now orders
+by the caller's own listening (plays, stars, 4-5 star ratings; never another account's, since in a
+household any aggregate of others' listening would reveal it), then goes round the artist's records
+one song at a time, newest record first, each in track order. One entry per title, records the artist
+does not own after their own, clips under 75 seconds after the full songs, and songs the caller rated
+one or two stars last. The response shape is unchanged, so other OpenSubsonic clients are unaffected.
+**OBSERVED**: `TopSongsRankingTest` fails on the old ordering and passes on the new one. **ASSUMED**:
+that this matches what a listener expects on their own library; an external popularity source was
+not added (new server network traffic, a public-repo decision).
 
 **2026-11-20 — Android phone playback layout (§12.12, §18.4).** Lyrics, the sleep status and Up Next
 share the transport columns in Now Playing. Starting a timer preserves the layout. Lyrics stays

@@ -2715,6 +2715,89 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
               + " menu-left-open-after=\(result.menuLeftOpen)")
     }
 
+    /// A skip names the next track the instant it is asked for, as the queue already knows it,
+    /// and the bar never says "Loading…" between the two (OBSERVED on an iPhone before this fix: a
+    /// spinner, a blank cover and "Loading…", then "Buffering…", for at least three screenshot
+    /// frames). Then the bar's horizontal swipe skips both ways without opening the player, a tap
+    /// still opens it, and an Up Next row swiped away leaves the queue. Every frame of the skip's
+    /// burst is kept in the result bundle for a person to judge.
+    @MainActor
+    func testASkipNamesTheNextTrackAtOnceAndTheBarSwipesOnIPhone() {
+        let order = ["Twenty Nine Seconds", "Thirty One Seconds", "UI Playback Canary"]
+        guard requireSimulator(.phone, "The mini player skip and swipe proof on iPhone"),
+              let configuration = livePlaybackConfiguration(),
+              let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration,
+                                        compact: true, extraArguments: ["-dulcet-debug-ui-markers"]),
+              openLibraryAlbum("Threshold Boundary", in: app, compact: true) else { return }
+        let firstRow = app.buttons.matching(identifier: "dulcet.reader.track")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", order[0] + ", ")).firstMatch
+        guard firstRow.waitForExistence(timeout: 15), scrollIntoView(firstRow, in: app) else {
+            XCTFail("Threshold Boundary must list \(order[0]): " + app.debugDescription)
+            return
+        }
+        firstRow.tap()
+        guard waitForMiniPlayer(track: order[0], playing: true, in: app, timeout: 20) else {
+            XCTFail("The album's first track must start before it is skipped: " + app.debugDescription)
+            return
+        }
+        let bar = app.buttons.matching(identifier: "dulcet.mini-player.open").element(boundBy: 0)
+        let next = app.buttons["dulcet.mini-player.next"].firstMatch
+
+        // The burst: frames as fast as the host gives them, the bar's label read after each.
+        var labels: [String] = []
+        withoutIdleWaits(app) {
+            next.tap()
+            for frame in 0..<6 {
+                self.attachScreenshot(named: "skip-burst-\(frame)", app: app)
+                labels.append(bar.exists ? bar.label : "<no bar>")
+            }
+        }
+        print("DULCET SKIP BURST labels=\(labels)")
+        XCTAssertTrue(labels.first?.contains(order[1]) == true,
+                      "The first frame after Next must name the queue's next track; frames=\(labels)")
+        XCTAssertFalse(labels.contains { $0.contains("Loading") || $0 == "<no bar>" },
+                       "No frame of a skip may fall back to Loading…; frames=\(labels)")
+
+        let nowPlayingTitle = app.staticTexts["dulcet.now-playing.title"].firstMatch
+        let markersBefore = proofMarkers(in: app)
+        bar.swipeLeft()
+        XCTAssertTrue(waitForLabelContaining(order[2], of: bar, timeout: 5),
+                      "A left swipe on the bar must skip to the next track; label=\(bar.label)")
+        XCTAssertFalse(nowPlayingTitle.exists, "A horizontal swipe must not open the player")
+        bar.swipeRight()
+        XCTAssertTrue(waitForLabelContaining(order[1], of: bar, timeout: 5),
+                      "A right swipe on the bar must go back a track; label=\(bar.label)")
+        XCTAssertFalse(nowPlayingTitle.exists, "A horizontal swipe must not open the player")
+        let swiped = proofMarkers(in: app).dropFirst(markersBefore.count)
+            .filter { $0.hasPrefix("mini-player-swipe:") || $0.hasPrefix("haptic:") }
+        XCTAssertEqual(Array(swiped), ["mini-player-swipe:next", "haptic:swipeSkip",
+                                       "mini-player-swipe:previous", "haptic:swipeSkip"],
+                       "Each swipe must skip through the swipe handler, felt once")
+
+        // A tap still opens the player, and Up Next's row for the last track swipes away.
+        guard openNowPlayingFromBar(in: app, expectingTitle: order[1]) else { return }
+        let toggle = app.buttons["dulcet.now-playing.up-next"].firstMatch
+        guard toggle.waitForExistence(timeout: 10) else {
+            XCTFail("The player must offer Up Next: " + app.debugDescription)
+            return
+        }
+        toggle.tap()
+        let row = app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@ AND label BEGINSWITH %@", "dulcet.upNext.row.", order[2]
+        )).firstMatch
+        guard row.waitForExistence(timeout: 10) else {
+            XCTFail("Up Next must list \(order[2]): " + app.debugDescription)
+            return
+        }
+        row.swipeLeft()
+        let delete = app.buttons["Delete"].firstMatch
+        if delete.waitForExistence(timeout: 3) { delete.tap() }
+        attachScreenshot(named: "up-next-row-swiped-away", app: app)
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5),
+                      "A row swiped away must leave Up Next: " + app.debugDescription)
+        XCTAssertTrue(proofMarkers(in: app).contains("haptic:remove"), "A removal must be felt")
+    }
+
     /// An album in the search results, dragged out of its open context menu onto the bar, adds
     /// the whole album to the end of Up Next in album order. The row had no drag source: only a
     /// track result lifted a card that could be added.

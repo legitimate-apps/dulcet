@@ -93,11 +93,14 @@ public struct DulcetUpNextSection: View {
         }
         .onMove { source, destination in
             if let intent = model.moveIntent(fromOffsets: source, toOffset: destination) {
+                DulcetHaptic.reorder.play()
                 onEdit(intent)
             }
         }
         .onDelete { offsets in
-            model.removeIntents(atOffsets: offsets).forEach(onEdit)
+            let removals = model.removeIntents(atOffsets: offsets)
+            if !removals.isEmpty { DulcetHaptic.remove.play() }
+            removals.forEach(onEdit)
         }
         .deleteDisabled(dynamicTypeSize.isAccessibilitySize)
         .moveDisabled(dynamicTypeSize.isAccessibilitySize)
@@ -116,7 +119,7 @@ public struct DulcetUpNextSection: View {
             menuActions: { rowActions(entry, offset: offset) },
             editingActions: {
                 HStack(spacing: DulcetSpacing.sm) {
-                    Button(role: .destructive) { onEdit(.remove(entry.id)) } label: {
+                    Button(role: .destructive) { DulcetHaptic.remove.play(); onEdit(.remove(entry.id)) } label: {
                         Label(DulcetQueueStrings.remove, systemImage: "minus.circle.fill")
                             .dulcetForeground(.dangerIconOnTint)
                     }
@@ -164,7 +167,7 @@ public struct DulcetUpNextSection: View {
                 Button(DulcetQueueStrings.moveDown) { onEdit(intent) }
             }
             #if !os(iOS)
-            Button(DulcetQueueStrings.remove) { onEdit(.remove(entry.id)) }
+            Button(DulcetQueueStrings.remove) { DulcetHaptic.remove.play(); onEdit(.remove(entry.id)) }
             #endif
         }
         .contextMenu { rowActions(entry, offset: offset) }
@@ -202,7 +205,7 @@ public struct DulcetUpNextSection: View {
                ) {
                 Button(DulcetQueueStrings.moveDown) { onEdit(intent) }
             }
-            Button(DulcetQueueStrings.remove, role: .destructive) { onEdit(.remove(entry.id)) }
+            Button(DulcetQueueStrings.remove, role: .destructive) { DulcetHaptic.remove.play(); onEdit(.remove(entry.id)) }
     }
 }
 
@@ -392,7 +395,9 @@ struct DulcetAutoplaySection: View {
             row(entry, offset: offset)
         }
         .onDelete { offsets in
-            model.removeAutoplayIntents(atOffsets: offsets).forEach(onEdit)
+            let removals = model.removeAutoplayIntents(atOffsets: offsets)
+            if !removals.isEmpty { DulcetHaptic.remove.play() }
+            removals.forEach(onEdit)
         }
         #endif
     }
@@ -409,13 +414,13 @@ struct DulcetAutoplaySection: View {
             moreIdentifier: "dulcet.upNext.autoplay.more.\(offset)",
             onActivate: { onEdit(model.jumpIntent(to: entry)) },
             menuActions: {
-                Button(DulcetQueueStrings.remove, role: .destructive) { onEdit(.remove(entry.id)) }
+                Button(DulcetQueueStrings.remove, role: .destructive) { DulcetHaptic.remove.play(); onEdit(.remove(entry.id)) }
             },
             editingActions: { EmptyView() }
         )
         .accessibilityActions {
             #if !os(iOS)
-            Button(DulcetQueueStrings.remove) { onEdit(.remove(entry.id)) }
+            Button(DulcetQueueStrings.remove) { DulcetHaptic.remove.play(); onEdit(.remove(entry.id)) }
             #endif
         }
     }

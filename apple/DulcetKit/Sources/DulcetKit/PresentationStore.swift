@@ -243,7 +243,28 @@ public final class DulcetPresentationStore {
         if selectedDestination == .browse { selectDestination(.library) }
     }
     public var myLibraryAvailable: Bool { librarySession?.myLibrary.availability == .available }
-    public var isReaderDestination: Bool { selectedDestination == .listenNow || selectedDestination == .library || selectedDestination == .browse }
+    /// Whether Search keeps its own stack of reader pages, as a phone's tab does: a result opens
+    /// inside Search, Back returns to the same results, and the pages stay when the person goes
+    /// to another tab and comes back. Set by the shell that gives each tab its own stack (the
+    /// iPhone and iPad tab bar). Where one detail column follows the selection -- the Mac's
+    /// split view, an iOS 17 iPad's, Apple TV's section bar -- it stays off and a result opens in
+    /// Library, whose stack that column already shows.
+    public var searchKeepsPages = false {
+        didSet {
+            guard searchKeepsPages != oldValue, !searchKeepsPages else { return }
+            savedReaderPaths[.search] = nil
+            if selectedDestination == .search { readerPath = [] }
+        }
+    }
+    /// Whether `destination` keeps a stack of reader pages in the store.
+    func keepsReaderPages(_ destination: DulcetSidebarDestination) -> Bool {
+        switch destination {
+        case .listenNow, .library, .browse: true
+        case .search: searchKeepsPages
+        default: false
+        }
+    }
+    public var isReaderDestination: Bool { keepsReaderPages(selectedDestination) }
     public func destinations(_ base: [DulcetSidebarDestination]) -> [DulcetSidebarDestination] {
         var result: [DulcetSidebarDestination] = []
         for destination in base {
@@ -279,7 +300,7 @@ public final class DulcetPresentationStore {
 
     /// Hidden tabs keep their own path, so switching away does not pop their destination views.
     func readerPath(for destination: DulcetSidebarDestination) -> [DulcetReaderRoute] {
-        guard destination == .listenNow || destination == .library || destination == .browse else { return [] }
+        guard keepsReaderPages(destination) else { return [] }
         return selectedDestination == destination ? readerPath : savedReaderPaths[destination] ?? []
     }
     /// The library section at the root of the reader's stack: the sidebar's and the TV bar's
@@ -327,6 +348,16 @@ public final class DulcetPresentationStore {
         NSLog("Dulcet offline setting input=\(enabled) controller=\(source is any DulcetOfflineLibraryControlling)")
         #endif
         (source as? any DulcetOfflineLibraryControlling)?.setAutomaticDownloadsEnabled(enabled)
+    }
+    /// One playlist's download; nil where this device keeps no downloads (spec §14.5.2).
+    public func playlistDownload(for playlistID: DulcetProviderItemID) -> DulcetPlaylistDownload? {
+        _ = downloadStateRevision
+        guard downloadsEnabled else { return nil }
+        return (source as? any DulcetPlaylistDownloading)?.playlistDownload(playlistID.rawID)
+    }
+    public var offersPlaylistDownloads: Bool { downloadsEnabled && source is any DulcetPlaylistDownloading }
+    public func setPlaylistDownload(_ playlistID: DulcetProviderItemID, wanted: Bool) {
+        (source as? any DulcetPlaylistDownloading)?.setPlaylistDownload(playlistID.rawID, wanted: wanted)
     }
     public func setStreamingCacheBudgetBytes(_ bytes: Int64) {
         (source as? any DulcetOfflineLibraryControlling)?.setStreamingCacheBudgetBytes(bytes)
@@ -418,7 +449,7 @@ public final class DulcetPresentationStore {
             return
         }
         if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
-        if destination == .listenNow || destination == .library || destination == .browse {
+        if keepsReaderPages(destination) {
             readerPath = savedReaderPaths[destination] ?? []
         }
         requestedBrowse = destination == .browse
@@ -444,7 +475,7 @@ public final class DulcetPresentationStore {
             selectDestination(destination)
             return
         }
-        if (destination == .listenNow || destination == .library || destination == .browse), readerOwnsLibrary {
+        if keepsReaderPages(destination), readerOwnsLibrary {
             // The reader's pages are the store's own; the source is told only the destination.
             if selectedDestination == destination {
                 readerPath = []
@@ -674,8 +705,10 @@ public final class DulcetPresentationStore {
         return session.mode != .none
     }
 
-    /// Opens a page from anywhere: from Library it is pushed; from elsewhere -- a search result,
-    /// the player -- Library comes forward showing it on top of the section it was left on.
+    /// Opens a page from anywhere: from a destination with its own stack -- Library, and Search
+    /// where it keeps pages -- it is pushed there; from elsewhere -- the player, Discover, a
+    /// search result where Search keeps none -- Library comes forward showing it on top of the
+    /// section it was left on.
     public func showReaderPage(_ route: DulcetReaderRoute) {
         let previousWriter = navigationWriter
         navigationWriter = "showReaderPage"
@@ -697,7 +730,7 @@ public final class DulcetPresentationStore {
         }
     }
 
-    /// Pushes a page on top of the Library stack.
+    /// Pushes a page on top of the showing destination's stack.
     public func pushReaderPage(_ route: DulcetReaderRoute) {
         let previousWriter = navigationWriter
         navigationWriter = "pushReaderPage"
@@ -773,7 +806,8 @@ public final class DulcetPresentationStore {
         readerArrival = nil
     }
 
-    /// Whether Back has a library page to leave: the Library is showing and a page is pushed.
+    /// Whether Back has a page to leave: a destination with its own stack is showing and a page
+    /// is pushed on it.
     public var canGoBackInLibrary: Bool {
         isReaderDestination && readerOwnsLibrary && !readerPath.isEmpty
     }
@@ -850,6 +884,10 @@ public final class DulcetPresentationStore {
         if selectedDestination != .search {
             selectDestination(.search)
         }
+        // The field belongs to Search's root: come back out of any page opened from a result.
+        if searchKeepsPages, !readerPath.isEmpty {
+            popReader(to: [])
+        }
         searchFocusRequested = true
     }
 
@@ -919,7 +957,7 @@ public final class DulcetPresentationStore {
             // Playing -- saves and restores the reader's stacks exactly as a choice on the bar
             // does, or Library loses the page it was left on.
             if isReaderDestination { savedReaderPaths[selectedDestination] = readerPath }
-            if destination == .listenNow || destination == .library || destination == .browse {
+            if keepsReaderPages(destination) {
                 readerPath = savedReaderPaths[destination] ?? []
             }
         }

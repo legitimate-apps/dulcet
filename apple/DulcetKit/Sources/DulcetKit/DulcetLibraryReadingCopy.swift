@@ -22,15 +22,18 @@ enum DulcetReaderCopy {
         return includesReason ? DulcetStrings.readerSeenWithReason(seen, reasonPhrase(reason)) : seen
     }
 
-    /// Routine refresh does not move content. Full freshness remains available to accessibility.
+    /// The one short line a page shows over content it already has, only where it helps the
+    /// listener (spec §16.14): offline, or a refresh that failed. A routine refresh, a library
+    /// that changed since, and a page still owing rows say nothing; the age and reason stay
+    /// available to accessibility through ``freshnessLine(_:now:includesReason:)``.
     static func visibleFreshnessLine(_ freshness: DulcetReaderFreshness, now: Date = Date()) -> String? {
-        guard case let .cached(reason, asOf) = freshness else { return nil }
+        guard case let .cached(reason, _) = freshness else { return nil }
         switch reason {
-        case .revalidating, .owed:
-            guard let asOf, now.timeIntervalSince(asOf) > 86_400 else { return nil }
-        default: break
+        case .offline: return DulcetStrings.readerPageOffline
+        case let .failed(kind): return DulcetStrings.readerRefreshFailed(DulcetStrings.readerErrorPhrase(kind))
+        case .internalFailure: return DulcetStrings.readerRefreshFailed(DulcetStrings.readerReasonInternal)
+        case .revalidating, .stale, .owed: return nil
         }
-        return freshnessLine(freshness, now: now)
     }
 
     /// The statement shown instead of content when there is none -- never a spinner.
@@ -93,12 +96,8 @@ enum DulcetReaderCopy {
             return nil
         case .deviceWhileServerPending:
             return DulcetStrings.readerSearchScopeDevice
-        case let .deviceOffline(seen):
-            guard let seen else { return DulcetStrings.readerSearchScopeDevice }
-            return DulcetStrings.readerSearchScopeOffline(
-                albums: Int(clamping: seen.albums),
-                tracks: Int(clamping: seen.tracks)
-            )
+        case .deviceOffline:
+            return DulcetStrings.readerSearchScopeOffline
         case let .deviceServerFailed(kind, _):
             return DulcetStrings.readerSearchScopeFailed(DulcetStrings.readerErrorPhrase(kind))
         }

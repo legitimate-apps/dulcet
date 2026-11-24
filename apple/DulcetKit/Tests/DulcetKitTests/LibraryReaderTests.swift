@@ -503,6 +503,26 @@ func owedAndOfflineContentSaysHowOldItIsAndWhy() {
 }
 
 @Test @MainActor
+func aPageStatesOnlyOfflineOrAFailedRefreshInPlainWords() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    let old = now.addingTimeInterval(-3 * 86_400)
+    #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(.offline, asOf: old), now: now) == DulcetStrings.readerPageOffline)
+    #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(.offline, asOf: nil), now: now) == DulcetStrings.readerPageOffline)
+    let failed = DulcetReaderCopy.visibleFreshnessLine(.cached(.failed(.serverBusy), asOf: old), now: now)
+    #expect(failed == DulcetStrings.readerRefreshFailed(DulcetStrings.readerErrorBusy))
+    // A routine refresh, a changed library and a page owing rows say nothing, however old.
+    for reason in [DulcetReaderCachedReason.revalidating, .stale, .owed] {
+        #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(reason, asOf: old), now: now) == nil)
+        #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(reason, asOf: nil), now: now) == nil)
+    }
+    // The visible line never carries the age or the jargon it replaced.
+    for line in [DulcetStrings.readerPageOffline, failed ?? ""] {
+        #expect(!line.contains(DulcetStrings.readerSeenUnknownAge))
+        #expect(!line.contains(DulcetStrings.readerReasonStale))
+    }
+}
+
+@Test @MainActor
 func anOpenListIsStatedOnlyWhileItCannotBeExtended() {
     let items = [item("album", "a1"), item("album", "a2")]
     #expect(DulcetReaderCopy.coverageLine(window(items, coverage: "open")) == nil,
@@ -1410,6 +1430,76 @@ func backFromTheMenuBarLeavesOnePageAndOnlyOnTheLibrary() throws {
 }
 
 @Test @MainActor
+func aSearchResultOpensInsideSearchAndBackReturnsToTheSameResults() throws {
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let (store, _, _) = readerModeStore(
+        persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    // The phone's tab bar gives Search its own stack.
+    store.searchKeepsPages = true
+    let libraryAlbum = DulcetReaderRoute.album(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-lib"))
+    let artistID = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "artist-1")
+    let artist = DulcetReaderRoute.artist(artistID)
+    let album = DulcetReaderRoute.album(DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "album-1"))
+    store.navigate(to: .library)
+    store.pushReaderPage(libraryAlbum)
+
+    store.navigate(to: .search)
+    store.searchQuery = "kali"
+    #expect(store.readerPath.isEmpty, "Search opens on its results, not on Library's page")
+    store.showArtist(artistID)
+    #expect(store.selectedDestination == .search, "a result opens inside Search, not in Library")
+    #expect(store.readerPath == [artist])
+    store.showReaderPage(album)
+    #expect(store.readerPath(for: .search) == [artist, album])
+    #expect(store.readerPath(for: .library) == [libraryAlbum], "Library's own stack is untouched")
+    #expect(store.canGoBackInLibrary)
+
+    store.navigate(to: .library)
+    #expect(store.readerPath == [libraryAlbum])
+    #expect(store.readerPath(for: .search) == [artist, album], "a hidden Search keeps its pages")
+    store.navigate(to: .search)
+    #expect(store.readerPath == [artist, album], "Search comes back as it was left")
+    #expect(store.searchQuery == "kali")
+
+    store.goBackInLibrary()
+    store.popReader(to: [])
+    #expect(store.selectedDestination == .search)
+    #expect(store.readerPath.isEmpty, "Back returns to the results")
+    #expect(store.searchQuery == "kali", "the same results: the query is kept")
+    #expect(store.readerPath(for: .library) == [libraryAlbum])
+
+    store.showArtist(artistID)
+    store.navigate(to: .search)
+    #expect(store.readerPath.isEmpty, "choosing the showing Search tab returns it to its results")
+    store.showArtist(artistID)
+    store.focusSearch()
+    #expect(store.readerPath.isEmpty, "the search command comes back to the field")
+}
+
+@Test @MainActor
+func whereSearchKeepsNoPagesAResultStillOpensInLibrary() throws {
+    let saved = DulcetAccountConnectRequest(
+        serverURL: "https://music.example.invalid",
+        username: "listener",
+        password: "fixture-password",
+        allowLocalHTTP: false
+    )
+    let (store, _, _) = readerModeStore(
+        persisted: saved, providerInstanceID: "provider-reader", factory: RecordingReaderFactory())
+    let artist = DulcetProviderItemID(providerInstanceID: "provider-reader", rawID: "artist-1")
+    store.navigate(to: .search)
+    store.showArtist(artist)
+    #expect(store.selectedDestination == .library, "a split view's one detail column shows Library's stack")
+    #expect(store.readerPath == [.artist(artist)])
+    #expect(store.readerPath(for: .search).isEmpty)
+}
+
+@Test @MainActor
 func theLegacySearchAndAlbumReadsStaySilentWhileTheReaderHoldsTheAccount() async throws {
     let factory = RecordingReaderFactory()
     let connector = ReaderTestConnector()
@@ -1680,7 +1770,7 @@ func searchIsAnsweredByTheReaderFromTheFirstCharacter() throws {
     search.publish(DulcetReaderSearchPublication(
         query: "a", sequence: 1, scope: .deviceOffline(nil), rows: []))
     #expect(model.current?.query == "a")
-    #expect(DulcetReaderCopy.searchScopeLabel(model.current?.scope) == DulcetStrings.readerSearchScopeDevice)
+    #expect(DulcetReaderCopy.searchScopeLabel(model.current?.scope) == DulcetStrings.readerSearchScopeOffline)
     // A publication for an older query never shows under a newer one.
     model.updateQuery("ab")
     #expect(model.current == nil)
@@ -2960,4 +3050,18 @@ func anArtistsPlayFromAlbumsQueuesAsTheArtist() async throws {
     let intent = try #require(source.queues.last)
     #expect(intent.sourceKind == .artist)
     #expect(intent.sourceID == artist)
+}
+
+@Test
+func aPlaylistDownloadIsCompleteOnlyWhenEveryKnownSongIsHere() {
+    #expect(DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 3).isComplete)
+    #expect(!DulcetPlaylistDownload(wanted: false, songCount: 3, downloadedCount: 3).isComplete,
+            "songs downloaded on their own do not make an undownloaded playlist Downloaded")
+    #expect(!DulcetPlaylistDownload(wanted: true, songCount: 0, downloadedCount: 0).isComplete)
+    #expect(!DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 3, songsKnown: false).isComplete)
+    #expect(DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 1, pendingCount: 2).isDownloading)
+    #expect(DulcetPlaylistDownload(wanted: true, songCount: 0, songsKnown: false).isDownloading,
+            "a playlist whose songs are still being read is on its way")
+    #expect(!DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 1).isDownloading,
+            "nothing moving is waiting, not downloading")
 }

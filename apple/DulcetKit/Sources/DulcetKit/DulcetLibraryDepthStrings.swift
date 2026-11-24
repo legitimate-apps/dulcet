@@ -16,6 +16,8 @@ extension DulcetStrings {
     static let libraryServerSongs = dynamicText("libraryDepth.serverSongs", fallback: "Server Songs")
     static let libraryShuffleServer = dynamicText("libraryDepth.shuffleServer", fallback: "Shuffle Server Songs")
     static let libraryDownloaded = dynamicText("libraryDepth.libraryDownloaded", fallback: "Downloaded")
+    static let downloadedEmptyTitle = dynamicText("libraryDepth.downloadedEmpty.title", fallback: "Nothing Downloaded Yet")
+    static let downloadedEmptyHint = dynamicText("libraryDepth.downloadedEmpty.hint", fallback: "Choose Download on an album, a playlist or a song to play it offline.")
     static let libraryShuffleAll = dynamicText("libraryDepth.libraryShuffleAll", fallback: "Shuffle All")
     static let libraryReleaseDate = dynamicText("libraryDepth.libraryReleaseDate", fallback: "Release Date")
     static let librarySortDescending = dynamicText("libraryDepth.librarySortDescending", fallback: "Title, Z–A")

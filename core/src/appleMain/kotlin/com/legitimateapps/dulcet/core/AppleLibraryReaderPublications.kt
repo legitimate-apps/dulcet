@@ -132,9 +132,10 @@ public class AppleLibraryWindowPublication internal constructor(
  * One search result row (§16.15). [kind] is `artist`, `album` or `track`; [source] is `server`
  * (the server's search returned it for this query) or `device` (found only in what this device has
  * seen). [favourite] and [rating] carry any pending local change. [sourceContainer] uses the
- * window rows' vocabulary. [playability] is set for a track only — `downloaded`, `streamable` or
+ * window rows' vocabulary. [playability] is set for a track — `downloaded`, `streamable` or
  * `unavailableOffline`, by the windows' rule — so an offline search can dim and badge what cannot
- * play (§16.14); null for an album or an artist.
+ * play (§16.14). Offline, an album or an artist is `downloaded` when one of its songs is on this
+ * device and `unavailableOffline` otherwise; online it is null.
  */
 public class AppleLibrarySearchRow internal constructor(
     public val kind: String,
