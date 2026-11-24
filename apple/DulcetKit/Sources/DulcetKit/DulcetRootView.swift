@@ -831,6 +831,10 @@ private struct DulcetCompactShell: View {
     /// page or another tab covers the bar: OBSERVED on iOS 27, Back to the results and a return
     /// to the tab both showed the placeholder above results for the query. Wait out the pop or
     /// tab transition, so the bar is attached again, then change the binding's value twice.
+    /// Writing the text after Back focused the field: OBSERVED on an iPhone with iOS 26, the
+    /// keyboard rose over the results, where Apple Music keeps it down. Only the text comes back,
+    /// so a focus the write raised is resigned, as submission does; presentation, which keeps
+    /// the query, is left alone.
     private func reshowQuery() {
         guard !usesInlineSearch else { return }
         reshowGeneration &+= 1
@@ -838,10 +842,17 @@ private struct DulcetCompactShell: View {
         Task { @MainActor in
             try? await Task.sleep(for: .milliseconds(450))
             guard generation == reshowGeneration, !leftSearch, !store.searchQuery.isEmpty else { return }
+            let focusedBefore = searchFieldFocused
             searchFieldEcho = ""
             try? await Task.sleep(for: .milliseconds(50))
             guard generation == reshowGeneration else { return }
             searchFieldEcho = nil
+            guard !focusedBefore else { return }
+            for _ in 0..<6 {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard generation == reshowGeneration else { return }
+                if searchFieldFocused { searchFieldFocused = false; return }
+            }
         }
     }
 
