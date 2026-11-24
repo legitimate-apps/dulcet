@@ -612,7 +612,8 @@ private struct DulcetPlaylistDownloadRing: View {
                 .stroke(.tint, style: StrokeStyle(lineWidth: 2, lineCap: .round))
                 .rotationEffect(.degrees(-90))
         }
-        .frame(width: 12, height: 12)
+        // The same glyph size as a song row's download badge.
+        .frame(width: DulcetMetrics.songRowStatusGlyphSize, height: DulcetMetrics.songRowStatusGlyphSize)
         .animation(.easeInOut(duration: 0.3), value: fraction)
     }
 }
