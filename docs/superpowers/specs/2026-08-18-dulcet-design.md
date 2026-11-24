@@ -4343,8 +4343,11 @@ append would freeze scrolling for as long as the scan runs, which on a large lib
 
 - pages **append**, but each page read while `scanning == true` is marked *unguarded*, and the
   window's coverage becomes `unverified(scanning)`;
-- the list is labelled **online** as well as offline: "Your server is updating its library — this
-  list may change";
+- Android labels the list **online** as well as offline: "Your server is updating its library — this
+  list may change". Apple labels it only while the list has no rows to show ("Your server is updating
+  its library · music may appear here soon"), because a server that rescans every few minutes would
+  otherwise put the line over complete pages much of the time, and the rebase below replaces the rows
+  quietly when the scan ends (§28, 2026-11-24);
 - the first epoch reading that shows `scanning == false` rebases the window around the viewport
   (above) under the new stamp, and the label clears.
 - **"Scanning cleared" is itself the trigger, not only a moved stamp.** The server publishes the new
@@ -4365,7 +4368,7 @@ window (§16.2 rule 2). The window never loads more than one page beyond the vie
 
 **Coverage values**, which the shells present (§16.14): `complete`; `open` (not every page loaded —
 normal while scrolling online, stated when offline); `unverified(scanning)` (labelled online and
-offline); `unverified(changing)` (the stamp kept moving through every bounded re-read, above);
+offline on Android; on Apple only over an empty list); `unverified(changing)` (the stamp kept moving through every bounded re-read, above);
 `unverified(noEpoch)` (below).
 
 **Measured.**
@@ -4556,7 +4559,7 @@ is `cached(revalidating)` whatever the list's state (§28, 2026-09-29).
 Lists also carry **coverage** (§16.12). `open` is stated when offline — **above** the list, not in a
 footer, because a grid that simply stops reads as finished — and with a total states both numbers:
 "Showing 120 of 2,950 albums — the rest need a connection". `unverified(scanning)` is labelled online
-and offline. `unverified(noEpoch)` is stated once per account, not per list.
+and offline on Android, and on Apple only over a list with no rows. `unverified(noEpoch)` is stated once per account, not per list.
 
 **Rows carry playability**, a tri-state that is both a badge and a filter predicate: `downloaded`,
 `streamable` (online), `unavailable offline`. Offline, an unavailable row is dimmed **and** badged
@@ -8068,6 +8071,20 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-24 — Apple pages show music, not scan and cache state (§16.12, §16.14, Discover).**
+Seen on an iPhone against a server that rescans about every 2.5 minutes (74 scans in 3 hours, each
+about 35 seconds): the scan line stood over complete album pages about a quarter of the time, and
+Discover's shelves read "Cached answer. Cached · 111 seconds old" and "Fetched <date>" with a
+Loading spinner under rows already shown, below a second large "Discover" title. On Apple,
+`unverified(scanning)` is now stated only over a list that has no rows yet; the window still appends
+unguarded and rebases when the scan ends, and `unverified(changing)` is still stated. Android is
+unchanged. Discover draws no line for an answer that is current or that this device kept while it
+refreshes; offline, a stale answer and a failed refresh are one line in words with the age ("Couldn't
+refresh · showing results from 2 hours ago"), which keeps a cached answer's age beside a failed
+refresh. The age stays in each shelf title's accessibility value. A refresh over rows already shown
+draws no spinner. On iPhone and iPad the navigation bar's large title is the page's only title and
+Discover refreshes by pulling; the Mac keeps its in-page title and button.
 
 **2026-11-24 — Playlist downloads, browsable Downloaded, plain status lines (§14.5.2, §16.14).**
 A playlist can be downloaded and its download removed from its menu, with or without Automatic

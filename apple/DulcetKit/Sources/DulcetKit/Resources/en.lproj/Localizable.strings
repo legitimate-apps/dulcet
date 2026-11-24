@@ -348,7 +348,7 @@
 "reader.empty" = "Nothing Here Yet";
 "reader.playlists.empty.title" = "No Playlists Yet";
 "reader.playlists.empty.hint" = "Gather songs into a playlist to play them together.";
-"reader.coverage.scanning" = "Your server is updating its library · this list may change";
+"reader.coverage.scanning" = "Your server is updating its library · music may appear here soon";
 "reader.coverage.changing" = "This list kept changing while it was read · it may be incomplete";
 "reader.availableOffline" = "Available offline";
 "reader.notAvailableOffline" = "Not available offline";
@@ -520,8 +520,6 @@
 "discover.discoverNotHeld" = "Not in your library";
 "discover.discoverUnknown" = "Library match unknown";
 "discover.discoverOffline" = "Offline";
-"discover.discoverCachedAnswer" = "Cached answer";
-"discover.discoverCached" = "Cached";
 "discover.discoverReadFailed" = "Could not refresh. Your last results are still here.";
 "discover.discoverWaiting" = "Not synced yet";
 "discover.discoverNotSaved" = "Not saved";
@@ -546,8 +544,11 @@
 "discover.discoverLookupUnavailable" = "This item is not available in the current Library view. Open its album in Library to play it.";
 "discover.discoverPartial" = "%ld of %ld in your library";
 "discover.discoverBusy" = "Server is busy. Try again in %ld seconds.";
-"discover.discoverAge" = "%@ · %@ seconds old";
-"discover.discoverAgeUnknown" = "%@ · age unavailable";
+"discover.discoverRefreshFailedShowing" = "Couldn’t refresh · showing results from %@";
+"discover.discoverRefreshFailedShowingEarlier" = "Couldn’t refresh · showing earlier results";
+"discover.discoverOfflineShowing" = "Offline · showing results from %@";
+"discover.discoverOfflineShowingEarlier" = "Offline · showing earlier results";
+"discover.discoverUpdated" = "Updated %@";
 "discover.discoverOpenLink" = "Open %@";
 "discover.discoverEditionTitle" = "%1$@ · %2$@";
 
@@ -602,8 +603,6 @@
 "discover.discoverLoadMore" = "Load More";
 "discover.discoverDone" = "Done";
 "discover.discoverSeeAllNamed" = "See All %@";
-"discover.discoverCachedAnswerWithAge" = "Cached answer. %@";
-"discover.discoverFetchedAt" = "Fetched %@";
 "discover.discoverRetryAt" = "Retry available at %@";
 "discover.discoverWishedFor" = "Wished for %@";
 "discover.discoverWishFor" = "Wish for %@";

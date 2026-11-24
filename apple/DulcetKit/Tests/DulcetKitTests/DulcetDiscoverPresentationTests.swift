@@ -15,8 +15,42 @@ import Testing
         let presentation = DulcetDiscoverStatus(age: .init(fetchedAt: now.addingTimeInterval(-7200), sourceAgeSeconds: 7200, receivedAt: now, stale: true), error: failure, connection: "online", now: now)
         #expect(!presentation.canRetry)
         #expect(presentation.notice?.contains("120") == true)
-        #expect(presentation.ageText?.contains("Cached answer") == true)
-        #expect(presentation.ageText?.contains("7200") == true)
+        #expect(presentation.ageText == DulcetStrings.discoverRefreshFailedShowing(relative(7200, now: now)),
+                "a stale answer says the refresh failed, with its age in words")
+        #expect(presentation.ageText?.contains("7200") == false, "the age is never a count of seconds")
+    }
+    @Test func aCurrentOrDeviceKeptAnswerSaysNothing() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let kept = DulcetDiscoverAge(fetchedAt: now.addingTimeInterval(-111), receivedAt: now, fromDeviceCache: true)
+        let quiet = DulcetDiscoverStatus(age: kept, error: nil, connection: "online", now: now)
+        #expect(quiet.ageText == nil, "an answer this device kept from earlier draws no line while it refreshes")
+        #expect(quiet.notice == nil)
+        #expect(quiet.accessibleAge == DulcetStrings.discoverUpdated(relative(111, now: now)),
+                "the age stays available to accessibility")
+        let live = DulcetDiscoverStatus(age: .init(sourceAgeSeconds: 5, receivedAt: now), error: nil, connection: "online", now: now)
+        #expect(live.ageText == nil)
+        #expect(live.accessibleAge == DulcetStrings.discoverUpdated(DulcetStrings.readerJustNow))
+        let cancelled = DulcetDiscoverStatus(age: kept, error: .init(code: "cancelled", retryAt: nil, retryable: false), connection: "online", now: now)
+        #expect(cancelled.ageText == nil, "a cancelled refresh is not a failure")
+    }
+    @Test func aFailedRefreshOrOfflineSaysSoOnceWithTheAge() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        let kept = DulcetDiscoverAge(fetchedAt: now.addingTimeInterval(-3 * 3600), receivedAt: now, fromDeviceCache: true)
+        let failure = DulcetDiscoverFailure(code: "upstream-unavailable", retryAt: nil, retryable: true)
+        let failed = DulcetDiscoverStatus(age: kept, error: failure, connection: "online", now: now)
+        #expect(failed.ageText == DulcetStrings.discoverRefreshFailedShowing(relative(3 * 3600, now: now)))
+        #expect(failed.notice == nil, "the age line already says the refresh failed; no second line")
+        let offline = DulcetDiscoverStatus(age: kept, error: nil, connection: "offline", now: now)
+        #expect(offline.ageText == DulcetStrings.discoverOfflineShowing(relative(3 * 3600, now: now)))
+        let unknown = DulcetDiscoverStatus(age: .init(receivedAt: now, stale: true), error: nil, connection: "online", now: now)
+        #expect(unknown.ageText == DulcetStrings.discoverRefreshFailedShowingEarlier, "an unknown age is never zero")
+        let nothingShown = DulcetDiscoverStatus(age: nil, error: failure, connection: "online", now: now)
+        #expect(nothingShown.notice == DulcetStrings.discoverReadFailed, "without an answer the failure is stated in its place")
+    }
+    private func relative(_ seconds: TimeInterval, now: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: now.addingTimeInterval(-seconds), relativeTo: now)
     }
     @Test func heldPartialUnknownAndMissingMbidRenderDistinctActions() {
         let partial = DulcetDiscoverItem(id: "a", kind: "album", title: "Live", availability: .init(status: "partlyHeld", completeness: "known", matchedTrackCount: 8, totalTrackCount: 12))

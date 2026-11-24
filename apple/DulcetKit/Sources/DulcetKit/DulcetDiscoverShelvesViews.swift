@@ -11,12 +11,15 @@ struct DulcetDiscoverHomeView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DulcetSpacing.lg) {
+#if os(macOS)
+                // The Mac window's title bar is small, so the page carries its own large title.
+                // On iPhone and iPad the navigation bar's large title is the page's one title.
                 HStack {
                     Text(DulcetStrings.discoverTitle).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
                     Spacer()
-                    Button(DulcetStrings.homeRefresh, systemImage: "arrow.clockwise") { model.reader.refreshHome() }
-                        .accessibilityIdentifier("discover.home.refresh")
+                    refreshButton
                 }
+#endif
                 if let home = model.publication?.home {
                     ForEach(DulcetDiscoverShelf.allCases, id: \.rawValue) { shelf in
                         if let state = home.shelves.first(where: { $0.id == shelf.rawValue }) {
@@ -33,11 +36,30 @@ struct DulcetDiscoverHomeView: View {
             .scrollTargetLayout()
         }
         .scrollPosition(id: $navigation.homeScroll, anchor: .top)
+#if os(iOS)
+        // A refresh is pulled, as in every iOS list; the shelves keep what they show meanwhile.
+        .refreshable { await refreshHomeAndSettle() }
+        .toolbar { ToolbarItem(placement: .primaryAction) { refreshButton } }
+#endif
         .accessibilityIdentifier("discover.home")
         .navigationTitle(DulcetStrings.discoverTitle)
         .dulcetForeground(.primaryTextOnWindow)
         .onAppear { model.open(); model.reader.refreshHome() }
         .onDisappear { model.close() }
+    }
+    private var refreshButton: some View {
+        Button(DulcetStrings.homeRefresh, systemImage: "arrow.clockwise") { model.reader.refreshHome() }
+            .accessibilityIdentifier("discover.home.refresh")
+    }
+    /// Holds the pull-to-refresh indicator until the shelves have answered, for at most ten seconds.
+    private func refreshHomeAndSettle() async {
+        model.reader.refreshHome()
+        let deadline = ContinuousClock.now + .seconds(10)
+        try? await Task.sleep(for: .milliseconds(300))
+        while ContinuousClock.now < deadline, !Task.isCancelled,
+              model.publication?.home?.shelves.contains(where: \.loading) == true {
+            try? await Task.sleep(for: .milliseconds(150))
+        }
     }
     private func shelfView(_ shelf: DulcetDiscoverShelf, _ state: DulcetDiscoverShelfState) -> some View {
         let presentation = DulcetDiscoverShelfPresentation(state)
@@ -48,6 +70,7 @@ struct DulcetDiscoverHomeView: View {
             }
             HStack {
                 Text(shelf.title).font(.title3.bold()).accessibilityAddTraits(.isHeader)
+                    .accessibilityValue(DulcetDiscoverStatus(age: state.page?.age, error: nil, connection: "online").accessibleAge ?? "")
                 Spacer()
                 if presentation.showsAll {
                     Button(DulcetStrings.discoverSeeAll) { navigation.path.append(shelf == .publicPlaylists ? .playlists : .shelf(shelf.rawValue)) }
@@ -92,6 +115,7 @@ struct DulcetDiscoverHomeView: View {
                 Button(DulcetStrings.discoverSeeAll) { store.openWishlist() }.accessibilityLabel(DulcetStrings.discoverSeeAllRecentWishes).accessibilityIdentifier("discover.recentWishes.all")
             }
             DulcetDiscoverShelfStatus(age: nil, error: home.wishesError, loading: home.wishesLoading,
+                hasContent: !home.recentWishes.isEmpty,
                 empty: home.wishesSettled && home.recentWishes.isEmpty && home.wishesError == nil,
                 emptyText: DulcetStrings.discoverRecentWishesEmpty, connection: model.publication?.connection ?? "online", prefix: "discover.recentWishes") { model.reader.refreshHome() }
             ForEach(home.recentWishes, id: \.key) { row in
@@ -114,6 +138,8 @@ struct DulcetDiscoverShelfStatus: View {
     let age: DulcetDiscoverAge?
     let error: DulcetDiscoverFailure?
     let loading: Bool
+    /// Whether the shelf shows rows; by default, whether it has an answer with an age.
+    var hasContent: Bool? = nil
     let empty: Bool
     let emptyText: String
     let connection: String
@@ -126,26 +152,32 @@ struct DulcetDiscoverShelfStatus: View {
         if connection == "offline" || error?.code == "offline" { return DulcetStrings.discoverConnect }
         return DulcetStrings.discoverUnavailable
     }
+    private var showsRows: Bool { hasContent ?? (age != nil) }
+    private var failed: Bool { error.map { $0.code != "cancelled" } ?? false }
+    private var rateLimited: Bool { error?.code == "rate-limited" }
+    // A shelf with its answer says nothing while that answer is current or refreshing (§28,
+    // 2026-11-24). Offline, a stale answer or a failed refresh is one plain line with its age;
+    // a failure without an answer to show is stated in its place.
     var body: some View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            if age != nil, let ageText = status.ageText {
-                VStack(alignment: .leading) {
-                    Text(ageText.contains(DulcetStrings.discoverCachedAnswer) ? ageText : DulcetStrings.discoverCachedAnswerWithAge(ageText))
-                    if let fetchedAt = age?.fetchedAt { Text(DulcetStrings.discoverFetchedAt(fetchedAt.formatted(date: .abbreviated, time: .shortened))) }
-                    if age?.sourceAgeSeconds == nil && age?.fetchedAt == nil { Text(DulcetStrings.discoverAgeUnavailable) }
-                }.font(.caption).accessibilityElement(children: .combine).accessibilityIdentifier(prefix + ".age")
+            if age != nil, let line = status.ageText {
+                Text(line).font(.caption)
+                    .accessibilityIdentifier(prefix + (failed && !rateLimited ? ".error" : ".age"))
             }
-            if let error, error.code != "cancelled" {
-                Text(failureNotice)
-                    .accessibilityIdentifier(prefix + ".error")
-                if error.retryable {
-                    if let deadline = error.retryAt, !status.canRetry, connection != "offline" {
+            if failed {
+                if age == nil || rateLimited {
+                    Text(failureNotice)
+                        .accessibilityIdentifier(prefix + ".error")
+                }
+                if error?.retryable == true {
+                    if let deadline = error?.retryAt, !status.canRetry, connection != "offline" {
                         Text(DulcetStrings.discoverRetryAt(deadline.formatted(date: .omitted, time: .shortened))).font(.caption)
                     }
                     Button(DulcetStrings.discoverRetry, action: retry).disabled(!status.canRetry).accessibilityIdentifier(prefix + ".retry")
                 }
             }
-            if loading { ProgressView(DulcetStrings.discoverLoading).accessibilityIdentifier(prefix + ".loading") }
+            // A refresh over rows already shown is quiet; only a shelf with nothing yet shows progress.
+            if loading && !showsRows { ProgressView(DulcetStrings.discoverLoading).accessibilityIdentifier(prefix + ".loading") }
             if empty { Text(emptyText).accessibilityIdentifier(prefix + ".empty") }
         }
         .dulcetForeground(.secondaryTextOnWindow)
