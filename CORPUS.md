@@ -266,6 +266,10 @@ that must argue against the recorded rationale, not a blank to fill in.
 4. **End-to-end, always.** A feature is done when the real trigger has been driven to the real observed
    effect on a real device or simulator. Mark every link OBSERVED or ASSUMED; never say "verified"
    while any link is assumed.
+5. **Use.** Someone uses the latest DEV build on a phone for everyday listening (play an album or an
+   artist, search and play, playlists and shuffle, offline) side by side with the best app of its kind
+   on the same tasks, and writes down where Dulcet is worst. Items 1–4 are necessary; they are not the
+   whole bar. What use finds sets the next round of work, so the bar rises every time a build ships.
 
 ## 7 · What Dulcet is not
 
