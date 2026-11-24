@@ -149,7 +149,7 @@ private struct DulcetArtistHeroBar: ViewModifier {
 
     func body(content: Content) -> some View {
         let bar = content
-            .navigationTitle(titleInBar ? title : "")
+            .navigationTitle(titleInBar ? title : String())
             .toolbarTitleDisplayMode(.inline)
             .toolbarBackground(titleInBar ? Color.dulcetWindow : .clear, for: .navigationBar)
             .toolbarBackground(titleInBar ? .visible : .hidden, for: .navigationBar)
