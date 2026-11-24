@@ -25,7 +25,7 @@ enum DulcetArtistHeroLayout {
 
     /// The hero's name and buttons are fully drawn until their top comes within `fadeDistance`
     /// of the bar's bottom edge, then fade out linearly, gone as they reach it.
-    static let fadeDistance: CGFloat = 56
+    static let fadeDistance: CGFloat = 56 // design-token: allow scroll threshold, not layout
     static func identityOpacity(identityTop: CGFloat, barBottom: CGFloat) -> Double {
         Double(min(1, max(0, (identityTop - barBottom) / fadeDistance)))
     }
@@ -180,7 +180,7 @@ struct DulcetArtistHero<Actions: View>: View {
     let barBottom: CGFloat
     @ViewBuilder let actions: () -> Actions
     @State private var picture = DulcetArtistHeroPicture()
-    @State private var identityHeight: CGFloat = 120
+    @State private var identityHeight: CGFloat = 120 // design-token: allow first-frame guess, replaced by the measured height
     /// The hero's top edge in the scroll view: 0 at rest, positive pulled, negative scrolled.
     @State private var heroMinY: CGFloat = 0
 
@@ -198,7 +198,7 @@ struct DulcetArtistHero<Actions: View>: View {
         }
         .frame(height: height)
         // Clip the drifting picture at the hero's bottom edge only; above, the stretch shows.
-        .mask(alignment: .bottom) { Rectangle().frame(height: height + 2000) }
+        .mask(alignment: .bottom) { Rectangle().frame(height: height + 2000) } // design-token: allow headroom for the pull, not layout
         .overlay(alignment: .bottom) { bottomScrim }
         .overlay(alignment: .bottomLeading) {
             // The name and buttons fade as they reach the bar, rather than passing under the
@@ -307,7 +307,7 @@ struct DulcetArtistHeroActions: View {
             Button(action: shuffle) {
                 Image(systemName: "shuffle")
                     .font(.title3.weight(.semibold))
-                    .frame(width: 30, height: 30)
+                    .frame(width: DulcetMetrics.heroSecondaryGlyphFrame, height: DulcetMetrics.heroSecondaryGlyphFrame)
             }
             .modifier(DulcetHeroButtonStyle(prominent: false))
             .accessibilityLabel(DulcetStrings.shuffle)
@@ -316,7 +316,7 @@ struct DulcetArtistHeroActions: View {
             Button(action: play) {
                 Image(systemName: "play.fill")
                     .font(.title2.weight(.semibold))
-                    .frame(width: 40, height: 40)
+                    .frame(width: DulcetMetrics.heroPlayGlyphFrame, height: DulcetMetrics.heroPlayGlyphFrame)
             }
             .modifier(DulcetHeroButtonStyle(prominent: true))
             .accessibilityLabel(DulcetStrings.play)

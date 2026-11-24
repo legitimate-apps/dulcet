@@ -2356,7 +2356,7 @@ struct DulcetReaderArtistPage: View {
                     DulcetArtistDiscography(items: window.items, width: width)
                 }
             } else {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+                ProgressView().frame(maxWidth: .infinity, minHeight: 120) // design-token: allow the shared artist page's loading placeholder
             }
         }
     }
