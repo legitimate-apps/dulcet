@@ -7,7 +7,8 @@ import DulcetKit
 import Foundation
 
 @MainActor
-final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, DulcetOfflineLibraryControlling {
+final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, DulcetOfflineLibraryControlling,
+    DulcetPlaylistDownloading {
     private var cacheWrites: [UUID: CacheWrite] = [:]
     private struct FramingVerification {
         let session: URLSession
@@ -559,6 +560,23 @@ final class DulcetCoreDownloadController: NSObject, DulcetDownloadControlling, D
                   client?.clearStreamingCache() == true else { return }
             stateRefreshHandler?()
         }
+    }
+    func playlistDownload(_ playlistRawID: String) -> DulcetPlaylistDownload? {
+        guard reconciled, let value = client?.playlistDownload(playlistId: playlistRawID), value.errorKind == nil else { return nil }
+        return DulcetPlaylistDownload(wanted: value.wanted, automatic: value.automatic, songCount: Int(value.songCount),
+            downloadedCount: Int(value.downloadedCount), pendingCount: Int(value.pendingCount), songsKnown: value.songsKnown)
+    }
+    func setPlaylistDownload(_ playlistRawID: String, wanted: Bool) {
+        guard reconciled, let client,
+              flushPendingAutomaticDownloadsSetting(
+                allowNewDownloads: automaticDownloadContactPermitted, scheduleDownloads: false) else { return }
+        let outcome = client.setPlaylistDownload(playlistId: playlistRawID, wanted: wanted,
+            allowNewDownloads: automaticDownloadContactPermitted, credentialGeneration: credentialGeneration,
+            wallClockMilliseconds: Date().downloadWallClockMilliseconds)
+        // The playlist's page has read its songs, so they queue now; songs not read yet queue
+        // when the library's detail warm-up reads them (missingAutomaticDownloadDetails).
+        applyOfflineChange(outcome)
+        stateRefreshHandler?()
     }
     func missingAutomaticDownloadDetails() -> AppleOfflineLibraryHydrationDto? {
         guard reconciled, automaticDownloadContactPermitted else { return nil }

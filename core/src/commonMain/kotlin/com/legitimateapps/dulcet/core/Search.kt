@@ -572,6 +572,23 @@ internal class LibrarySearchSession(
         } else {
             emptySet()
         }
+        // Offline, an album or an artist says honestly whether anything of it will play: it does
+        // when at least one of its songs is on this device (§16.14). A download index that cannot
+        // be read leaves them unmarked rather than stopping the results.
+        val offline = !reader.online && items.any { it.type != SearchResultType.Track }
+        val local = if (offline) {
+            if (items.any { it.type == SearchResultType.Track }) downloaded
+            else runCatching { reader.downloads.localTrackRawIds(cache.serverId) }.getOrNull()
+        } else null
+        val playableAlbums = mutableSetOf<String>()
+        val playableArtists = mutableSetOf<String>()
+        if (local != null) {
+            local.mapNotNull { cache.track(it)?.record }.forEach { track ->
+                val album = track.albumRawId?.let(cache::album)?.record
+                track.albumRawId?.let(playableAlbums::add)
+                (album?.credits.orEmpty() + track.credits).mapNotNullTo(playableArtists) { it.artistRawId }
+            }
+        }
         val rows = items.map { item ->
             val state = userState(item)
             val overlay = pending[item.member()]
@@ -580,7 +597,13 @@ internal class LibrarySearchSession(
                 source = if (item.id in serverIds) SearchResultSource.Server else SearchResultSource.Device,
                 favourite = overlay?.starred ?: state?.starred,
                 rating = overlay?.userRating ?: state?.userRating,
-                playability = if (item.type == SearchResultType.Track) reader.trackPlayability(item.id.rawId, downloaded) else null,
+                playability = when {
+                    item.type == SearchResultType.Track -> reader.trackPlayability(item.id.rawId, downloaded)
+                    local == null -> null
+                    item.id.rawId in (if (item.type == SearchResultType.Album) playableAlbums else playableArtists) ->
+                        LibraryPlayability.Downloaded
+                    else -> LibraryPlayability.UnavailableOffline
+                },
             )
         }
         sequence += 1

@@ -710,11 +710,19 @@ struct DulcetSearchView: View {
     }
 
     private func resultAccessibilityLabel(_ result: DulcetSearchResult) -> String {
-        DulcetStrings.searchResultAccessibility(
+        var label = DulcetStrings.searchResultAccessibility(
             title: result.displayTitle,
             subtitle: result.subtitle,
             kind: result.kind.displayTitle
         )
+        // What the row shows under its title, said too: never availability by dimming alone.
+        let row = readerRow(result.id)
+        if result.kind != .track, row?.isUnavailableOffline == true {
+            label += ", " + DulcetStrings.readerNotAvailableOffline
+        } else if result.kind != .track, row?.source == .device {
+            label += ", " + DulcetStrings.readerSearchRowDevice
+        }
+        return label
     }
 #endif
 

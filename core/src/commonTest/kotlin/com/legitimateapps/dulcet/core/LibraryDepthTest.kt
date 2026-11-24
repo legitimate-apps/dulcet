@@ -106,6 +106,32 @@ class LibraryDepthTest {
         assertTrue(env.server.log.isEmpty())
     }
 
+    @Test fun downloadedBrowsesByAlbumArtistAndPlaylistFromTheDownloadedSongsOnly() = readerTest { env ->
+        val cache = env.store.bind(binding)
+        cache.writeEntities(stamp(cache), CacheEntitySource.ListPage, CacheEntities(
+            albums = listOf(
+                CacheAlbumRecord("album", "Zebra", credits = listOf(CacheCredit(CreditRole.AlbumArtist, "Artist One", "artist-1"))),
+                CacheAlbumRecord("other-album", "Apple", credits = listOf(CacheCredit(CreditRole.AlbumArtist, "Artist Two", "artist-2"))),
+            ),
+            // Artist One's own row was never read: Downloaded still lists it by its credit.
+            artists = listOf(CacheArtistRecord("artist-2", "Artist Two")),
+            tracks = listOf(track("kept"), CacheTrackRecord("streamed", "other-album", "Streamed")),
+            playlists = listOf(CachePlaylistRecord("mix", "Mix"), CachePlaylistRecord("unwanted", "Unwanted")),
+        ))
+        val reader = env.reader(downloads = object : DownloadedTrackSource {
+            override fun downloadedTrackRawIds(serverId: String) = setOf("kept")
+            override fun downloadedPlaylistRawIds(serverId: String) = listOf("mix")
+        })
+        reader.setOnline(false)
+        fun open(query: LibraryQuery) = Publications(env.server).also { reader.open(query, it) }
+        assertEquals(listOf("album"), open(LibraryQuery.DownloadedAlbums).ids(), "an album with no downloaded song is not listed")
+        val artists = open(LibraryQuery.DownloadedArtists)
+        assertEquals(listOf("artist-1"), artists.ids())
+        assertEquals("Artist One", (artists.last.items.single() as LibraryItem.Artist).name)
+        assertEquals(listOf("mix"), open(LibraryQuery.DownloadedPlaylists).ids())
+        assertTrue(env.server.log.isEmpty())
+    }
+
     @Test fun userPinProtectsAlbumFromEvictionUntilRemoved() = withSeenCache(SeenCacheCeilings(1, 10, 10, 10)) { store, _ ->
         val cache = store.bind(binding)
         cache.writeEntities(stamp(cache), CacheEntitySource.ListPage, CacheEntities(albums = listOf(CacheAlbumRecord("kept", "Kept"))))

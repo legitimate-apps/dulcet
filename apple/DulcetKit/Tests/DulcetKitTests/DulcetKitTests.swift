@@ -19,8 +19,9 @@ func localizedLibraryCountsSelectPluralCategoriesForVisibleAndAccessibilityCopy(
     #expect(DulcetStrings.readerCount(.tracks, 2) == "2 songs")
     #expect(DulcetStrings.discoverEditionTitle("2026", 1) == "2026 · 1 song")
     #expect(DulcetStrings.discoverEditionTitle("2026", nil) == "2026")
-    #expect(DulcetStrings.readerSearchScopeOffline(albums: 4, tracks: 5)
-        == "Searching what's available offline — 4 albums and 5 songs on this device")
+    // Offline search never counts what it searched as "on this device": most of it is not downloaded.
+    #expect(DulcetReaderCopy.searchScopeLabel(.deviceOffline(nil)) == DulcetStrings.readerSearchScopeOffline)
+    #expect(!DulcetStrings.readerSearchScopeOffline.contains("on this device"))
 
     let accessibility = DulcetStrings.albumAccessibility(
         "One Track",

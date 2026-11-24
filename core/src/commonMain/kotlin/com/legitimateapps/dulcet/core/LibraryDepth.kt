@@ -170,6 +170,33 @@ internal class LibraryDepthWindow(reader: LibraryReader, query: LibraryQuery, li
             LibraryQuery.Downloaded -> reader.downloads.downloadedTrackRawIds(cache.serverId).sorted().mapNotNull { id ->
                 cache.track(id)?.let { CachedListRow(0, CacheItemKind.Track, track = it) }
             }
+            LibraryQuery.DownloadedAlbums, LibraryQuery.DownloadedArtists -> {
+                val tracks = reader.downloads.downloadedTrackRawIds(cache.serverId).mapNotNull(cache::track)
+                if (current == LibraryQuery.DownloadedAlbums) {
+                    tracks.mapNotNull { it.record?.albumRawId }.distinct().mapNotNull(cache::album)
+                        .sortedWith(compareBy<CachedAlbum> { it.record.title.lowercase() }.thenBy { it.record.rawId })
+                        .map { CachedListRow(0, CacheItemKind.Album, album = it) }
+                } else {
+                    // The album artist, as the albums are shelved; a song without one by its artist.
+                    val named = linkedMapOf<String, String>()
+                    tracks.forEach { t ->
+                        val credits = t.record?.albumRawId?.let(cache::album)?.record?.credits.orEmpty() + t.record?.credits.orEmpty()
+                        credits.filter { it.role == CreditRole.AlbumArtist && it.artistRawId != null }.ifEmpty {
+                            credits.filter { it.role == CreditRole.Artist && it.artistRawId != null }
+                        }.firstOrNull()?.let { named.getOrPut(it.artistRawId!!) { it.name } }
+                    }
+                    // An artist whose own row was never read (its list never opened) is still
+                    // listed, by the name its songs credit.
+                    named.map { (rawId, name) ->
+                        cache.artist(rawId) ?: CachedArtist(CacheArtistRecord(rawId, name), CacheRowState(null, null, 0, 0, false))
+                    }
+                        .sortedWith(compareBy<CachedArtist> { it.record.name.lowercase() }.thenBy { it.record.rawId })
+                        .map { CachedListRow(0, CacheItemKind.Artist, artist = it) }
+                }
+            }
+            LibraryQuery.DownloadedPlaylists -> reader.downloads.downloadedPlaylistRawIds(cache.serverId).mapNotNull(cache::playlist)
+                .sortedWith(compareBy<CachedPlaylist> { it.record.name.lowercase() }.thenBy { it.record.rawId })
+                .map { CachedListRow(0, CacheItemKind.Playlist, playlist = it) }
             LibraryQuery.Pinned -> cache.depthQueries.selectUserEntries(cache.serverId).executeAsList().filter { it.category.startsWith("pin.") }.mapNotNull { pin ->
                 when (pin.category) {
                     "pin.album" -> cache.album(pin.raw_id)?.let { CachedListRow(0, CacheItemKind.Album, album = it) }

@@ -503,6 +503,26 @@ func owedAndOfflineContentSaysHowOldItIsAndWhy() {
 }
 
 @Test @MainActor
+func aPageStatesOnlyOfflineOrAFailedRefreshInPlainWords() {
+    let now = Date(timeIntervalSince1970: 10_000)
+    let old = now.addingTimeInterval(-3 * 86_400)
+    #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(.offline, asOf: old), now: now) == DulcetStrings.readerPageOffline)
+    #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(.offline, asOf: nil), now: now) == DulcetStrings.readerPageOffline)
+    let failed = DulcetReaderCopy.visibleFreshnessLine(.cached(.failed(.serverBusy), asOf: old), now: now)
+    #expect(failed == DulcetStrings.readerRefreshFailed(DulcetStrings.readerErrorBusy))
+    // A routine refresh, a changed library and a page owing rows say nothing, however old.
+    for reason in [DulcetReaderCachedReason.revalidating, .stale, .owed] {
+        #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(reason, asOf: old), now: now) == nil)
+        #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(reason, asOf: nil), now: now) == nil)
+    }
+    // The visible line never carries the age or the jargon it replaced.
+    for line in [DulcetStrings.readerPageOffline, failed ?? ""] {
+        #expect(!line.contains(DulcetStrings.readerSeenUnknownAge))
+        #expect(!line.contains(DulcetStrings.readerReasonStale))
+    }
+}
+
+@Test @MainActor
 func anOpenListIsStatedOnlyWhileItCannotBeExtended() {
     let items = [item("album", "a1"), item("album", "a2")]
     #expect(DulcetReaderCopy.coverageLine(window(items, coverage: "open")) == nil,
@@ -1680,7 +1700,7 @@ func searchIsAnsweredByTheReaderFromTheFirstCharacter() throws {
     search.publish(DulcetReaderSearchPublication(
         query: "a", sequence: 1, scope: .deviceOffline(nil), rows: []))
     #expect(model.current?.query == "a")
-    #expect(DulcetReaderCopy.searchScopeLabel(model.current?.scope) == DulcetStrings.readerSearchScopeDevice)
+    #expect(DulcetReaderCopy.searchScopeLabel(model.current?.scope) == DulcetStrings.readerSearchScopeOffline)
     // A publication for an older query never shows under a newer one.
     model.updateQuery("ab")
     #expect(model.current == nil)
@@ -2960,4 +2980,18 @@ func anArtistsPlayFromAlbumsQueuesAsTheArtist() async throws {
     let intent = try #require(source.queues.last)
     #expect(intent.sourceKind == .artist)
     #expect(intent.sourceID == artist)
+}
+
+@Test
+func aPlaylistDownloadIsCompleteOnlyWhenEveryKnownSongIsHere() {
+    #expect(DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 3).isComplete)
+    #expect(!DulcetPlaylistDownload(wanted: false, songCount: 3, downloadedCount: 3).isComplete,
+            "songs downloaded on their own do not make an undownloaded playlist Downloaded")
+    #expect(!DulcetPlaylistDownload(wanted: true, songCount: 0, downloadedCount: 0).isComplete)
+    #expect(!DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 3, songsKnown: false).isComplete)
+    #expect(DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 1, pendingCount: 2).isDownloading)
+    #expect(DulcetPlaylistDownload(wanted: true, songCount: 0, songsKnown: false).isDownloading,
+            "a playlist whose songs are still being read is on its way")
+    #expect(!DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 1).isDownloading,
+            "nothing moving is waiting, not downloading")
 }

@@ -403,6 +403,106 @@ struct DulcetLibrarySongsPage: View {
         }
     }
 }
+/// The ways Downloaded is browsed, as Music's Downloaded is.
+enum DulcetDownloadedSection: String, CaseIterable, Identifiable {
+    case albums, artists, playlists, songs
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .albums: DulcetStrings.readerAlbums
+        case .artists: DulcetStrings.readerArtists
+        case .playlists: DulcetStrings.readerPlaylists
+        case .songs: DulcetStrings.readerSongs
+        }
+    }
+    var query: DulcetLibraryQuery {
+        switch self {
+        case .albums: .downloadedAlbums
+        case .artists: .downloadedArtists
+        case .playlists: .downloadedPlaylists
+        case .songs: .downloaded
+        }
+    }
+}
+
+/// Library › Downloaded: what is on this device, by album, artist, playlist or song, with Shuffle
+/// All over every downloaded song. It never states the server library's freshness.
+struct DulcetDownloadedPage: View {
+    @Environment(DulcetPresentationStore.self) private var store
+    @SceneStorage("dulcet.downloaded.section") private var section = DulcetDownloadedSection.albums
+    private var title: String { DulcetStrings.libraryDownloaded }
+
+    var body: some View {
+        DulcetReaderScreen(query: .downloaded) { songs in
+            DulcetReaderPage(title: title) { width in
+                Text(DulcetStrings.libraryDownloadedHint)
+                    .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+                Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
+                    store.playReaderTracks(songs.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
+                }
+                .buttonStyle(.dulcetProminent)
+                .disabled(songs.window?.playableTracks.isEmpty ?? true)
+                .accessibilityIdentifier("dulcet.songs.shuffleAll")
+                Picker(title, selection: $section) {
+                    ForEach(DulcetDownloadedSection.allCases) { Text($0.title).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .accessibilityIdentifier("dulcet.downloaded.section")
+                switch section {
+                case .songs:
+                    DulcetLibraryCategoryControls(category: "downloaded")
+                    songList(songs)
+                default:
+                    DulcetDownloadedCollection(section: section, width: width)
+                        .id(section)
+                }
+            }
+        }
+    }
+
+    private func songList(_ model: DulcetLibraryWindowModel) -> some View {
+        DulcetReaderListBody(model: model, emptyState: Self.emptyState) { window in
+            LazyVStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+                    DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                        store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
+                    }
+                    .dulcetReaderRow(index, in: model)
+                    .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
+                }
+            }
+        }
+    }
+
+    static let emptyState = DulcetReaderEmptyState(title: DulcetStrings.downloadedEmptyTitle,
+        hint: DulcetStrings.downloadedEmptyHint, systemImage: "arrow.down.circle")
+}
+
+/// Downloaded albums or playlists as tiles, artists as rows.
+private struct DulcetDownloadedCollection: View {
+    let section: DulcetDownloadedSection
+    let width: CGFloat
+
+    var body: some View {
+        DulcetReaderScreen(query: section.query) { model in
+            DulcetReaderListBody(model: model, emptyState: DulcetDownloadedPage.emptyState) { window in
+                if section == .artists {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+                            DulcetReaderListRow(item: item)
+                                .dulcetReaderRow(index, in: model)
+                            DulcetTrackListSeparator()
+                        }
+                    }
+                } else {
+                    DulcetReaderGrid(model: model, width: width)
+                }
+            }
+        }
+    }
+}
+
 enum DulcetArtistTopSongs {
     static let displayLimit = 10
 

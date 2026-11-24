@@ -92,6 +92,11 @@ enum DulcetStrings {
     static let more = text("action.more", "More")
     static let play = text("action.play", "Play")
     static let download = text("action.download", "Download")
+    static let removeDownload = text("action.download.remove", "Remove Download")
+    static func playlistDownloading(_ completed: Int, of total: Int) -> String {
+        formatted("download.playlist.progress", "Downloading %1$@ of %2$@", groupedNumber(completed), groupedNumber(total))
+    }
+    static let playlistDownloadWaiting = text("download.playlist.waiting", "Waiting to Download")
     static let downloadQueued = text("download.state.queued", "Queued")
     static let downloading = text("download.state.downloading", "Downloading")
     static let downloaded = text("download.state.downloaded", "Downloaded")
@@ -557,6 +562,10 @@ enum DulcetStrings {
     static let readerReasonStale = text("reader.reason.stale", "your library has changed since")
     static let readerReasonOwed = text("reader.reason.owed", "more is still to load")
     static let readerReasonInternal = text("reader.reason.internal", "something went wrong on this device")
+    static let readerPageOffline = text("reader.page.offline", "You\u{2019}re offline")
+    static func readerRefreshFailed(_ reason: String) -> String {
+        formatted("reader.page.refreshFailed", "Couldn\u{2019}t refresh \u{00B7} %@", reason)
+    }
     static let readerOfflineNotice = text("reader.offlineNotice", "You're offline. Showing music on this device.")
     static let readerOfflineConnectingNotice = text("reader.offlineConnectingNotice", "Showing what's on this device while Dulcet reconnects…")
     static let connectionsUnreachableNotice = text("connections.unreachableNotice", "Can't reach your server. Showing music on this device.")
@@ -685,14 +694,11 @@ enum DulcetStrings {
         )
     }
 
-    static func readerSearchScopeOffline(albums: Int, tracks: Int) -> String {
-        formatted(
-            "reader.search.scope.offline",
-            "Searching what's available offline — %1$@ and %2$@ on this device",
-            readerCount(.albums, albums),
-            readerCount(.tracks, tracks)
-        )
-    }
+    /// Offline search answers from what this device has seen, most of it not downloaded; the
+    /// rows say which. The line says only what a listener needs: offline, and what plays.
+    static let readerSearchScopeOffline = text(
+        "reader.search.scope.offline", "You\u{2019}re offline \u{00B7} downloaded music plays now"
+    )
 
     static func readerSearchFailedBody(_ phrase: String) -> String {
         formatted("reader.search.failed.body", "Nothing on this device matches, and %@.", phrase)

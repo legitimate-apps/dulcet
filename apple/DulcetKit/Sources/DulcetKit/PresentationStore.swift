@@ -328,6 +328,16 @@ public final class DulcetPresentationStore {
         #endif
         (source as? any DulcetOfflineLibraryControlling)?.setAutomaticDownloadsEnabled(enabled)
     }
+    /// One playlist's download; nil where this device keeps no downloads (spec §14.5.2).
+    public func playlistDownload(for playlistID: DulcetProviderItemID) -> DulcetPlaylistDownload? {
+        _ = downloadStateRevision
+        guard downloadsEnabled else { return nil }
+        return (source as? any DulcetPlaylistDownloading)?.playlistDownload(playlistID.rawID)
+    }
+    public var offersPlaylistDownloads: Bool { downloadsEnabled && source is any DulcetPlaylistDownloading }
+    public func setPlaylistDownload(_ playlistID: DulcetProviderItemID, wanted: Bool) {
+        (source as? any DulcetPlaylistDownloading)?.setPlaylistDownload(playlistID.rawID, wanted: wanted)
+    }
     public func setStreamingCacheBudgetBytes(_ bytes: Int64) {
         (source as? any DulcetOfflineLibraryControlling)?.setStreamingCacheBudgetBytes(bytes)
     }
