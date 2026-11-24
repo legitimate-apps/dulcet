@@ -194,12 +194,10 @@ fun browseHandlers(ctx: ServerContext): Map<String, Handler> {
         "getAlbumInfo2" to { call -> call.required("id"); ok { child("albumInfo") } },
         "getAlbumInfo" to { call -> call.required("id"); ok { child("albumInfo") } },
         "getTopSongs" to { call ->
-            val artist = call.required("artist")
-            val songs = catalog.songs(
-                call.user.id, "t.id IN (SELECT track_id FROM track_artist WHERE role = 'artist' AND artist_id IN (SELECT id FROM artist WHERE search = ?))",
-                listOf(fold(artist)), order = "COALESCE(a.play_count, 0) DESC, t.title COLLATE NOCASE", limit = call.size("count", 50),
-            )
-            ok { child("topSongs") { songs.forEach { add(it) } } }
+            val ids = topSongIds(ctx, call.user.id, fold(call.required("artist")))
+            val limit = call.size("count", 50)
+            val byId = catalog.songsById(call.user.id, ids.take(limit), "song").associateBy { it["id"] as String }
+            ok { child("topSongs") { ids.take(limit).forEach { id -> byId[id]?.let { add(it) } } } }
         },
         "getSimilarSongs2" to { call -> similarSongs(ctx, call, "similarSongs2") },
         "getSimilarSongs" to { call -> similarSongs(ctx, call, "similarSongs") },
@@ -313,4 +311,43 @@ private fun search(ctx: ServerContext, call: Call, container: String): Reply {
 @OptIn(DelicateCoroutinesApi::class)
 internal fun launchBackground(block: () -> Unit) {
     GlobalScope.launch(Dispatchers.IO) { block() }
+}
+
+/**
+ * The artist's song ids in play order (see [TopSongs]). Candidates are the songs the caller may
+ * read; other listeners' activity enters only as sums over those same songs.
+ */
+private fun topSongIds(ctx: ServerContext, userId: String, foldedArtist: String): List<String> {
+    val ofArtist = "t.id IN (SELECT track_id FROM track_artist WHERE role = 'artist' AND artist_id IN (SELECT id FROM artist WHERE search = ?))"
+    val visible = ctx.access.catalogPredicate(userId, "track", "t")
+    return ctx.db.read {
+        val others = query(
+            """SELECT o.item_id AS id, SUM(o.play_count) AS plays, SUM(o.starred IS NOT NULL) AS stars,
+                      SUM(CASE WHEN o.rating >= 4 THEN 4 * (o.rating - 3) ELSE 0 END) AS rated
+               FROM user u JOIN annotation o ON o.user_id = u.id AND o.item_type = 'song'
+               WHERE u.id <> ? AND o.item_id IN (SELECT t.id FROM track t WHERE $ofArtist AND $visible)
+               GROUP BY o.item_id""",
+            userId, foldedArtist,
+        ) { it.string("id") to Triple(it.long("plays"), it.int("stars"), it.long("rated")) }.toMap()
+        val candidates = query(
+            """SELECT t.id, t.title, t.album_id, al.name AS album_name, al.year AS album_year, al.song_count, t.disc_no, t.track_no, t.duration,
+                      t.album_id IN (SELECT aa.album_id FROM album_artist aa WHERE aa.artist_id IN (SELECT id FROM artist WHERE search = ?)) AS own_album,
+                      COALESCE(a.play_count, 0) AS plays, a.starred AS starred, COALESCE(a.rating, 0) AS rating
+               FROM track t
+               LEFT JOIN album al ON al.id = t.album_id
+               LEFT JOIN annotation a ON a.user_id = ? AND a.item_type = 'song' AND a.item_id = t.id
+               WHERE $ofArtist AND $visible""",
+            foldedArtist, userId, foldedArtist,
+        ) {
+            val other = others[it.string("id")]
+            TopSongs.Candidate(
+                id = it.string("id"), title = it.string("title"), albumId = it.string("album_id"), albumName = it.stringOrNull("album_name") ?: it.string("album_id"),
+                albumYear = it.intOrNull("album_year"), albumSongCount = it.int("song_count"), ownAlbum = it.bool("own_album"),
+                disc = it.intOrNull("disc_no") ?: 1, track = it.intOrNull("track_no") ?: Int.MAX_VALUE, seconds = it.double("duration"),
+                ownPlays = it.int("plays"), ownStarred = it.longOrNull("starred") != null, ownRating = it.int("rating"),
+                otherPlays = other?.first ?: 0, otherStars = other?.second ?: 0, otherRatingBonus = other?.third ?: 0,
+            )
+        }
+        TopSongs.rank(candidates)
+    }
 }

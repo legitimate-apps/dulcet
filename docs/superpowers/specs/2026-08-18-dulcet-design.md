@@ -8039,6 +8039,18 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-24 — Dulcet Server `getTopSongs` ranks by listening, then spreads across records (§29).**
+The server ordered an artist's songs by the caller's play count and then by title, so an artist the
+caller had not played came back A to Z, and the artist page's Play followed that list. It now orders
+by listening on the server (the caller's plays weigh three times another listener's; stars and
+4-5 star ratings add; only sums over other accounts are used), then goes round the artist's records
+one song at a time, newest record first, each in track order. One entry per title, records the artist
+does not own after their own, clips under 75 seconds after the full songs, and songs the caller rated
+one or two stars last. The response shape is unchanged, so other OpenSubsonic clients are unaffected.
+**OBSERVED**: `TopSongsRankingTest` fails on the old ordering and passes on the new one. **ASSUMED**:
+that this matches what a listener expects on their own library; an external popularity source was
+not added (new server network traffic, a public-repo decision).
+
 **2026-11-20 — Android phone playback layout (§12.12, §18.4).** Lyrics, the sleep status and Up Next
 share the transport columns in Now Playing. Starting a timer preserves the layout. Lyrics stays
 available as an action when the current song has no lyrics and presents the existing absence message.
