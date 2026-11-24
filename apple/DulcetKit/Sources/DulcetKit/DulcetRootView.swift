@@ -511,6 +511,12 @@ private struct DulcetIOSShell: View {
     static let places: [DulcetSidebarDestination] = [.listenNow, .discover, .library, .browse, .search]
 
     private var compact: Bool { horizontalSizeClass == .compact }
+    /// Whether each place is a tab with its own navigation stack, rather than the detail column
+    /// of a split view that follows the selection.
+    private var usesTabStacks: Bool {
+        if #available(iOS 18.0, *) { return true }
+        return compact
+    }
     private var usesSystemAccessory: Bool { if #available(iOS 26.1, *) { true } else { false } }
 
     var body: some View {
@@ -574,6 +580,8 @@ private struct DulcetIOSShell: View {
         // The player carries its own while it is up; this one speaks for the shell under it.
         .dulcetPlaybackFeedback(store: store, isActive: !playerPresented)
         .onAppear { DulcetPlayerFrameProbe.startIfRequested(); absorbNowPlayingDestination() }
+        // A search result opens inside Search when Search is a tab with its own stack.
+        .onChange(of: usesTabStacks, initial: true) { _, tabs in store.searchKeepsPages = tabs }
         .onChange(of: store.selectedDestination) { _, _ in absorbNowPlayingDestination() }
         .background {
             DulcetKeyboardShortcuts(store: store, onShowNowPlaying: openPlayer)
@@ -782,15 +790,25 @@ private struct DulcetCompactShell: View {
         .environment(\.dulcetShellSearchField, !usesInlineSearch)
     }
 
+    /// Whether the person has stepped away from Search's results: another tab is showing, or a
+    /// result's page sits on Search's stack. Native search ends its presentation then, and the
+    /// system's dismissal writes an empty string into the field.
+    private var leftSearch: Bool {
+        store.selectedDestination != .search || !store.readerPath(for: .search).isEmpty
+    }
+
     /// The native field's text. After a regular-width submission ends presentation, the
     /// system's dismissal writes an empty string; the submitted query and its results stay,
-    /// as they do on compact width, and the field keeps showing that query. A clear or Cancel
-    /// made while the field is presented still empties it.
+    /// as they do on compact width, and the field keeps showing that query. Leaving Search --
+    /// another tab, or a result's page pushed on Search -- likewise keeps the query and its
+    /// results, as Apple Music does, so Back and a return to the tab find them. A clear or
+    /// Cancel made on Search's results still empties it.
     private var searchText: Binding<String> {
         Binding(
             get: { searchFieldEcho ?? store.searchQuery },
             set: { text in
-                if text.isEmpty, retainsSubmittedSearch, !searchPresented {
+                if text.isEmpty, !store.searchQuery.isEmpty,
+                   (retainsSubmittedSearch && !searchPresented) || leftSearch {
                     // The field has already emptied itself, and SwiftUI writes a value back only
                     // when the binding changes. Show it empty for one update, then the query.
                     searchFieldEcho = ""
@@ -836,10 +854,12 @@ private struct DulcetCompactShell: View {
 #if !os(tvOS)
 /// One navigation stack showing a destination, with library pages pushed onto it.
 ///
-/// In a tab, `tab` names the destination this stack belongs to. Only the Library destination
-/// pushes pages, and its stack is the store's `libraryPath`, which outlives the stack: a tab
-/// switched away from and back, or a split view's detail rebuilt for another destination, shows
-/// the pages it was left on.
+/// In a tab, `tab` names the destination this stack belongs to. Listen Now, Library and Browse
+/// push reader pages, and so does Search where the store's `searchKeepsPages` is on (the tab
+/// bar): a result opens inside Search and Back returns to the same results. Each destination's
+/// stack is kept by the store (`readerPath(for:)`, or `libraryPath` without the reader), which
+/// outlives the stack: a tab switched away from and back, or a split view's detail rebuilt for
+/// another destination, shows the pages it was left on.
 struct DulcetDestinationStack: View {
     // A split-view column keeps navigation state while its destination changes. Both the reader
     // and snapshot stacks use one element type so SwiftUI can compare their paths safely.
@@ -876,22 +896,37 @@ struct DulcetDestinationStack: View {
 
     private var readerRequest: ReaderPresentation.Request {
         .init(context: .init(destination: destination, generation: store.librarySession?.readerGeneration ?? 0,
-                             enabled: usesReader),
-              path: usesReader ? store.readerPath(for: destination) : [])
+                             enabled: usesReaderStack),
+              path: usesReaderStack ? store.readerPath(for: destination) : [])
     }
 
     private var destination: DulcetSidebarDestination { tab ?? store.selectedDestination }
     private var showing: Bool { tab.map { $0 == store.selectedDestination } ?? true }
 
+    /// Whether the reader draws this destination's root.
     private var usesReader: Bool {
         (destination == .listenNow || destination == .library || destination == .browse) && store.readerOwnsLibrary
+    }
+
+    /// Whether this stack's path is the store's reader stack for its destination: the reader's
+    /// own destinations, and Search where it keeps the pages its results open. Search's root is
+    /// still its surface, never a reader collection.
+    private var usesReaderStack: Bool {
+        usesReader || (destination == .search && store.searchKeepsPages && store.readerOwnsLibrary)
+    }
+
+    /// Whether the stack shows its root, with no page pushed on it.
+    private var showsRoot: Bool {
+        if usesReader { return store.readerPath.isEmpty }
+        if usesReaderStack { return store.readerPath(for: destination).isEmpty }
+        return libraryPath.wrappedValue.isEmpty
     }
 
     var body: some View {
         // One concrete root and one destination registration survive reader/snapshot changes.
         // Group distributes a registration into its changing children; a split column or a
         // retained tab must keep the navigation owner even while those children change.
-        NavigationStack(path: destination == .discover ? discoverPath : usesReader ? readerPath : snapshotPath) {
+        NavigationStack(path: destination == .discover ? discoverPath : usesReaderStack ? readerPath : snapshotPath) {
             ZStack {
                 if destination == .discover {
                     DulcetDiscoverHomeDestination()
@@ -905,9 +940,9 @@ struct DulcetDestinationStack: View {
                     Color.dulcetWindow.ignoresSafeArea()
                 }
             }
-            .modifier(DulcetAccountToolbar(isEnabled: destination == .discover ? store.discoverNavigation.path.isEmpty : usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty))
+            .modifier(DulcetAccountToolbar(isEnabled: destination == .discover ? store.discoverNavigation.path.isEmpty : showsRoot))
             .allowsHitTesting(showing)
-            .modifier(bar(drawsNotices: showing && (usesReader ? store.readerPath.isEmpty : libraryPath.wrappedValue.isEmpty)))
+            .modifier(bar(drawsNotices: showing && showsRoot))
             .navigationDestination(for: StackRoute.self) { path in
                 stackPage(path)
             }
