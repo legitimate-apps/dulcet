@@ -40,7 +40,7 @@ struct DulcetNowPlayingBar: View {
     /// read when it began: a pan that starts upward belongs to the player's opening transition.
     @State private var swipeOffset: CGFloat = 0
     @State private var swipeAxis: DulcetMiniPlayerSwipe.Axis?
-    @State private var swipeWidth: CGFloat = 240
+    @State private var swipeWidth: CGFloat = 240 // design-token: allow gesture state, replaced by the measured bar width
     @State private var swipeSettling = false
 #endif
 
@@ -420,11 +420,11 @@ enum DulcetMiniPlayerSwipe: Equatable {
     enum Axis { case horizontal, vertical }
 
     /// Past this the release skips, however slowly the finger moved.
-    static let commitDistance: CGFloat = 56
+    static let commitDistance: CGFloat = 56 // design-token: allow gesture threshold, not layout
     /// A flick whose projected end passes this skips from a shorter travel.
-    static let flickDistance: CGFloat = 120
+    static let flickDistance: CGFloat = 120 // design-token: allow gesture threshold, not layout
     /// The least travel a flick needs, so a tap's jitter never skips.
-    static let flickMinimumDistance: CGFloat = 16
+    static let flickMinimumDistance: CGFloat = 16 // design-token: allow gesture threshold, not layout
 
     /// The direction a drag was read as when it began: mostly sideways is a swipe, anything else
     /// belongs to the player's vertical opening pan.

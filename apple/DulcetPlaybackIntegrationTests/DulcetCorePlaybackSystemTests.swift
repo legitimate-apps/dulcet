@@ -486,7 +486,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
 
         // The incoming session progresses on its own attempt and then preloads ITS successor.
         fixture.emit(.playbackProgressBegan(attemptID: preload.attempt, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         _ = try await fixture.waitForPreload(rawID: "c")
         XCTAssertEqual(fixture.controller.preloadLog.filter { $0 == "advanced" }.count, 1)
     }
@@ -551,7 +551,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let preloadsBefore = fixture.engine.count("preload")
         fixture.emit(.ready(attemptID: fresh, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: fresh, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(fixture.engine.count("preload"), preloadsBefore)
     }
@@ -695,7 +695,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "only")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
 
         fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
         await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.sessionID == nil }
@@ -724,7 +724,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let last = try await fixture.waitForPrepare(rawID: "b")
         fixture.emit(.ready(attemptID: last, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: last, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         fixture.emit(.endedNaturally(attemptID: last, finalPosition: 120))
         await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.sessionID == nil }
 
@@ -886,7 +886,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
         XCTAssertEqual(fixture.engine.count("seek"), 0, "a fresh start does not seek")
 
@@ -930,7 +930,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
 
         fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .transport))
@@ -1021,7 +1021,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             let first = try await fixture.waitForPrepare(rawID: "a")
             fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
             fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
             let stoppedSession = try XCTUnwrap(
                 fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
 
@@ -1068,7 +1068,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
 
         fixture.emit(.failedAfterPartial(attemptID: first, position: 120, error: .transport))
@@ -1085,7 +1085,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
 
         fixture.emit(.ready(attemptID: replay, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: replay, wallClock: Date(), mediaPosition: 0))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         XCTAssertEqual(fixture.engine.count("seek"), 0, "the replay starts from the beginning")
     }
 
@@ -1126,7 +1126,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "only")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         fixture.controller.send(.cycleRepeat)
         await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.repeatMode == .all }
         XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.repeatMode, .all,
@@ -1182,7 +1182,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         // c plays: the chain ended, and b is behind it in the queue like any entry passed.
         fixture.emit(.ready(attemptID: third, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: third, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let nowPlaying = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
         XCTAssertEqual(nowPlaying.current.id.rawID, "c")
         XCTAssertEqual(nowPlaying.queueEntries.prefix(2).map(\.track.id.rawID), ["a", "b"])
@@ -1528,7 +1528,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
 
         fixture.controller.setSleepTimer(.minutes15)
         let set = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying?.sleepTimer)
@@ -1729,7 +1729,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "only")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let stops = fixture.engine.count("stop")
         try XCTUnwrap(completion)(.init(tracks: nil, errorKind: "authentication", retryAfterMilliseconds: nil))
         guard case let .failed(failure) = accountSource.currentSnapshot.accountConnection else {
@@ -1840,7 +1840,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let attempt = try await fixture.waitForPrepare(rawID: "only")
         fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: attempt, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        // Media time, not Play/Pause: the transport shows Pause from the moment play is asked for.
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
     }
 
     private func enableAutoplay(_ fixture: Fixture) {
