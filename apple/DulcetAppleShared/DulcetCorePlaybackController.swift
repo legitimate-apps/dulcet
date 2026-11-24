@@ -669,6 +669,9 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             // The core hears the person's Play as they press it (§12.12 rule 4): before the engine
             // is ready the engine reports nothing, and a failure can come before Ready.
             _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
+            // The entry is still opening, so the engine has no item to play: the start plays it
+            // once Ready (`completePendingStart`), as a Pause pressed in the same window stops it.
+            if resumePendingStart(session) { return }
             // `Stopped` is two things. After a STOP the engine holds nothing -- its stop removed
             // the item and withdrew the system's Now Playing entry -- so a play addressed to the
             // stopped attempt is refused and nothing sounds; Play restarts the entry instead, as
@@ -687,6 +690,10 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 localMediaPlaybackIntent = (session.attemptId, false)
                 return
             }
+            // A skip names its entry while the media opens, with Pause on offer; the engine has no
+            // item yet and would refuse a pause, and the start would then play regardless. The
+            // pending start takes the Pause instead: the entry opens paused, and Play starts it.
+            if holdPendingStart(session) { return }
             guard queueClient.acceptsCommand(
                 playbackSessionId: sessionID,
                 requiresSeekable: false
@@ -1680,6 +1687,30 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         }
     }
 
+    /// A Pause while the current entry's media is still opening: the start will not play it.
+    private func holdPendingStart(_ session: ApplePlaybackCoreSessionDto) -> Bool {
+        // A failed or stopped attempt keeps its pending start (only Ready consumes it), but
+        // nothing is opening there: Pause is not a hold, and a failure stays presented.
+        guard pendingStarts[session.attemptId] != nil,
+              session.phase != Self.failedPhase, session.phase != Self.stoppedPhase else { return false }
+        pendingStarts[session.attemptId]?.shouldAutoPlay = false
+        routePlaybackWanted = false
+        routeRecoveryTask?.cancel(); routeRecoveryTask = nil
+        restoredPausedSessions.insert(session.playbackSessionId)
+        publishPreparing()
+        return true
+    }
+
+    /// A Play while the current entry's media is still opening: the start plays it once Ready.
+    private func resumePendingStart(_ session: ApplePlaybackCoreSessionDto) -> Bool {
+        guard pendingStarts[session.attemptId] != nil,
+              session.phase != Self.failedPhase, session.phase != Self.stoppedPhase else { return false }
+        pendingStarts[session.attemptId]?.shouldAutoPlay = true
+        restoredPausedSessions.remove(session.playbackSessionId)
+        publishPreparing()
+        return true
+    }
+
     private func completePendingStart(
         attemptID: DulcetPlaybackAttemptID,
         seekability: DulcetPlaybackSeekability
@@ -1905,13 +1936,6 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             publishPreparing()
             return
         }
-        let queue = snapshot.entries.compactMap { entry in
-            catalog[DulcetProviderItemID(
-                providerInstanceID: entry.providerInstanceId,
-                rawID: entry.rawId
-            )]
-        }
-        let (queueEntries, currentEntryIndex) = presentedEntries(snapshot)
         fetchArtwork(for: current, sessionID: session.playbackSessionId)
         let phase: DulcetPlaybackPresentationPhase = switch session.phase {
         case "Progressing": .progressing
@@ -1919,45 +1943,76 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case "Paused": .paused
         default: restoredPausedSessions.contains(session.playbackSessionId) ? .paused : .ready
         }
-        let repeatMode = DulcetRepeatMode(rawValue: snapshot.repeatMode) ?? .off
-        let index = Int(snapshot.currentIndex)
         let didProgress = progressingSessions.contains(session.playbackSessionId)
         currentPresentation = DulcetPlaybackPresentation(
             status: .ready,
-            nowPlaying: DulcetNowPlaying(
-                sessionID: DulcetPlaybackSessionID(session.playbackSessionId),
+            nowPlaying: nowPlaying(
                 current: current,
-                queue: queue,
-                currentIndex: index,
-                sourceDisplayName: snapshot.entries.indices.contains(index)
-                    ? snapshot.entries[index].sourceDisplayName
-                    : nil,
-                elapsed: .milliseconds(max(0, session.positionMilliseconds)),
-                decodedDuration: session.durationMilliseconds > 0 ? .milliseconds(session.durationMilliseconds) : nil,
-                isPlaying: didProgress && phase != .paused,
-                outputName: DulcetPlaybackStrings.thisDevice,
-                volume: 1,
-                audioFormat: DulcetAudioFormat(
-                    codec: current.sourceContainer?.displayName
-                        ?? DulcetPlaybackStrings.unknownAudioFormat,
-                    sampleRateKilohertz: 0
-                ),
+                session: session,
+                snapshot: snapshot,
                 phase: phase,
-                seekability: session.seekability.presentationSeekability,
-                progressBegan: didProgress,
-                repeatMode: repeatMode,
-                shuffleEnabled: snapshot.shuffleEnabled,
-                canGoNext: index >= 0 && (
-                    index + 1 < snapshot.entries.count || repeatMode == .all
-                ),
-                canGoPrevious: previousAction(for: session) != "none",
-                queueEntries: queueEntries,
-                currentEntryIndex: currentEntryIndex,
-                autoplayActive: snapshot.autoplayActive,
-                sleepTimer: sleepTimerState
+                // Before media time moves, Play/Pause follows what was asked for, as it does
+                // while the entry opens (`publishPreparing`): a skip while playing keeps Pause
+                // rather than flashing Play until the first progress.
+                isPlaying: (didProgress || routePlaybackWanted) && phase != .paused,
+                progressBegan: didProgress
             )
         )
         emitPresentation()
+    }
+
+    /// The session's entry as the queue knows it: title, artwork, position in the queue. Shared
+    /// by a session that is playing and one whose media is still opening, so a skip names the
+    /// next entry the moment the queue moves rather than when the engine is ready.
+    private func nowPlaying(
+        current: DulcetTrack,
+        session: ApplePlaybackCoreSessionDto,
+        snapshot: ApplePlaybackQueueSnapshotDto,
+        phase: DulcetPlaybackPresentationPhase,
+        isPlaying: Bool,
+        progressBegan: Bool
+    ) -> DulcetNowPlaying {
+        let queue = snapshot.entries.compactMap { entry in
+            catalog[DulcetProviderItemID(
+                providerInstanceID: entry.providerInstanceId,
+                rawID: entry.rawId
+            )]
+        }
+        let (queueEntries, currentEntryIndex) = presentedEntries(snapshot)
+        let repeatMode = DulcetRepeatMode(rawValue: snapshot.repeatMode) ?? .off
+        let index = Int(snapshot.currentIndex)
+        return DulcetNowPlaying(
+            sessionID: DulcetPlaybackSessionID(session.playbackSessionId),
+            current: current,
+            queue: queue,
+            currentIndex: index,
+            sourceDisplayName: snapshot.entries.indices.contains(index)
+                ? snapshot.entries[index].sourceDisplayName
+                : nil,
+            elapsed: .milliseconds(max(0, session.positionMilliseconds)),
+            decodedDuration: session.durationMilliseconds > 0 ? .milliseconds(session.durationMilliseconds) : nil,
+            isPlaying: isPlaying,
+            outputName: DulcetPlaybackStrings.thisDevice,
+            volume: 1,
+            audioFormat: DulcetAudioFormat(
+                codec: current.sourceContainer?.displayName
+                    ?? DulcetPlaybackStrings.unknownAudioFormat,
+                sampleRateKilohertz: 0
+            ),
+            phase: phase,
+            seekability: session.seekability.presentationSeekability,
+            progressBegan: progressBegan,
+            repeatMode: repeatMode,
+            shuffleEnabled: snapshot.shuffleEnabled,
+            canGoNext: index >= 0 && (
+                index + 1 < snapshot.entries.count || repeatMode == .all
+            ),
+            canGoPrevious: previousAction(for: session) != "none",
+            queueEntries: queueEntries,
+            currentEntryIndex: currentEntryIndex,
+            autoplayActive: snapshot.autoplayActive,
+            sleepTimer: sleepTimerState
+        )
     }
 
     /// Entry identities aligned with the tracks the catalog can speak for. An entry the catalog
@@ -2152,6 +2207,31 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             publishWithoutSession(snapshot)
             return
         }
+        // The queue already knows the entry it moved to, so name it now -- title, artwork, its
+        // place in the queue -- as the system player does, and let the audio catch up. Publishing
+        // nothing here put "Loading…" and a blank cover in the bar on every skip (OBSERVED on an
+        // iPhone, 2026-11-24). The phase reads as buffering, a cue surfaces show only once it
+        // lasts; Play/Pause follows what the person asked for. Artwork for the system's Now
+        // Playing waits for the engine's item, as before: `publish` fetches it once Ready.
+        if let snapshot = queueClient.snapshot().snapshot, let session = snapshot.currentSession,
+           let current = catalog[DulcetProviderItemID(
+               providerInstanceID: session.providerInstanceId,
+               rawID: session.rawId
+           )] {
+            currentPresentation = DulcetPlaybackPresentation(
+                status: .ready,
+                nowPlaying: nowPlaying(
+                    current: current,
+                    session: session,
+                    snapshot: snapshot,
+                    phase: routePlaybackWanted ? .buffering : .paused,
+                    isPlaying: routePlaybackWanted,
+                    progressBegan: false
+                )
+            )
+            emitPresentation()
+            return
+        }
         currentPresentation = DulcetPlaybackPresentation(status: .preparing, nowPlaying: nil)
         emitPresentation()
     }
@@ -2289,7 +2369,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
 }
 
 private struct PendingStart {
-    let shouldAutoPlay: Bool
+    var shouldAutoPlay: Bool
     let resumePositionMilliseconds: Int64
 }
 

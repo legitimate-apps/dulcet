@@ -486,7 +486,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
 
         // The incoming session progresses on its own attempt and then preloads ITS successor.
         fixture.emit(.playbackProgressBegan(attemptID: preload.attempt, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         _ = try await fixture.waitForPreload(rawID: "c")
         XCTAssertEqual(fixture.controller.preloadLog.filter { $0 == "advanced" }.count, 1)
     }
@@ -551,7 +551,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let preloadsBefore = fixture.engine.count("preload")
         fixture.emit(.ready(attemptID: fresh, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: fresh, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         try await Task.sleep(for: .milliseconds(200))
         XCTAssertEqual(fixture.engine.count("preload"), preloadsBefore)
     }
@@ -695,7 +695,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "only")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
 
         fixture.emit(.endedNaturally(attemptID: first, finalPosition: 120))
         await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.sessionID == nil }
@@ -724,7 +724,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let last = try await fixture.waitForPrepare(rawID: "b")
         fixture.emit(.ready(attemptID: last, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: last, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         fixture.emit(.endedNaturally(attemptID: last, finalPosition: 120))
         await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.sessionID == nil }
 
@@ -744,6 +744,136 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertNotEqual(restarted, last)
         XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentIndex, 0)
         XCTAssertNotNil(fixture.queue.snapshot().snapshot?.currentSession, "a new session")
+    }
+
+    /// A skip names the entry the queue moved to before its media is ready, as the system player
+    /// does: title, artwork and queue position from the queue, Pause still showing, and the
+    /// buffering phase left for surfaces to voice only if it lasts. Publishing nothing while the
+    /// entry opened put "Loading…" and a blank cover in the mini player on every skip (OBSERVED
+    /// on an iPhone, 2026-11-24).
+    func testASkipNamesTheNextEntryBeforeItsMediaIsReady() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"], artwork: Data([0xFF, 0xD8, 0xFF, 0x02]))
+        let store = try XCTUnwrap(fixture.store)
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+
+        // The very first entry is named while it opens, too.
+        XCTAssertEqual(fixture.queue.snapshot().snapshot?.currentSession?.phase, "Created",
+                       "the entry must still be opening, or this proves nothing")
+        let opening = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(opening.current.id.rawID, "a")
+        XCTAssertTrue(opening.isPlaying, "Play was asked for: Pause shows while the entry opens")
+        XCTAssertFalse(opening.progressBegan)
+        XCTAssertTrue(fixture.artworkFetcher.requests.isEmpty,
+                      "the system's artwork waits for the engine's item")
+
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
+
+        let queued = try XCTUnwrap(fixture.queue.snapshot().snapshot)
+        let expected = queued.entries[Int(queued.currentIndex) + 1].rawId
+        XCTAssertEqual(expected, "b")
+        fixture.controller.send(.next)
+        let second = try await fixture.waitForPrepare(rawID: expected)
+
+        let phase = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.phase)
+        XCTAssertTrue(["Created", "Preparing"].contains(phase),
+                      "the next entry must still be opening (\(phase)), or this proves nothing")
+        XCTAssertEqual(fixture.controller.currentPresentation.status, .ready)
+        let presented = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(presented.current.id.rawID, expected, "the queue's next entry, not the one that was playing")
+        XCTAssertEqual(presented.sessionID?.rawValue, fixture.session(ofPrepare: second))
+        XCTAssertEqual(presented.currentEntryIndex, 1)
+        XCTAssertEqual(presented.phase, .buffering)
+        XCTAssertTrue(presented.isPlaying, "a skip while playing keeps Pause")
+        XCTAssertFalse(presented.progressBegan)
+        XCTAssertEqual(presented.elapsed, .zero)
+
+        // What the mini player reads.
+        await fixture.waitFor { store.snapshot.nowPlaying?.current.id.rawID == expected }
+        XCTAssertEqual(store.snapshot.nowPlaying?.current.title, "Track \(expected)")
+        XCTAssertFalse(store.snapshot.playbackFailed)
+
+        // Ready before media time moves: the same entry, and still no flash of Play.
+        fixture.emit(.ready(attemptID: second, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.phase == .ready }
+        let ready = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(ready.current.id.rawID, expected)
+        XCTAssertTrue(ready.isPlaying)
+        XCTAssertFalse(ready.progressBegan)
+    }
+
+    /// A Pause pressed after a skip and before the next entry's media opens is honoured: the entry
+    /// opens paused, nothing plays, the transport offers Play, and Play then starts it. The skip
+    /// offers Pause from the moment it names the entry, and the engine has no item yet to pause.
+    func testAPauseWhileASkippedEntryOpensIsHonouredAndPlayStartsIt() async throws {
+        try await assertAPauseWhileOpeningIsHonoured(pause: .pause)
+    }
+
+    /// The same through the toggle, which the bar's Play/Pause and a headset send.
+    func testATogglePauseWhileASkippedEntryOpensIsHonouredAndPlayStartsIt() async throws {
+        try await assertAPauseWhileOpeningIsHonoured(pause: .toggle)
+    }
+
+    private func assertAPauseWhileOpeningIsHonoured(pause: DulcetPlaybackControlIntent) async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"])
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
+
+        fixture.controller.send(.next)
+        let second = try await fixture.waitForPrepare(rawID: "b")
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.isPlaying, true,
+                       "the skip offers Pause while the entry opens, or this proves nothing")
+        let plays = fixture.engine.count("play")
+        fixture.controller.send(pause)
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.isPlaying, false,
+                       "Pause is shown taken at once")
+
+        fixture.emit(.ready(attemptID: second, duration: 120, seekability: .seekable))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.phase == .paused }
+        try await Task.sleep(for: .milliseconds(300))
+        XCTAssertEqual(fixture.engine.count("play"), plays, "the paused entry must not start when it is ready")
+        let paused = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
+        XCTAssertEqual(paused.current.id.rawID, "b")
+        XCTAssertFalse(paused.isPlaying, "the transport offers Play")
+        XCTAssertFalse(paused.progressBegan)
+
+        fixture.controller.send(.play)
+        await fixture.waitFor { fixture.engine.count("play") > plays }
+        fixture.emit(.playbackProgressBegan(attemptID: second, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor {
+            fixture.controller.currentPresentation.nowPlaying?.progressBegan == true
+                && fixture.controller.currentPresentation.nowPlaying?.isPlaying == true
+        }
+        XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.current.id.rawID, "b")
+    }
+
+    /// The same skip, read as the sequence of statuses the surfaces receive: none between the two
+    /// tracks is the bare "preparing" that names nothing.
+    func testASkipPublishesNoNamelessStatusBetweenTheTracks() async throws {
+        let fixture = makeFixture(tracks: ["a", "b", "c"], recordStatuses: true)
+        fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+        let first = try await fixture.waitForPrepare(rawID: "a")
+        fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
+        fixture.statuses.removeAll()
+
+        fixture.controller.send(.next)
+        let second = try await fixture.waitForPrepare(rawID: "b")
+        fixture.emit(.ready(attemptID: second, duration: 120, seekability: .seekable))
+        fixture.emit(.playbackProgressBegan(attemptID: second, wallClock: Date(), mediaPosition: 1))
+        await fixture.waitFor {
+            fixture.controller.currentPresentation.nowPlaying?.current.id.rawID == "b"
+                && fixture.controller.currentPresentation.nowPlaying?.progressBegan == true
+        }
+
+        XCTAssertFalse(fixture.statuses.isEmpty, "the skip must have published, or this proves nothing")
+        XCTAssertEqual(Set(fixture.statuses), [.ready], "statuses across the skip: \(fixture.statuses)")
     }
 
     /// A track that fails is not a dead end: the failure names it and says whether Skip and
@@ -804,7 +934,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
         XCTAssertEqual(fixture.engine.count("seek"), 0, "a fresh start does not seek")
 
@@ -848,7 +978,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
 
         fixture.emit(.failedAfterPartial(attemptID: first, position: 40, error: .transport))
@@ -939,7 +1069,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
             let first = try await fixture.waitForPrepare(rawID: "a")
             fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
             fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
             let stoppedSession = try XCTUnwrap(
                 fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
 
@@ -986,7 +1116,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let failedSession = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession?.playbackSessionId)
 
         fixture.emit(.failedAfterPartial(attemptID: first, position: 120, error: .transport))
@@ -1003,7 +1133,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
 
         fixture.emit(.ready(attemptID: replay, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: replay, wallClock: Date(), mediaPosition: 0))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         XCTAssertEqual(fixture.engine.count("seek"), 0, "the replay starts from the beginning")
     }
 
@@ -1044,7 +1174,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "only")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         fixture.controller.send(.cycleRepeat)
         await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.repeatMode == .all }
         XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.repeatMode, .all,
@@ -1100,7 +1230,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         // c plays: the chain ended, and b is behind it in the queue like any entry passed.
         fixture.emit(.ready(attemptID: third, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: third, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let nowPlaying = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying)
         XCTAssertEqual(nowPlaying.current.id.rawID, "c")
         XCTAssertEqual(nowPlaying.queueEntries.prefix(2).map(\.track.id.rawID), ["a", "b"])
@@ -1354,8 +1484,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         fixture.controller.edit(.playNext(fixture.addition(["x"])))
         let started = try await fixture.waitForPrepare(rawID: "x")
 
-        // Still preparing -- nothing is presented as playing yet -- and Play Next must ADD to what
-        // was just started, not replace it.
+        // Still preparing -- the entry is named, its media not yet playing -- and Play Next must
+        // ADD to what was just started, not replace it.
         let preparesBefore = fixture.engine.count("prepare")
         fixture.controller.edit(.playNext(fixture.addition(["a", "b"])))
         fixture.emit(.ready(attemptID: started, duration: 120, seekability: .seekable))
@@ -1446,7 +1576,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "a")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
 
         fixture.controller.setSleepTimer(.minutes15)
         let set = try XCTUnwrap(fixture.controller.currentPresentation.nowPlaying?.sleepTimer)
@@ -1647,7 +1777,7 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let first = try await fixture.waitForPrepare(rawID: "only")
         fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
         let stops = fixture.engine.count("stop")
         try XCTUnwrap(completion)(.init(tracks: nil, errorKind: "authentication", retryAfterMilliseconds: nil))
         guard case let .failed(failure) = accountSource.currentSnapshot.accountConnection else {
@@ -1758,7 +1888,8 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         let attempt = try await fixture.waitForPrepare(rawID: "only")
         fixture.emit(.ready(attemptID: attempt, duration: 120, seekability: .seekable))
         fixture.emit(.playbackProgressBegan(attemptID: attempt, wallClock: Date(), mediaPosition: 1))
-        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == true }
+        // Media time, not Play/Pause: the transport shows Pause from the moment play is asked for.
+        await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
     }
 
     private func enableAutoplay(_ fixture: Fixture) {

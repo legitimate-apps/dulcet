@@ -49,6 +49,8 @@ struct DulcetNowPlayingView: View {
 
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var scrubPosition: Double?
+    /// Whether this entry has buffered long enough to say so (``DulcetBufferingCue``).
+    @State private var bufferingCueShown = false
     @State private var showingQueue = false
     @State private var regularLayout = false
     @State private var hidingSideColumn = false
@@ -864,6 +866,7 @@ struct DulcetNowPlayingView: View {
                 label: DulcetStrings.previous,
                 enabled: player.canGoPrevious
             ) {
+                DulcetHaptic.skip.play()
                 onControl(.previous)
             }
             .frame(width: Self.televisionTransportSkipSlot, height: Self.televisionTransportSlotHeight)
@@ -873,6 +876,7 @@ struct DulcetNowPlayingView: View {
                 font: .system(size: 44, weight: .medium),
                 label: player.isPlaying ? DulcetStrings.pause : DulcetStrings.play
             ) {
+                DulcetHaptic.playPause.play()
                 onControl(player.isPlaying ? .pause : .play)
             }
             .accessibilityIdentifier("dulcet.now-playing.play-pause")
@@ -884,6 +888,7 @@ struct DulcetNowPlayingView: View {
                 label: DulcetStrings.next,
                 enabled: player.canGoNext
             ) {
+                DulcetHaptic.skip.play()
                 onControl(.next)
             }
             .frame(width: Self.televisionTransportSkipSlot, height: Self.televisionTransportSlotHeight)
@@ -920,6 +925,7 @@ struct DulcetNowPlayingView: View {
                 label: DulcetStrings.previous,
                 enabled: player.canGoPrevious
             ) {
+                DulcetHaptic.skip.play()
                 onControl(.previous)
             }
             Spacer(minLength: DulcetSpacing.xs)
@@ -929,6 +935,7 @@ struct DulcetNowPlayingView: View {
                 font: .system(size: 44, weight: .medium),
                 label: player.isPlaying ? DulcetStrings.pause : DulcetStrings.play
             ) {
+                DulcetHaptic.playPause.play()
                 onControl(player.isPlaying ? .pause : .play)
             }
             .accessibilityIdentifier("dulcet.now-playing.play-pause")
@@ -939,6 +946,7 @@ struct DulcetNowPlayingView: View {
                 label: DulcetStrings.next,
                 enabled: player.canGoNext
             ) {
+                DulcetHaptic.skip.play()
                 onControl(.next)
             }
             Spacer(minLength: DulcetSpacing.xs)
@@ -1060,10 +1068,14 @@ struct DulcetNowPlayingView: View {
         return VStack(spacing: timesGap) {
 #if !os(macOS)
             if player.phase == .buffering {
+                // Laid out from the start and shown once the wait is long enough, so the
+                // controls under it do not jump when it appears.
                 HStack(spacing: DulcetSpacing.xs) {
                     ProgressView().controlSize(.small)
                     Text(DulcetStrings.buffering).font(.footnote)
                 }
+                .opacity(bufferingCueShown ? 1 : 0)
+                .accessibilityHidden(!bufferingCueShown)
                 .accessibilityIdentifier("dulcet.now-playing.buffering")
             }
 #endif
@@ -1093,7 +1105,7 @@ struct DulcetNowPlayingView: View {
                     .dynamicTypeSize(...DynamicTypeSize.accessibility2)
 #if os(macOS)
                     .overlay {
-                        if player.phase == .buffering {
+                        if player.phase == .buffering, bufferingCueShown {
                             HStack(spacing: DulcetSpacing.xs) {
                                 ProgressView().controlSize(.mini)
                                 Text(DulcetStrings.buffering).font(.caption)
@@ -1111,6 +1123,7 @@ struct DulcetNowPlayingView: View {
                     .frame(maxWidth: .infinity)
             }
         }
+        .dulcetBufferingCue(for: player, shown: $bufferingCueShown)
     }
 
     @ViewBuilder
@@ -1397,6 +1410,7 @@ private struct DulcetArtworkSwipes: ViewModifier {
                             canDismiss: onDismiss != nil
                         )
                         DulcetUIProofMarkers.record("swipe:\(action.map { "\($0)" } ?? "none")")
+                        if action == .next || action == .previous { DulcetHaptic.swipeSkip.play() }
                         switch action {
                         case .next: onControl(.next)
                         case .previous: onControl(.previous)
