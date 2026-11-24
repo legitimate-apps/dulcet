@@ -33,6 +33,17 @@ struct DulcetNowPlayingBar: View {
 
     static let identifier = "dulcet.mini-player"
 
+    @State private var bufferingCueShown = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+#if os(iOS)
+    /// How far the track's art and words follow a horizontal swipe, and which way the swipe was
+    /// read when it began: a pan that starts upward belongs to the player's opening transition.
+    @State private var swipeOffset: CGFloat = 0
+    @State private var swipeAxis: DulcetMiniPlayerSwipe.Axis?
+    @State private var swipeWidth: CGFloat = 240
+    @State private var swipeSettling = false
+#endif
+
     @ViewBuilder
     var body: some View {
 #if os(iOS)
@@ -46,13 +57,16 @@ struct DulcetNowPlayingBar: View {
 #endif
     }
 
+    /// The quiet cue that audio is late: shown only once the same entry has been buffering for
+    /// ``DulcetBufferingCue/delay``, so an ordinary skip names the next track and says nothing
+    /// else (see ``DulcetBufferingCue``).
     private var isBuffering: Bool {
 #if DEBUG
         // An explicit screenshot instrument exercises the spinner and copy without changing
         // the engine, the queue or playback identity. It is not a buffering recovery proof.
         if ProcessInfo.processInfo.arguments.contains("-dulcet-capture-mini-buffering") { return true }
 #endif
-        return store.snapshot.nowPlaying?.phase == .buffering
+        return bufferingCueShown && store.snapshot.nowPlaying?.phase == .buffering
     }
 
     private func bar(inline: Bool) -> some View {
@@ -78,6 +92,7 @@ struct DulcetNowPlayingBar: View {
         // A bar that grew with accessibility text sizes would cover the screen it floats over
         // and push its own controls off the edge; the full player is where large text goes.
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
+        .dulcetBufferingCue(for: store.snapshot.nowPlaying, shown: $bufferingCueShown)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(Self.identifier)
     }
@@ -92,10 +107,22 @@ struct DulcetNowPlayingBar: View {
                 identity(inline: inline)
                 Spacer(minLength: 0)
             }
+#if os(iOS)
+            // The track rides the finger; the bar and its buttons stay put, as the system
+            // player's do, and the words never slide over Play/Pause.
+            .offset(x: swipeOffset)
+            .opacity(1 - min(0.7, abs(swipeOffset) / max(1, swipeWidth)))
+            .clipShape(Rectangle().inset(by: -8))
+#endif
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
 #if os(iOS)
+        .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { swipeWidth = max(120, $0) }
+        // Horizontal: next or previous. It wins over the button only once the finger has moved,
+        // so a tap still opens the player; a pan that starts upward is left to the opening
+        // transition, which recognises alongside it (`DulcetPlayerTransition`).
+        .highPriorityGesture(swipeGesture)
         .dulcetPlayerGestureRegion(source: true)
 #endif
         .dulcetHoverEffect()
@@ -176,7 +203,10 @@ struct DulcetNowPlayingBar: View {
                     label: DulcetStrings.previous,
                     identifier: "previous",
                     enabled: player?.canGoPrevious == true
-                ) { store.sendPlaybackControl(.previous) }
+                ) {
+                    DulcetHaptic.skip.play()
+                    store.sendPlaybackControl(.previous)
+                }
             }
             transportButton(
                 symbol: player?.isPlaying == true ? "pause.fill" : "play.fill",
@@ -185,6 +215,7 @@ struct DulcetNowPlayingBar: View {
                 enabled: player != nil,
                 prominent: true
             ) {
+                DulcetHaptic.playPause.play()
                 store.sendPlaybackControl(player?.isPlaying == true ? .pause : .play)
             }
             if !inline {
@@ -193,7 +224,10 @@ struct DulcetNowPlayingBar: View {
                 label: DulcetStrings.next,
                 identifier: "next",
                 enabled: player?.canGoNext == true
-            ) { store.sendPlaybackControl(.next) }
+            ) {
+                DulcetHaptic.skip.play()
+                store.sendPlaybackControl(.next)
+            }
             }
         }
         .dulcetForeground(.primaryTextOnRegularMaterial)
@@ -276,7 +310,8 @@ struct DulcetNowPlayingBar: View {
         if store.snapshot.playbackFailed {
             return failedTrack == nil ? nil : store.snapshot.playbackFailure.map(Self.failureLine(for:))
         }
-        if isBuffering { return DulcetStrings.buffering }
+        // The artist stays: a late stream is said by the spinner on the cover, and to
+        // VoiceOver, not by replacing who is playing.
         return artists(of: store.snapshot.nowPlaying?.current)
     }
 
@@ -294,8 +329,72 @@ struct DulcetNowPlayingBar: View {
                 artists: artists(of: failedTrack) ?? ""
             )
         }
-        return DulcetStrings.miniPlayerAccessibility(title: title, artists: subtitle ?? "")
+        let artists = [subtitle, isBuffering ? DulcetStrings.buffering : nil]
+            .compactMap { $0 }.joined(separator: ", ")
+        return DulcetStrings.miniPlayerAccessibility(title: title, artists: artists)
     }
+
+#if os(iOS)
+    private var swipeGesture: some Gesture {
+        DragGesture(minimumDistance: 10)
+            .onChanged { value in
+                guard !swipeSettling else { return }
+                if swipeAxis == nil { swipeAxis = DulcetMiniPlayerSwipe.axis(of: value.translation) }
+                guard swipeAxis == .horizontal, let player = store.snapshot.nowPlaying,
+                      !store.snapshot.playbackFailed else { return }
+                swipeOffset = DulcetMiniPlayerSwipe.follow(
+                    value.translation.width,
+                    canGoNext: player.canGoNext,
+                    canGoPrevious: player.canGoPrevious
+                )
+            }
+            .onEnded { value in
+                let axis = swipeAxis
+                swipeAxis = nil
+                guard !swipeSettling, axis == .horizontal else { return }
+                let player = store.snapshot.nowPlaying
+                let action = store.snapshot.playbackFailed ? nil : DulcetMiniPlayerSwipe.action(
+                    translation: value.translation,
+                    predictedEndTranslation: value.predictedEndTranslation,
+                    canGoNext: player?.canGoNext == true,
+                    canGoPrevious: player?.canGoPrevious == true
+                )
+                DulcetUIProofMarkers.record("mini-player-swipe:\(action.map { "\($0)" } ?? "none")")
+                guard let action else {
+                    withAnimation(.spring(response: 0.32, dampingFraction: 0.78)) { swipeOffset = 0 }
+                    return
+                }
+                commitSwipe(action)
+            }
+    }
+
+    /// The track leaves the way the finger sent it and the next one comes in from the other
+    /// side. The skip is sent while the bar is empty, so the old title never slides back in.
+    private func commitSwipe(_ action: DulcetMiniPlayerSwipe) {
+        DulcetHaptic.swipeSkip.play()
+        let intent: DulcetPlaybackControlIntent = action == .next ? .next : .previous
+        guard !reduceMotion else {
+            swipeOffset = 0
+            store.sendPlaybackControl(intent)
+            return
+        }
+        let exit = (action == .next ? -1 : 1) * swipeWidth * 0.6
+        swipeSettling = true
+        withAnimation(.easeIn(duration: 0.12)) {
+            swipeOffset = exit
+        } completion: {
+            store.sendPlaybackControl(intent)
+            var entry = Transaction()
+            entry.disablesAnimations = true
+            withTransaction(entry) { swipeOffset = -exit }
+            withAnimation(.spring(response: 0.36, dampingFraction: 0.86)) {
+                swipeOffset = 0
+            } completion: {
+                swipeSettling = false
+            }
+        }
+    }
+#endif
 
     /// The line under a failed track's name. It says what the player says (§3.1): a track that
     /// played and then stopped stopped partway, and is not said to have failed to play.
@@ -309,6 +408,53 @@ struct DulcetNowPlayingBar: View {
         return failure.stoppedPartway
             ? DulcetStrings.playbackStoppedPartway(title: track.title)
             : DulcetStrings.playbackFailed(title: track.title)
+    }
+}
+
+/// What a horizontal swipe on the mini player does: left for the next track, right for the
+/// previous one, as on the system player's. Pure, so the thresholds are tested apart from touch.
+enum DulcetMiniPlayerSwipe: Equatable {
+    case next
+    case previous
+
+    enum Axis { case horizontal, vertical }
+
+    /// Past this the release skips, however slowly the finger moved.
+    static let commitDistance: CGFloat = 56
+    /// A flick whose projected end passes this skips from a shorter travel.
+    static let flickDistance: CGFloat = 120
+    /// The least travel a flick needs, so a tap's jitter never skips.
+    static let flickMinimumDistance: CGFloat = 16
+
+    /// The direction a drag was read as when it began: mostly sideways is a swipe, anything else
+    /// belongs to the player's vertical opening pan.
+    static func axis(of translation: CGSize) -> Axis {
+        abs(translation.width) > abs(translation.height) ? .horizontal : .vertical
+    }
+
+    static func action(
+        translation: CGSize,
+        predictedEndTranslation: CGSize,
+        canGoNext: Bool,
+        canGoPrevious: Bool
+    ) -> Self? {
+        let across = translation.width
+        guard abs(across) > abs(translation.height) else { return nil }
+        let projected = predictedEndTranslation.width
+        let travelled = abs(across) >= commitDistance
+        let flicked = abs(across) >= flickMinimumDistance && abs(projected) >= flickDistance
+            && (projected < 0) == (across < 0)
+        guard travelled || flicked else { return nil }
+        if across < 0 { return canGoNext ? .next : nil }
+        return canGoPrevious ? .previous : nil
+    }
+
+    /// How far the track follows the finger: one for one where a skip can go, and a short
+    /// rubber band where it cannot, so a swipe that will do nothing says so before release.
+    static func follow(_ across: CGFloat, canGoNext: Bool, canGoPrevious: Bool) -> CGFloat {
+        let allowed = across < 0 ? canGoNext : canGoPrevious
+        guard !allowed else { return across }
+        return across / (1 + abs(across) / 40)
     }
 }
 

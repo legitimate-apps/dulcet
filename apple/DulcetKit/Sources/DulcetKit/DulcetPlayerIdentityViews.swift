@@ -84,6 +84,7 @@ struct DulcetPlayerFavouriteButton: View {
             let state = session.favouriteState(target)
             Button {
                 let accepted = session.toggleFavourite(target, published: published)
+                if accepted { DulcetHaptic.favorite.play() }
                 DulcetUIProofMarkers.record("favorite:\(identifier):accepted=\(accepted)")
             } label: {
                 ZStack(alignment: .bottomTrailing) {
