@@ -108,7 +108,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
               typeByRemote(server.username, into: app.textFields["dulcet.account-connect.username"].firstMatch, in: app),
               typeByRemote(server.password, into: passwordField, in: app, secure: true),
               pressByRemote(primary, in: app, name: "Connect") else { return }
-        let invalidAddress = element(labelPrefix: "Check the server address", in: app)
+        let invalidAddress = element(labelPrefix: "Check the Server Address", in: app)
         guard invalidAddress.waitForExistence(timeout: 15), tryAgain.waitForExistence(timeout: 5) else {
             XCTFail("An ftp:// address must show the input error: " + app.debugDescription)
             return
@@ -119,7 +119,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         guard typeByRemote(server.url, into: addressField, in: app),
               setLocalHTTPByRemote(app, on: false),
               pressByRemote(tryAgain, in: app, name: "Try Again") else { return }
-        let plaintextRefused = element(labelPrefix: "Local HTTP is not allowed", in: app)
+        let plaintextRefused = element(labelPrefix: "Local HTTP Is Not Allowed", in: app)
         guard plaintextRefused.waitForExistence(timeout: 15) else {
             XCTFail("Plain HTTP without the consent must show the security error: " + app.debugDescription)
             return
@@ -131,7 +131,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         guard setLocalHTTPByRemote(app, on: true),
               typeByRemote(refusedURL, into: addressField, in: app),
               pressByRemote(tryAgain, in: app, name: "Try Again") else { return }
-        let unreachable = element(labelPrefix: "The server could not be reached", in: app)
+        let unreachable = element(labelPrefix: "The Server Could Not Be Reached", in: app)
         guard unreachable.waitForExistence(timeout: 45), tryAgain.waitForExistence(timeout: 5) else {
             XCTFail("A refused connection must show the transport error: " + app.debugDescription)
             return
@@ -143,7 +143,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
               typeByRemote(server.password + "-wrong", into: app.secureTextFields["dulcet.account-connect.password"].firstMatch,
                            in: app, secure: true),
               pressByRemote(tryAgain, in: app, name: "Try Again") else { return }
-        let rejected = element(labelPrefix: "The username or password was not accepted", in: app)
+        let rejected = element(labelPrefix: "The Username or Password Was Not Accepted", in: app)
         guard rejected.waitForExistence(timeout: 45) else {
             XCTFail("A wrong password must show the server's authentication answer: " + app.debugDescription)
             return
@@ -154,8 +154,8 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         // 6. Protocol error: the server's web-player address answers, but not as OpenSubsonic.
         guard typeByRemote(server.url + "/app", into: addressField, in: app),
               typeByRemote(server.password, into: passwordField, in: app, secure: true),
-              pressByRemote(tryAgain, in: app, name: "Try Again") else { return }
-        let notOpenSubsonic = element(labelPrefix: "This is not an OpenSubsonic endpoint", in: app)
+              pressByRemote(app.buttons["Sign In Again"].firstMatch, in: app, name: "Sign In Again") else { return }
+        let notOpenSubsonic = element(labelPrefix: "This Is Not an OpenSubsonic Endpoint", in: app)
         guard notOpenSubsonic.waitForExistence(timeout: 45) else {
             XCTFail("The web-player address must show the protocol error: " + app.debugDescription)
             return
@@ -170,7 +170,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         afterTest.append { _ = proxy.control("POST", "state=off") }
         guard typeByRemote(proxy.url, into: addressField, in: app),
               pressByRemote(tryAgain, in: app, name: "Try Again") else { return }
-        let serverRejected = element(labelPrefix: "The server rejected account setup", in: app)
+        let serverRejected = element(labelPrefix: "The Server Rejected Account Setup", in: app)
         guard serverRejected.waitForExistence(timeout: 45) else {
             XCTFail("An OpenSubsonic server error must show the server error: " + app.debugDescription)
             return
@@ -248,7 +248,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
         app.terminate()
         app.launchArguments = ["-com.legitimateapps.dulcet.active-account-id", UUID().uuidString]
         app.launch()
-        let unreadable = element(labelPrefix: "Your saved account could not be opened", in: app)
+        let unreadable = element(labelPrefix: "Your Saved Account Could Not Be Opened", in: app)
         if !unreadable.waitForExistence(timeout: 10) {
             _ = selectSection(app, "settings")
         }
@@ -256,7 +256,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
             XCTFail("An unreadable saved account must show the persistence error: " + app.debugDescription)
             return
         }
-        XCTAssertFalse(element(labelPrefix: "The account could not be saved", in: app).exists,
+        XCTAssertFalse(element(labelPrefix: "The Account Could Not Be Saved", in: app).exists,
                        "A launch-time read must not be described as a failed save")
         print("DULCET TV ACCOUNT STATE reached=error-persistence title=\(unreadable.label.debugDescription)")
 
@@ -310,7 +310,7 @@ final class DulcetTVAccountConnectStatesUITests: XCTestCase {
     private func signOutByRemote(_ app: XCUIApplication) -> Bool {
         guard pressByRemote(app.buttons["Sign Out"].firstMatch, in: app, name: "Sign Out") else { return false }
         // The question is a `confirmationDialog`, which tvOS presents as a sheet, not an alert.
-        let question = app.sheets["Sign out of this server?"]
+        let question = app.sheets["Sign Out of This Server?"]
         guard question.waitForExistence(timeout: 15) else {
             XCTFail("Sign Out must ask first: " + app.debugDescription)
             return false

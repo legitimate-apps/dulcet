@@ -558,7 +558,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.selectLibrarySection(.artists)
                 return await self.find("dulcet.library.artist", label: "Dulcet Fixtures") != nil
             }
-            await photographMenu("artist-menu", expectedItem: "Favorite") {
+            await photographMenu("artist-menu", expectedItem: "Add to Favorites") {
                 await self.rightClick("dulcet.library.artist", label: "Dulcet Fixtures")
             }
             await step("genres") {
@@ -640,8 +640,7 @@ final class DulcetMacDesignTourTest: XCTestCase {
                 store.selectDestination(.library)
                 store.selectLibrarySection(.favourites)
                 if await self.find("dulcet.reader.track") != nil { return true }
-                // The empty Favorites state reads "No Favorites" since round 06c.
-                if await self.findLabel("No Favorites") != nil { return true }
+                if await self.findLabel("No Favorites Yet") != nil { return true }
                 return await self.findLabel("Nothing Here Yet") != nil
             }
             await step("playlists") {

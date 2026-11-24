@@ -216,14 +216,14 @@ func aSavedAccountThatCannotBeReadAtLaunchIsNotDescribedAsAFailedSave() {
         return
     }
     #expect(failure.kind == .credentialPersistenceFailed)
-    #expect(failure.title == "Your saved account could not be opened")
+    #expect(failure.title == "Your Saved Account Could Not Be Opened")
     #expect(failure.message == "Dulcet found a saved account on this device, but the system Keychain did not return its details.")
     #expect(failure.recovery == "Enter the account details and connect again to save it on this device.")
 
     let saveFailure = DulcetAccountErrorPresenter.presentation(for: DulcetAccountErrorContext(
         kind: .credentialPersistenceFailed, serverName: "Music"
     ))
-    #expect(saveFailure.title == "The account could not be saved")
+    #expect(saveFailure.title == "The Account Could Not Be Saved")
     #expect(saveFailure.message == "The server accepted the account, but the system Keychain did not save it.")
 }
 
@@ -3770,7 +3770,7 @@ func localNetworkDenialHasCatalogedCopy() {
         kind: .localNetworkAccessDenied,
         serverName: "10.0.0.20"
     ))
-    #expect(presentation.title == "Allow Dulcet to find devices on your local network")
+    #expect(presentation.title == "Allow Dulcet to Find Devices on Your Local Network")
     #expect(presentation.kind.family == .transport)
 }
 
@@ -4031,31 +4031,31 @@ func theLastEntrysFailureDoesNotOfferASkipThatIsNotThere() {
     // The last entry with repeat off, and a one-track queue under repeat-all, both reach the
     // player as a failure that cannot skip: nothing else follows the failed track.
     let message = DulcetPlaybackFailedView.message(for: failure(canSkip: false))
-    #expect(message == "Dulcet couldn\u{2019}t start this track. Try it again.")
+    #expect(message == "Dulcet couldn’t start this song. Try it again.")
     #expect(!message.localizedCaseInsensitiveContains("skip"))
 }
 
 @Test @MainActor
 func aFailureWithSomewhereToGoOffersBoth() {
     #expect(DulcetPlaybackFailedView.message(for: failure(canSkip: true))
-        == "Dulcet couldn\u{2019}t start this track. Try it again, or skip to the next one.")
+        == "Dulcet couldn’t start this song. Try it again, or skip to the next one.")
 }
 
 @Test @MainActor
 func aTrackThatStoppedPartwayIsNotSaidToHaveFailedToStart() {
     let withSkip = DulcetPlaybackFailedView.message(for: failure(canSkip: true, stoppedPartway: true))
     let withoutSkip = DulcetPlaybackFailedView.message(for: failure(canSkip: false, stoppedPartway: true))
-    #expect(withSkip == "This track stopped partway through. Try it again, or skip to the next one.")
-    #expect(withoutSkip == "This track stopped partway through. Try it again.")
+    #expect(withSkip == "This song stopped partway through. Try it again, or skip to the next one.")
+    #expect(withoutSkip == "This song stopped partway through. Try it again.")
     #expect(![withSkip, withoutSkip].contains { $0.contains("start") })
 }
 
 @Test @MainActor
 func aFailureWithNothingOnOfferSendsThePersonBackToTheLibrary() {
     #expect(DulcetPlaybackFailedView.message(for: .undescribed)
-        == "Return to your library and choose another track.")
+        == "Return to your library and choose another song.")
     #expect(DulcetPlaybackFailedView.message(for: failure(canSkip: true, canRetry: false))
-        == "Dulcet couldn\u{2019}t start this track. Skip to the next one.")
+        == "Dulcet couldn’t start this song. Skip to the next one.")
 }
 
 // MARK: - Only the failure dismissed stays away
@@ -4216,7 +4216,7 @@ func theBarAndThePlayerAgreeThatATrackStoppedPartway() {
     }
 
     let beforeStart = failure(canSkip: true)
-    #expect(DulcetNowPlayingBar.failureLine(for: beforeStart) == "Couldn\u{2019}t play this track")
+    #expect(DulcetNowPlayingBar.failureLine(for: beforeStart) == "Couldn’t play this song")
     #expect(DulcetNowPlayingBar.failureAnnouncement(for: beforeStart)
         == "Couldn\u{2019}t play \u{201C}\(title)\u{201D}")
     for text in [
@@ -5284,7 +5284,7 @@ func accountDatabaseReadFailureDoesNotBlameAReadableKeychain() throws {
         return
     }
     #expect(failure.kind == .localPersistenceFailed)
-    #expect(failure.title == "The local library could not be updated")
+    #expect(failure.title == "The Local Library Could Not Be Updated")
     #expect(!failure.message.contains("Keychain"))
     #expect(!failure.recovery.contains("Keychain"))
     #expect(try credentials.load() == request)
@@ -5307,7 +5307,7 @@ func accountDatabaseWriteFailureDoesNotClaimSuccessfullySavedCredentialsWereLost
         return
     }
     #expect(failure.kind == .localPersistenceFailed)
-    #expect(failure.title == "The local library could not be updated")
+    #expect(failure.title == "The Local Library Could Not Be Updated")
     #expect(!failure.message.contains("Keychain"))
     #expect(!failure.recovery.contains("Keychain"))
     #expect(try credentials.load() == request)

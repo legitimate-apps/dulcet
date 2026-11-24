@@ -83,7 +83,7 @@ struct DulcetListenNowView: View {
             message: DulcetStrings.savedAccountDisconnectedFootnote,
             accessibilityIdentifier: "dulcet.listenNow.unreachable",
             action: DulcetStateAction(
-                deviceOnly ? DulcetStrings.reconnect : DulcetStrings.tryAgain,
+                DulcetStrings.tryAgain,
                 systemImage: "arrow.clockwise",
                 isDefaultAction: false,
                 accessibilityIdentifier: deviceOnly ? "dulcet.reader.reconnect" : "dulcet.reader.retry"

@@ -395,7 +395,8 @@ private func item(
     favourite: Bool? = nil,
     rating: Int? = nil,
     playability: String? = "streamable",
-    duration: Int64? = 180_000
+    duration: Int64? = 180_000,
+    discographyGroup: String? = nil
 ) -> DulcetReaderItem {
     DulcetReaderItem(
         kind: kind,
@@ -421,8 +422,22 @@ private func item(
         playCount: nil,
         playability: playability,
         detailComplete: true,
-        metadataMissing: false
+        metadataMissing: false,
+        discographyGroup: discographyGroup
     )!
+}
+
+@Test @MainActor
+func artistHeaderCountsOnlyTheAlbumsGroupAndOmitsZero() {
+    let album = item("album", "album", discographyGroup: "albums")
+    let olderAlbum = item("album", "older-album")
+    let otherReleases = ["epsSingles", "compilations", "appearsOn"].map {
+        item("album", $0, discographyGroup: $0)
+    }
+    #expect(DulcetArtistDiscography.albumCountLabel([]) == nil)
+    #expect(DulcetArtistDiscography.albumCountLabel(otherReleases) == nil)
+    #expect(DulcetArtistDiscography.albumCountLabel([album] + otherReleases) == "1 album")
+    #expect(DulcetArtistDiscography.albumCountLabel([album, olderAlbum] + otherReleases) == "2 albums")
 }
 
 private func window(

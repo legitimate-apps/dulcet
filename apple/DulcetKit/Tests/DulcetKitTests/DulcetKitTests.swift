@@ -11,17 +11,24 @@ func localizedLibraryCountsSelectPluralCategoriesForVisibleAndAccessibilityCopy(
     #expect(DulcetStrings.albumCount(0) == "0 albums")
     #expect(DulcetStrings.albumCount(1) == "1 album")
     #expect(DulcetStrings.albumCount(2) == "2 albums")
-    #expect(DulcetStrings.trackCount(0) == "0 tracks")
-    #expect(DulcetStrings.trackCount(1) == "1 track")
-    #expect(DulcetStrings.trackCount(2) == "2 tracks")
+    #expect(DulcetStrings.trackCount(0) == "0 songs")
+    #expect(DulcetStrings.trackCount(1) == "1 song")
+    #expect(DulcetStrings.trackCount(2) == "2 songs")
+    #expect(DulcetStrings.readerCount(.tracks, 0) == "0 songs")
+    #expect(DulcetStrings.readerCount(.tracks, 1) == "1 song")
+    #expect(DulcetStrings.readerCount(.tracks, 2) == "2 songs")
+    #expect(DulcetStrings.discoverEditionTitle("2026", 1) == "2026 · 1 song")
+    #expect(DulcetStrings.discoverEditionTitle("2026", nil) == "2026")
+    #expect(DulcetStrings.readerSearchScopeOffline(albums: 4, tracks: 5)
+        == "Searching what's available offline — 4 albums and 5 songs on this device")
 
     let accessibility = DulcetStrings.albumAccessibility(
         "One Track",
         artists: "Fixture Artist",
         tracks: DulcetStrings.trackCount(1)
     )
-    #expect(accessibility == "One Track, Fixture Artist, 1 track")
-    #expect(!accessibility.contains("1 tracks"))
+    #expect(accessibility == "One Track, Fixture Artist, 1 song")
+    #expect(!accessibility.contains("1 songs"))
 }
 
 @Test
@@ -35,8 +42,8 @@ func localizedIdentifierNumbersNeverUseQuantityGrouping() {
     }
 
     #expect(
-        DulcetStrings.albumMetadata(year: 2026, tracks: "4 tracks", duration: "15:04")
-            == "2026 · 4 tracks · 15:04"
+        DulcetStrings.albumMetadata(year: 2026, tracks: "4 songs", duration: "15:04")
+            == "2026 · 4 songs · 15:04"
     )
     #expect(DulcetStrings.discTitle(2026) == "Disc 2026")
 }

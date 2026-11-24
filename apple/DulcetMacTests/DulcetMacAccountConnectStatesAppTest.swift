@@ -92,7 +92,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         try await waitUntil(timeout: .seconds(15), "input error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorInput
         }
-        _ = try await shipping.element(labelled: "Check the server address")
+        _ = try await shipping.element(labelled: "Check the Server Address")
         print("DULCET MAC ACCOUNT STATE reached=error-input state=\(store.snapshot.state.rawValue)")
 
         // 3. Security error: plain HTTP to the server without the local-HTTP consent.
@@ -101,8 +101,8 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         try await waitUntil(timeout: .seconds(15), "security error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorSecurity
         }
-        _ = try await shipping.element(labelled: "Local HTTP is not allowed")
-        XCTAssertNil(shipping.firstElement(labelled: "Check the server address"))
+        _ = try await shipping.element(labelled: "Local HTTP Is Not Allowed")
+        XCTAssertNil(shipping.firstElement(labelled: "Check the Server Address"))
         print("DULCET MAC ACCOUNT STATE reached=error-security state=\(store.snapshot.state.rawValue)")
 
         // 4. Transport error: the system refuses the connection.
@@ -111,7 +111,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         try await waitUntil(timeout: .seconds(45), "transport error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorTransport
         }
-        _ = try await shipping.element(labelled: "The server could not be reached")
+        _ = try await shipping.element(labelled: "The Server Could Not Be Reached")
         print("DULCET MAC ACCOUNT STATE reached=error-transport state=\(store.snapshot.state.rawValue)")
 
         // 5. Authentication error: the server's own answer to a wrong password.
@@ -120,8 +120,8 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         try await waitUntil(timeout: .seconds(45), "authentication error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorAuthentication
         }
-        _ = try await shipping.element(labelled: "The username or password was not accepted")
-        XCTAssertNil(shipping.firstElement(labelled: "The server could not be reached"))
+        _ = try await shipping.element(labelled: "The Username or Password Was Not Accepted")
+        XCTAssertNil(shipping.firstElement(labelled: "The Server Could Not Be Reached"))
         print("DULCET MAC ACCOUNT STATE reached=error-authentication state=\(store.snapshot.state.rawValue)")
 
         // 6. Protocol error: the server's web-player address answers, but not as OpenSubsonic.
@@ -130,7 +130,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         try await waitUntil(timeout: .seconds(45), "protocol error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorProtocol
         }
-        _ = try await shipping.element(labelled: "This is not an OpenSubsonic endpoint")
+        _ = try await shipping.element(labelled: "This Is Not an OpenSubsonic Endpoint")
         print("DULCET MAC ACCOUNT STATE reached=error-protocol state=\(store.snapshot.state.rawValue)")
 
         // 7. Server error: `ping` answered with an OpenSubsonic error the account is not at fault for.
@@ -141,7 +141,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         try await waitUntil(timeout: .seconds(45), "server error: state=\(store.snapshot.state)") {
             store.snapshot.state == .accountErrorServer
         }
-        _ = try await shipping.element(labelled: "The server rejected account setup")
+        _ = try await shipping.element(labelled: "The Server Rejected Account Setup")
         let answered = try await proxy.serverErrorsAnswered()
         XCTAssertGreaterThan(answered, 0, "The server error shown must be the answer the proxy gave")
         proxy.disarmServerError()
@@ -181,7 +181,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         }
         XCTAssertEqual(store.snapshot.state, .accountErrorPersistence,
                        "An unentitled host's Keychain refuses the save; this proof needs the unentitled build")
-        _ = try await shipping.element(labelled: "The account could not be saved")
+        _ = try await shipping.element(labelled: "The Account Could Not Be Saved")
         XCTAssertNil(defaults.string(forKey: activeAccountKey), "A refused save leaves no active-account pointer")
         print("DULCET MAC ACCOUNT STATE reached=error-persistence-save state=\(store.snapshot.state.rawValue)")
         shipping.close()
@@ -194,7 +194,7 @@ final class DulcetMacAccountConnectStatesAppTest: XCTestCase {
         let relaunched = AccountStatesWindow(store: DulcetMacProduction.makePresentationStore())
         defer { relaunched.close() }
         XCTAssertEqual(relaunched.store.snapshot.state, .accountErrorPersistence)
-        _ = try await relaunched.element(labelled: "Your saved account could not be opened")
+        _ = try await relaunched.element(labelled: "Your Saved Account Could Not Be Opened")
         XCTAssertNil(relaunched.firstElement(labelled: "The server accepted the account, but the system Keychain did not save it."),
                      "A launch-time read must not be described as a save the server just accepted")
         print("DULCET MAC ACCOUNT STATE reached=error-persistence-load keychain=\(keychainAnswer)")

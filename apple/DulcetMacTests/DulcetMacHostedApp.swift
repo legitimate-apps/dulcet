@@ -162,7 +162,7 @@ final class HostedApp {
         }
         let row = try await element(timeout: .seconds(30), described: "the \(track) search row") {
             (self.identifier($0) ?? "").hasPrefix("dulcet.search.result.")
-                && (self.label($0) ?? "").hasPrefix("\(track), ") && (self.label($0) ?? "").hasSuffix(", Track")
+                && (self.label($0) ?? "").hasPrefix("\(track), ") && (self.label($0) ?? "").hasSuffix(", Song")
         }
         let table = try selectTableRow(row)
         XCTAssertTrue(window.makeFirstResponder(table), "The results must take focus")

@@ -124,124 +124,124 @@ public enum DulcetAccountErrorPresenter {
         let copy: (title: String, message: String, recovery: String) = switch context.kind {
         case .invalidServerURL where context.invalidServerURLIsInternationalized:
             (
-                "Use the punycode server address",
+                "Use the Punycode Server Address",
                 "Dulcet cannot safely compare internationalized host names yet.",
                 "Enter the punycode spelling instead. For example, müsik.example.invalid is xn--msik-0ra.example.invalid."
             )
         case .invalidServerURL:
             (
-                "Check the server address",
+                "Check the Server Address",
                 "That address is not a valid OpenSubsonic server URL.",
                 "Enter the full http:// or https:// address. Plain HTTP is limited to explicitly allowed local servers."
             )
         case .transportUnreachable:
             (
-                "The server could not be reached",
+                "The Server Could Not Be Reached",
                 "Dulcet could not establish a connection to \(context.serverName).",
                 "Check that the server is running and reachable from this device, then try again."
             )
         case .localNetworkAccessDenied:
             (
-                "Allow Dulcet to find devices on your local network",
+                "Allow Dulcet to Find Devices on Your Local Network",
                 "Your server is on your local network, and Dulcet does not have permission to reach it yet.",
                 "Turn on Local Network for Dulcet in Settings. Dulcet connects as soon as access is allowed."
             )
         case .transportTimeout:
             (
-                "The server took too long to respond",
+                "The Server Took Too Long to Respond",
                 "Account setup reached its 30-second request limit.",
                 "Check the server and network, then try again. You can cancel while Dulcet is waiting."
             )
         case .transportCancelled:
             (
-                "Connection cancelled",
+                "Connection Canceled",
                 "Dulcet stopped the account connection.",
                 "Choose Connect whenever you are ready to try again."
             )
         case .tlsUntrusted:
             (
-                "This server’s certificate isn’t trusted",
+                "This Server’s Certificate Isn’t Trusted",
                 "Dulcet stopped before sending account credentials.",
                 "Fix or renew the certificate. For a private certificate authority, install the CA at the operating-system level, then try again."
             )
         case .localNetworkPolicyRejected:
             (
-                "Local HTTP is not allowed",
+                "Local HTTP Is Not Allowed",
                 "Dulcet will not send credentials over this plaintext connection.",
                 "Use HTTPS, or enable local HTTP only for a server you control on a private local network."
             )
         case .redirectRejected:
             (
-                "The server redirect was refused",
+                "The Server Redirect Was Refused",
                 "The redirect could not be followed safely.",
                 "Enter the server’s final HTTPS address directly and try again."
             )
         case .serverIdentityChanged:
-            ("The server at this address has changed", "Reconnect to review this server before using saved data.",
+            ("The Server at This Address Has Changed", "Reconnect to review this server before using saved data.",
              "Open Account and connect again. Dulcet asks before removing any downloads.")
         case .malformedEnvelope:
             (
-                "The server response was malformed",
+                "The Server Response Was Malformed",
                 "The server replied successfully but its OpenSubsonic envelope was not valid.",
                 "Check the server version or its reverse-proxy response, then try again."
             )
         case .incompatibleProtocol:
             (
-                "The server protocol is not compatible",
+                "The Server Protocol Is Not Compatible",
                 "This server does not support the OpenSubsonic version Dulcet needs.",
                 "Update the server, or use a compatible OpenSubsonic endpoint."
             )
         case .notASubsonicServer:
             (
-                "This is not an OpenSubsonic endpoint",
+                "This Is Not an OpenSubsonic Endpoint",
                 "The address responded, but not as an OpenSubsonic server.",
                 "Enter the server base address rather than a web player or sign-in page."
             )
         case .responseTooLarge:
             (
-                "The server’s answer was too large",
+                "The Server’s Answer Was Too Large",
                 "The server replied with more data than Dulcet reads for this request.",
                 "Try again. If it keeps happening, check what the server returns for this item."
             )
         case .knownServerError:
             (
-                "The server rejected account setup",
+                "The Server Rejected Account Setup",
                 "The server returned a recognized OpenSubsonic error.",
                 "Review the account and server settings, then try again."
             )
         case .unknownServerError:
             (
-                "The server could not complete account setup",
+                "The Server Could Not Complete Account Setup",
                 "The server returned an OpenSubsonic error Dulcet does not recognize.",
                 "Check the server logs or version, then try again."
             )
         case .invalidCredentials:
             (
-                "The username or password was not accepted",
+                "The Username or Password Was Not Accepted",
                 "The server rejected these account credentials.",
                 "Check the username and password, then try again."
             )
         case .tokenAuthenticationUnsupported:
             (
-                "This account authentication is not supported",
+                "This Account Authentication Is Not Supported",
                 "The server rejected salted-token authentication.",
                 "Enable token authentication on the server or use a compatible endpoint."
             )
         case .forbidden:
             (
-                "This account is not allowed to connect",
+                "This Account Is Not Allowed to Connect",
                 "The server accepted the credentials but denied access.",
                 "Ask the server administrator to allow Subsonic API access for this account."
             )
         case .unsupportedAuthenticationChallenge:
             (
-                "The intermediary’s sign-in method is not supported",
+                "The Intermediary’s Sign-in Method Is Not Supported",
                 "A reverse proxy requested HTTP, proxy, or client-certificate authentication that account setup does not support.",
                 "Expose the OpenSubsonic endpoint without that extra authentication challenge, then try again."
             )
         case .crossOriginRedirectRejected:
             (
-                "The server redirected to another sign-in host",
+                "The Server Redirected to Another Sign-in Host",
                 context.targetHost.map {
                     "The server bounced account setup to \($0), so Dulcet refused to carry credentials there."
                 } ?? "The server bounced account setup to another host, so Dulcet refused to carry credentials there.",
@@ -249,31 +249,31 @@ public enum DulcetAccountErrorPresenter {
             )
         case .capabilityUnsupported:
             (
-                "A required server capability is unavailable",
+                "A Required Server Capability Is Unavailable",
                 "This server cannot provide a capability required for account setup.",
                 "Update the server or use an endpoint with the required OpenSubsonic capability."
             )
         case .credentialPersistenceFailed where context.persistenceOperation == .load:
             (
-                "Your saved account could not be opened",
+                "Your Saved Account Could Not Be Opened",
                 "Dulcet found a saved account on this device, but the system Keychain did not return its details.",
                 "Enter the account details and connect again to save it on this device."
             )
         case .credentialPersistenceFailed:
             (
-                "The account could not be saved",
+                "The Account Could Not Be Saved",
                 "The server accepted the account, but the system Keychain did not save it.",
                 "Review Keychain access for Dulcet, then connect again."
             )
         case .localPersistenceFailed:
             (
-                "The local library could not be updated",
+                "The Local Library Could Not Be Updated",
                 "The server accepted the account, but Dulcet could not read or update this device’s library data.",
                 "Quit and reopen Dulcet, then try again. If the problem continues, update Dulcet."
             )
         case .unrecognizedFailure:
             (
-                "Account setup did not finish",
+                "Account Setup Did Not Finish",
                 "Dulcet received a failure it does not recognize.",
                 "Try again. If it keeps happening, update Dulcet."
             )
