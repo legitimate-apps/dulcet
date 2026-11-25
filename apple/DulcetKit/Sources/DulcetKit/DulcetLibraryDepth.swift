@@ -233,6 +233,12 @@ struct DulcetLibraryCategoryControls: View {
                         Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
                     }
                 }
+#if os(iOS)
+                // Inside a `List` cell a menu picker draws as a settings row, its label ("Sort
+                // By") at the leading edge and the value at the trailing one. Outside one it shows
+                // only the value; hidden labels keep that in both, and stay the accessibility label.
+                .labelsHidden()
+#endif
             }
 #endif
         }
@@ -368,38 +374,51 @@ struct DulcetLibrarySongsPage: View {
 
     var body: some View {
         DulcetReaderScreen(query: downloaded ? .downloaded : .songs, showsDestinationStatus: !scrollsStatus) { model in
-            DulcetReaderPage(title: title) { _ in
+            DulcetReaderListPage(title: title, freshness: model.window?.freshness) { _ in
                 // Keep the Downloaded status in the scrolling document. Its intrinsic text
                 // height must not become a minimum height for the Mac split-view column.
-                if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
-                Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
-                    .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
-                DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
-                Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
-                    if downloaded {
-                        store.playReaderTracks(model.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
-                    } else { store.librarySession?.shuffleLibrarySongs(using: store) }
+                DulcetReaderListHeader {
+                    if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
+                    Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
+                        .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+                    DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
+                    Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
+                        if downloaded {
+                            store.playReaderTracks(model.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
+                        } else { store.librarySession?.shuffleLibrarySongs(using: store) }
+                    }
+                    .buttonStyle(.dulcetProminent)
+                    .disabled((downloaded || store.librarySession?.isOnline != true) && (model.window?.playableTracks.isEmpty ?? true))
+                    .accessibilityIdentifier("dulcet.songs.shuffleAll")
+                    if !downloaded && store.librarySession?.isOnline == true {
+                        Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                    }
                 }
-                .buttonStyle(.dulcetProminent)
-                .disabled((downloaded || store.librarySession?.isOnline != true) && (model.window?.playableTracks.isEmpty ?? true))
-                .accessibilityIdentifier("dulcet.songs.shuffleAll")
-                if !downloaded && store.librarySession?.isOnline == true {
-                    Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+#if os(iOS)
+                DulcetReaderListRows(model: model) { window in
+                    songRows(window, model: model)
                 }
+#else
                 DulcetReaderListBody(model: model) { window in
                     // Row appearances drive paging: offscreen songs must not report themselves
                     // as the viewport and eagerly extend the window to the whole catalogue.
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-                            DulcetReaderTrackRow(item: item, index: index + 1) { track in
-                                store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
-                            }
-                            .dulcetReaderRow(index, in: model)
-                            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
-                        }
+                        songRows(window, model: model)
                     }
                 }
+#endif
             }
+        }
+    }
+
+    @ViewBuilder
+    private func songRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
+        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+            DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
+            }
+            .dulcetReaderRow(index, in: model)
+            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
         }
     }
 }
@@ -434,24 +453,28 @@ struct DulcetDownloadedPage: View {
 
     var body: some View {
         DulcetReaderScreen(query: .downloaded) { songs in
-            DulcetReaderPage(title: title) { width in
-                Text(DulcetStrings.libraryDownloadedHint)
-                    .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
-                Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
-                    store.playReaderTracks(songs.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
+            DulcetReaderListPage(title: title, freshness: songs.window?.freshness) { width in
+                DulcetReaderListHeader {
+                    Text(DulcetStrings.libraryDownloadedHint)
+                        .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+                    Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
+                        store.playReaderTracks(songs.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
+                    }
+                    .buttonStyle(.dulcetProminent)
+                    .disabled(songs.window?.playableTracks.isEmpty ?? true)
+                    .accessibilityIdentifier("dulcet.songs.shuffleAll")
+                    Picker(title, selection: $section) {
+                        ForEach(DulcetDownloadedSection.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .accessibilityIdentifier("dulcet.downloaded.section")
+                    if section == .songs {
+                        DulcetLibraryCategoryControls(category: "downloaded")
+                    }
                 }
-                .buttonStyle(.dulcetProminent)
-                .disabled(songs.window?.playableTracks.isEmpty ?? true)
-                .accessibilityIdentifier("dulcet.songs.shuffleAll")
-                Picker(title, selection: $section) {
-                    ForEach(DulcetDownloadedSection.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .accessibilityIdentifier("dulcet.downloaded.section")
                 switch section {
                 case .songs:
-                    DulcetLibraryCategoryControls(category: "downloaded")
                     songList(songs)
                 default:
                     DulcetDownloadedCollection(section: section, width: width)
@@ -461,17 +484,29 @@ struct DulcetDownloadedPage: View {
         }
     }
 
+    @ViewBuilder
     private func songList(_ model: DulcetLibraryWindowModel) -> some View {
+#if os(iOS)
+        DulcetReaderListRows(model: model, emptyState: Self.emptyState) { window in
+            downloadedSongRows(window, model: model)
+        }
+#else
         DulcetReaderListBody(model: model, emptyState: Self.emptyState) { window in
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-                    DulcetReaderTrackRow(item: item, index: index + 1) { track in
-                        store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
-                    }
-                    .dulcetReaderRow(index, in: model)
-                    .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
-                }
+                downloadedSongRows(window, model: model)
             }
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private func downloadedSongRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
+        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+            DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
+            }
+            .dulcetReaderRow(index, in: model)
+            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
         }
     }
 

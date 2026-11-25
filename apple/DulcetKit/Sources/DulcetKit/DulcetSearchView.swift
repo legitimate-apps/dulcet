@@ -602,16 +602,18 @@ struct DulcetSearchView: View {
             }
             // Selection is the macOS Table's idiom; touch shares the library's single-activation
             // idiom instead -- one press on a row routes its semantic action (play a track, open
-            // an album or artist) through onActivateResult.
-            ScrollView {
-                // All holds at most five rows a kind, so its headings stay real elements however
-                // short the screen; an opened kind can be long, and stays lazy.
-                if selectedGroup == nil {
-                    VStack(alignment: .leading, spacing: 0) { resultRows }
-                } else {
-                    LazyVStack(alignment: .leading, spacing: 0) { resultRows }
-                }
+            // an album or artist) through onActivateResult. A plain List hosts the rows on iOS so
+            // song rows carry their leading Favorite and trailing queue swipe actions.
+            List {
+                resultRows
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
             }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 0)
+            .contentMargins(.zero, for: .scrollContent)
             // `automatic` would already dismiss on scroll here - it only keeps the keyboard for
             // a TextEditor, and this is plain scrollable content. What `interactively` adds is that
             // the keyboard tracks the drag itself, so a partial drag can be reversed to cancel the
@@ -634,22 +636,19 @@ struct DulcetSearchView: View {
     private var resultRows: some View {
         ForEach(Array(results.enumerated()), id: \.element.id) { index, result in
             let startsKind = index == 0 || results[index - 1].kind != result.kind
-            if startsKind {
-                if selectedGroup == nil {
-                    DulcetShelfHeader(
-                        title: groupTitle(result.kind),
-                        identifier: "dulcet.search.group.\(result.kind.rawValue)"
-                    ) {
-                        selectedGroup = result.kind
-                    }
-                    .padding(.top, index == 0 ? 0 : DulcetSpacing.lg)
-                    .padding(.bottom, DulcetSpacing.xxs)
+            if startsKind, selectedGroup == nil {
+                DulcetShelfHeader(
+                    title: groupTitle(result.kind),
+                    identifier: "dulcet.search.group.\(result.kind.rawValue)"
+                ) {
+                    selectedGroup = result.kind
                 }
-            } else {
-                DulcetTrackListSeparator(songRowShowingIndex: false, artwork: true)
+                .padding(.top, index == 0 ? 0 : DulcetSpacing.lg)
+                .padding(.bottom, DulcetSpacing.xxs)
             }
             if let track = result.playableTrack {
                 songRow(track, result: result, rank: index)
+                    .dulcetSongRowSeparator(above: !startsKind, songRowShowingIndex: false, artwork: true)
             } else {
                 Button {
                     activate(result.id)
@@ -669,6 +668,7 @@ struct DulcetSearchView: View {
                     result: result,
                     isUnavailableOffline: readerRow(result.id)?.isUnavailableOffline == true
                 ))
+                .dulcetSongRowSeparator(above: !startsKind, songRowShowingIndex: false, artwork: true)
             }
         }
     }

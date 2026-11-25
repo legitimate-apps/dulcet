@@ -192,7 +192,12 @@ private struct DulcetPlaylistPageContent: View {
 #endif
 
     private func stackedPage(_ model: DulcetLibraryWindowModel) -> some View {
-        DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false, titleInHeader: true) { width in
+        DulcetReaderListPage(
+            title: model.window?.header?.displayTitle ?? "",
+            keepsTVNavigationBar: false,
+            titleInHeader: true,
+            freshness: model.window?.freshness
+        ) { width in
             if let window = model.window {
                 // Gone from the server, or never read and offline, with nothing kept: the core has
                 // no playlist to name, so there is no title to show and nothing to play -- an empty header and
@@ -200,16 +205,30 @@ private struct DulcetPlaylistPageContent: View {
                 // about a failed edit comes first, then the statement in place of the tracks.
                 if window.header != nil || !window.items.isEmpty || !Self.isUnavailable(window) {
                     header(window, width: width)
+#if os(iOS)
+                        .padding(.bottom, DulcetSpacing.md)
+#endif
                 }
                 awaitingChoiceBanner
                 problemBanner
+#if os(iOS)
+                DulcetReaderListRows(model: model, subject: window.header == nil ? .list : .albumTracks) { window in
+                    trackRows(window, model: model)
+                }
+#else
                 DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { window in
                     tracks(window, model: model)
                 }
+#endif
             } else {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             }
         }
+#if os(iOS)
+        .toolbar {
+            if let window = model.window { pageToolbar(window) }
+        }
+#endif
     }
 
     private static func isUnavailable(_ window: DulcetLibraryWindow) -> Bool {
@@ -267,29 +286,41 @@ private struct DulcetPlaylistPageContent: View {
                 .accessibilityIdentifier("dulcet.playlist.shuffle")
             }
         }
-#if !os(tvOS)
-        .toolbar {
-            if let item {
-                if item.isEditable, store.playlistEditor != nil {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(DulcetStrings.playlistEdit) { editing = true }
-                            .disabled(DulcetPlaylistEditContext(window: window, id: id) == nil)
-                            .accessibilityIdentifier("dulcet.playlist.edit")
-                    }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    // Built from a title: a Mac menu with a custom label reached accessibility as
-                    // no element at all. This one is a menu button named More.
-                    Menu(DulcetStrings.more, systemImage: "ellipsis") {
-                        playlistMenuItems(item)
-                    }
-                    .accessibilityLabel(DulcetStrings.more)
-                    .accessibilityIdentifier("dulcet.playlist.more")
-                }
-            }
-        }
+#if os(macOS)
+        .toolbar { pageToolbar(window) }
 #endif
     }
+
+#if !os(tvOS)
+    /// Edit and More. On iOS the header is a `List` cell, and a cell scrolled out of the list
+    /// takes its toolbar items with it, so the page carries them instead of the header.
+    @ToolbarContentBuilder
+    private func pageToolbar(_ window: DulcetLibraryWindow) -> some ToolbarContent {
+        let item = window.header
+        if let item {
+            if item.isEditable, store.playlistEditor != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(DulcetStrings.playlistEdit) { editing = true }
+                        .disabled(DulcetPlaylistEditContext(window: window, id: id) == nil)
+                        .accessibilityIdentifier("dulcet.playlist.edit")
+#if os(iOS)
+                        // In the label colour the header's content gave it when it carried the toolbar.
+                        .dulcetForeground(.primaryTextOnWindow)
+#endif
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                // Built from a title: a Mac menu with a custom label reached accessibility as
+                // no element at all. This one is a menu button named More.
+                Menu(DulcetStrings.more, systemImage: "ellipsis") {
+                    playlistMenuItems(item)
+                }
+                .accessibilityLabel(DulcetStrings.more)
+                .accessibilityIdentifier("dulcet.playlist.more")
+            }
+        }
+    }
+#endif
 
 #if !os(tvOS)
     /// The page's More: Rename and Delete for the person's own playlist, around the actions every
@@ -381,31 +412,34 @@ private struct DulcetPlaylistPageContent: View {
 
     @ViewBuilder
     private func tracks(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
-        let playable = window.playableTracks
         LazyVStack(alignment: .leading, spacing: 0) {
-            // By position: a playlist may hold one song twice (§18.6).
-            ForEach(Array(window.items.enumerated()), id: \.offset) { index, item in
-                DulcetReaderTrackRow(
-                    item: item, index: window.leadingOffset + index + 1,
-                    showsIndex: false,
-                    queueAddition: item.playableTrack.map {
-                        DulcetQueueAddition(tracks: [$0], sourceKind: playlistSourceKind(window),
-                                            sourceID: playlistSourceID(window), sourceDisplayName: window.header?.displayTitle ?? "")
-                    }
-                ) { track in
-                    store.playReaderTracks(
-                        playable,
-                        startingAt: track,
-                        sourceKind: playlistSourceKind(window),
-                        sourceID: playlistSourceID(window),
-                        sourceName: window.header?.displayTitle ?? ""
-                    )
+            trackRows(window, model: model)
+        }
+    }
+
+    @ViewBuilder
+    private func trackRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
+        let playable = window.playableTracks
+        // By position: a playlist may hold one song twice (§18.6).
+        ForEach(Array(window.items.enumerated()), id: \.offset) { index, item in
+            DulcetReaderTrackRow(
+                item: item, index: window.leadingOffset + index + 1,
+                showsIndex: false,
+                queueAddition: item.playableTrack.map {
+                    DulcetQueueAddition(tracks: [$0], sourceKind: playlistSourceKind(window),
+                                        sourceID: playlistSourceID(window), sourceDisplayName: window.header?.displayTitle ?? "")
                 }
-                .dulcetReaderRow(index, in: model)
-                if index < window.items.count - 1 {
-                    DulcetTrackListSeparator(songRowShowingIndex: false, artwork: true)
-                }
+            ) { track in
+                store.playReaderTracks(
+                    playable,
+                    startingAt: track,
+                    sourceKind: playlistSourceKind(window),
+                    sourceID: playlistSourceID(window),
+                    sourceName: window.header?.displayTitle ?? ""
+                )
             }
+            .dulcetReaderRow(index, in: model)
+            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: false, artwork: true)
         }
     }
 

@@ -52,4 +52,43 @@ func adaptiveIOSAccentResolvesForLightAndDarkAppearances() {
 
     #expect(light != dark)
 }
+
+@Test @MainActor
+func songRowSurfacesMountInsideListCollectionViewsOnIOS() throws {
+    let source = DulcetDeterministicDataSource(initialState: .albumDetailMultiDisc)
+    let store = DulcetPresentationStore(source: source)
+    let album = try #require(store.snapshot.selectedAlbum ?? store.snapshot.albums.first)
+
+    func containsCollectionView(_ root: UIView) -> Bool {
+        if root is UICollectionView { return true }
+        return root.subviews.contains(where: containsCollectionView)
+    }
+
+    let albumDetail = DulcetAlbumDetailView(album: album).environment(store)
+    let albumController = UIHostingController(rootView: albumDetail)
+    let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+    window.rootViewController = albumController
+    window.makeKeyAndVisible()
+    albumController.loadViewIfNeeded()
+    albumController.view.frame = window.bounds
+    albumController.view.layoutIfNeeded()
+    #expect(containsCollectionView(albumController.view))
+
+    let searchSource = DulcetDeterministicDataSource(initialState: .searchResults)
+    let searchStore = DulcetPresentationStore(source: searchSource)
+    let searchView = DulcetSearchView(
+        snapshot: searchStore.snapshot,
+        searchQuery: .constant(searchStore.searchQuery),
+        onLoadMore: { _ in },
+        onRetry: {},
+        onActivateResult: { _ in }
+    ).environment(searchStore)
+    let searchController = UIHostingController(rootView: searchView)
+    window.rootViewController = searchController
+    searchController.loadViewIfNeeded()
+    searchController.view.frame = window.bounds
+    searchController.view.layoutIfNeeded()
+    #expect(containsCollectionView(searchController.view))
+    window.isHidden = true
+}
 #endif

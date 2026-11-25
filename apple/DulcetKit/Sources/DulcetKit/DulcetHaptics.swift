@@ -18,6 +18,8 @@ enum DulcetHaptic: String {
     case skip
     /// A swipe on the mini player or the cover that skipped.
     case swipeSkip
+    /// A song queued from a row swipe: Play Next or Add to Queue.
+    case queue
     /// A queue row dropped in a new place.
     case reorder
     /// A queue row removed.
@@ -30,7 +32,7 @@ enum DulcetHaptic: String {
         DulcetUIProofMarkers.record("haptic:\(rawValue)")
 #if os(iOS)
         switch self {
-        case .playPause, .skip:
+        case .playPause, .skip, .queue:
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case .swipeSkip:
             UIImpactFeedbackGenerator(style: .medium).impactOccurred(intensity: 0.7)
