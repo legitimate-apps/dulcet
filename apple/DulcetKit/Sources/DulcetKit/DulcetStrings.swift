@@ -589,7 +589,7 @@ enum DulcetStrings {
     static let readerEmptyList = text("reader.empty", "Nothing Here Yet")
     static let readerNoPlaylists = text("reader.playlists.empty.title", "No Playlists Yet")
     static let readerAddPlaylistsHint = text("reader.playlists.empty.hint", "Gather songs into a playlist to play them together.")
-    static let readerCoverageScanning = text("reader.coverage.scanning", "Your server is updating its library · this list may change")
+    static let readerCoverageScanning = text("reader.coverage.scanning", "Your server is updating its library · music may appear here soon")
     static let readerCoverageChanging = text("reader.coverage.changing", "This list kept changing while it was read · it may be incomplete")
     static let readerAvailableOffline = text("reader.availableOffline", "Available offline")
     static let readerNotAvailableOffline = text("reader.notAvailableOffline", "Not available offline")

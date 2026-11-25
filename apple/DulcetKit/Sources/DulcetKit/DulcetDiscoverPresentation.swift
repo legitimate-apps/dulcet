@@ -63,17 +63,48 @@ public struct DulcetDiscoverStatus: Sendable {
             return DulcetStrings.discoverBusy(seconds)
         }
         if error.code == "cancelled" { return nil }
+        // An answer still on screen already says the refresh failed, with its age (`ageText`).
+        if age != nil { return nil }
         return connection == "offline" || error.code == "offline" ? DulcetStrings.discoverOffline : DulcetStrings.discoverReadFailed
     }
-    public var ageText: String? {
-        guard let age else { return connection == "offline" ? DulcetStrings.discoverOffline : nil }
-        // Keep server age and device elapsed age distinct. Unknown source age is never zero.
+    /// Whether the answer on screen is older than it should be: the server served a stale copy
+    /// because its source was unreachable, or this device's refresh failed.
+    public var refreshFailed: Bool {
+        guard let age else { return false }
+        if age.stale { return true }
+        guard let error else { return false }
+        return error.code != "cancelled"
+    }
+    /// How old the answer is, or nil when that is unknown. Server age and device elapsed age stay
+    /// distinct, and an unknown source age is never zero.
+    public var ageSeconds: Int64? {
+        guard let age else { return nil }
         let elapsed = max(0, Int(now.timeIntervalSince(age.receivedAt)))
-        let seconds: Int64? = age.sourceAgeSeconds.map { max(0, $0) + Int64(elapsed) }
+        return age.sourceAgeSeconds.map { max(0, $0) + Int64(elapsed) }
             ?? age.fetchedAt.map { Int64(max(0, now.timeIntervalSince($0))) }
-        guard age.stale || age.fromDeviceCache || connection == "offline" else { return nil }
-        let prefix = connection == "offline" ? DulcetStrings.discoverOffline : age.stale ? DulcetStrings.discoverCachedAnswer : DulcetStrings.discoverCached
-        return seconds.map { DulcetStrings.discoverAge(prefix, $0) } ?? DulcetStrings.discoverAgeUnknown(prefix)
+    }
+    /// The one visible line about an answer on screen (§28, 2026-11-24). A current answer, and
+    /// one this device kept from earlier while it refreshes, say nothing: that is how a music app
+    /// behaves, and the age stays available to accessibility (`accessibleAge`). Offline, or a
+    /// refresh that failed, say so in plain words with how old the answer is.
+    public var ageText: String? {
+        guard age != nil else { return connection == "offline" ? DulcetStrings.discoverOffline : nil }
+        let offline = connection == "offline" || error?.code == "offline"
+        guard offline || refreshFailed else { return nil }
+        let since = ageSeconds.flatMap { $0 >= 60 ? Self.relative($0, now: now) : nil }
+        if offline { return since.map(DulcetStrings.discoverOfflineShowing) ?? DulcetStrings.discoverOfflineShowingEarlier }
+        return since.map(DulcetStrings.discoverRefreshFailedShowing) ?? DulcetStrings.discoverRefreshFailedShowingEarlier
+    }
+    /// The answer's age for accessibility, whether or not a line is drawn.
+    public var accessibleAge: String? {
+        guard age != nil else { return nil }
+        guard let seconds = ageSeconds else { return DulcetStrings.discoverAgeUnavailable }
+        return DulcetStrings.discoverUpdated(seconds < 60 ? DulcetStrings.readerJustNow : Self.relative(seconds, now: now))
+    }
+    private static func relative(_ seconds: Int64, now: Date) -> String {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter.localizedString(for: now.addingTimeInterval(-TimeInterval(seconds)), relativeTo: now)
     }
 }
 

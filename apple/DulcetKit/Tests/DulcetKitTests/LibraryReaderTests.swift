@@ -530,8 +530,12 @@ func anOpenListIsStatedOnlyWhileItCannotBeExtended() {
     let offline = DulcetReaderCopy.coverageLine(window(
         items, freshness: .cached(.offline, asOf: nil), coverage: "open", total: 40))
     #expect(offline?.contains("40") == true)
-    #expect(DulcetReaderCopy.coverageLine(window(items, coverage: "unverifiedScanning"))
-        == DulcetStrings.readerCoverageScanning)
+    #expect(DulcetReaderCopy.coverageLine(window(items, coverage: "unverifiedScanning")) == nil,
+            "a scan says nothing over a list that has its rows")
+    #expect(DulcetReaderCopy.coverageLine(window([], coverage: "unverifiedScanning"))
+        == DulcetStrings.readerCoverageScanning, "an empty list read during a scan says why it is empty")
+    #expect(DulcetReaderCopy.coverageLine(window(items, coverage: "unverifiedChanging"))
+        == DulcetStrings.readerCoverageChanging, "a list that may be cut short still says so")
     #expect(DulcetReaderCopy.coverageLine(window(items, coverage: "unverifiedNoEpoch")) == nil,
             "no-epoch is stated once per account, never per list")
     #expect(DulcetReaderCopy.orderLine(window(items, order: "localView")) == DulcetStrings.libraryLocalOrder)
