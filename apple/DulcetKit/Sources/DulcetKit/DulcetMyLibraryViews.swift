@@ -91,11 +91,45 @@ struct DulcetMyLibraryStatusLines: View {
 }
 
 /// The empty library's invitation; the Browse action reads and acts as a button. It follows the
-/// Library's sections inside their scrolling page.
+/// Library's sections inside their scrolling page. On Library's home it is `compact`: a short
+/// leading-aligned block, so that under the seven section rows the whole of it, Browse included,
+/// sits above the tab bar and the playing bar instead of behind them.
 struct DulcetMyLibraryEmptyState: View {
     @Environment(DulcetPresentationStore.self) private var store
+    var compact = false
 
     var body: some View {
+#if !os(tvOS)
+        if compact { compactInvitation } else { fullInvitation }
+#else
+        fullInvitation
+#endif
+    }
+
+#if !os(tvOS)
+    private var compactInvitation: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
+            Text(DulcetStrings.myLibraryEmptyTitle)
+                .font(.headline)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(DulcetStrings.myLibraryEmptyBody)
+                .font(.subheadline)
+                .dulcetForeground(.secondaryTextOnWindow)
+                .fixedSize(horizontal: false, vertical: true)
+            Button(DulcetStrings.browseSection, systemImage: "globe") { store.navigate(to: .browse) }
+                .buttonStyle(.bordered)
+                .padding(.top, DulcetSpacing.xs)
+                .accessibilityIdentifier("dulcet.myLibrary.browse")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.vertical, DulcetSpacing.md)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("dulcet.myLibrary.invitation")
+    }
+#endif
+
+    @ViewBuilder
+    private var fullInvitation: some View {
 #if os(tvOS)
         // Apple TV keeps the compact invitation until its page frame moves (tvOS polish): under
         // the seven section rows, the full state message's glyph would push Browse past the
@@ -299,6 +333,44 @@ struct DulcetMyLibrarySectionPage: View {
     private func refresh() { (store.librarySession?.reader as? any DulcetMyLibraryReading)?.refreshMyLibrary() }
 }
 
+/// What Library's home shows under its sections. My Library starts empty on purpose: it is what
+/// each person adds, never seeded from their playlists, plays or downloads. Until they add
+/// something, the home still shows music that is already theirs -- their playlists and what is
+/// on this device -- and invites them to Browse only when there is none.
+enum DulcetLibraryHomeContent: Equatable {
+    /// A read the decision depends on has not answered yet: draw nothing rather than a poster
+    /// that a moment later gives way to the person's music.
+    case waiting
+    case recentlyAdded
+    case yourMusic(playlists: Bool, downloads: Bool)
+    case invitation
+
+    /// The most tiles one playlists or downloads shelf shows; See All opens the rest.
+    static let shelfLimit = 8
+
+    enum Shelf: Equatable {
+        case pending
+        case empty
+        case filled
+
+        init(_ window: DulcetLibraryWindow?) {
+            guard let window else { self = .pending; return }
+            if !window.items.isEmpty { self = .filled }
+            else if window.freshness == .loading || window.itemsState == .loading { self = .pending }
+            else { self = .empty }
+        }
+    }
+
+    static func resolve(library: DulcetMyLibrarySnapshot, playlists: Shelf, downloads: Shelf) -> Self {
+        if !(library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty) { return .recentlyAdded }
+        if playlists == .filled || downloads == .filled {
+            return .yourMusic(playlists: playlists == .filled, downloads: downloads == .filled)
+        }
+        if library.syncState == "syncing" || playlists == .pending || downloads == .pending { return .waiting }
+        return .invitation
+    }
+}
+
 struct DulcetMyLibraryView: View {
     @Environment(DulcetPresentationStore.self) private var store
     private var section: DulcetMyLibrarySection { store.myLibrarySection }
@@ -371,7 +443,20 @@ struct DulcetMyLibraryView: View {
     private var root: some View { compactHome }
 
     /// One personal root on every platform; category selection opens an actual page.
+    ///
+    /// Under the sections it shows the person's own music: Recently Added once they have added
+    /// something; before that, the playlists and downloads they already have; the invitation only
+    /// when there is none of these. Playlists and downloads are read outside the List: an empty
+    /// conditional row inside it never receives the appearance that would start its read.
     private var compactHome: some View {
+        DulcetReaderScreen(query: .playlists) { playlists in
+            DulcetReaderScreen(query: .downloadedAlbums) { downloads in
+                homeList(playlists: playlists.window, downloads: store.downloadsEnabled ? downloads.window : nil)
+            }
+        }
+    }
+
+    private func homeList(playlists: DulcetLibraryWindow?, downloads: DulcetLibraryWindow?) -> some View {
         GeometryReader { geometry in
             List {
                 Section {
@@ -385,9 +470,18 @@ struct DulcetMyLibraryView: View {
                     DulcetPinnedLibraryItems().dulcetHideListRowSeparator()
                 }
                 if let library = store.librarySession?.myLibrary {
-                    if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
-                        if library.syncState != "syncing" { DulcetMyLibraryEmptyState() }
-                    } else {
+                    let content = DulcetLibraryHomeContent.resolve(
+                        library: library,
+                        playlists: DulcetLibraryHomeContent.Shelf(playlists),
+                        downloads: store.downloadsEnabled ? DulcetLibraryHomeContent.Shelf(downloads) : .empty
+                    )
+                    switch content {
+                    case .waiting:
+                        EmptyView()
+                    case .invitation:
+                        DulcetMyLibraryEmptyState(compact: true)
+                            .dulcetHideListRowSeparator()
+                    case .recentlyAdded:
                         Section {
                             DulcetMyLibraryCollection(library: library, section: .recent, width: geometry.size.width,
                                 onFirstGridWidthChange: recordRecentGridWidth)
@@ -400,6 +494,19 @@ struct DulcetMyLibraryView: View {
                             }
                             .textCase(nil)
                         }
+                    case let .yourMusic(showsPlaylists, showsDownloads):
+                        if showsPlaylists, let playlists {
+                            homeShelf(DulcetStrings.readerPlaylists, identifier: "dulcet.myLibrary.home.playlists",
+                                items: playlists.items, width: geometry.size.width, observesWidth: true) {
+                                store.pushReaderPage(.myLibrarySection(.playlists))
+                            }
+                        }
+                        if showsDownloads, let downloads {
+                            homeShelf(DulcetStrings.libraryDownloaded, identifier: "dulcet.myLibrary.home.downloaded",
+                                items: downloads.items, width: geometry.size.width, observesWidth: !showsPlaylists) {
+                                store.pushReaderPage(.downloaded)
+                            }
+                        }
                     }
                 }
             }
@@ -411,6 +518,30 @@ struct DulcetMyLibraryView: View {
 #if !os(tvOS)
             .refreshable { refresh() }
 #endif
+        }
+    }
+
+    /// One shelf of the person's own playlists or downloads, as artwork tiles under a See All heading.
+    private func homeShelf(_ title: String, identifier: String, items: [DulcetReaderItem], width: CGFloat,
+                           observesWidth: Bool, seeAll: @escaping () -> Void) -> some View {
+        Section {
+            let grid = DulcetArtworkGrid(items: Array(items.prefix(DulcetLibraryHomeContent.shelfLimit)), width: width) { item, _, size in
+                DulcetReaderTile(item: item, width: size)
+            }
+            Group {
+#if os(iOS)
+                if #available(iOS 27, *), observesWidth {
+                    grid.onGeometryChange(for: CGFloat.self) { proxy in proxy.size.width } action: { recordRecentGridWidth($0) }
+                } else { grid }
+#else
+                grid
+#endif
+            }
+            .id(recentGridGeneration)
+            .dulcetHideListRowSeparator()
+        } header: {
+            DulcetShelfHeader(title: title, identifier: identifier, onSeeAll: seeAll)
+                .textCase(nil)
         }
     }
 

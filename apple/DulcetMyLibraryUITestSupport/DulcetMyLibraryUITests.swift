@@ -600,6 +600,85 @@ final class DulcetMyLibraryUITests: XCTestCase {
         geometry.name = "\(user)-\(name)-accessibility-geometry"; geometry.lifetime = .keepAlways; add(geometry)
     }
 
+#if os(iOS)
+    /// Library's home under its sections, for an account in one of three states (opt-in, against
+    /// a disposable server the caller seeded): `invitation` when the person has nothing of their
+    /// own, `yourMusic` when they have playlists or downloads but have added nothing, and
+    /// `recentlyAdded` once they have. With `DULCET_LIBRARY_HOME_PLAY_ALBUM` it plays that album
+    /// first, so the playing bar is up: the invitation's Browse must still clear it and the tabs.
+    @MainActor
+    func testLibraryHomeShowsThePersonsOwnMusic() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let expected = environment["DULCET_LIBRARY_HOME_EXPECT"] else {
+            throw XCTSkip("Opt-in Library home proof against a seeded disposable server")
+        }
+        continueAfterFailure = false
+        try launch(server: environment["DULCET_LIBRARY_HOME_SERVER"], username: environment["DULCET_LIBRARY_HOME_USER"],
+                   password: environment["DULCET_LIBRARY_HOME_PASSWORD"])
+        let bar = app.descendants(matching: .any)["dulcet.mini-player"].firstMatch
+        if let album = environment["DULCET_LIBRARY_HOME_PLAY_ALBUM"] {
+            try select("browse")
+            try openAlbum(album)
+            let play = app.buttons["dulcet.album.play"].firstMatch
+            XCTAssertTrue(play.waitForExistence(timeout: 30)); activate(play)
+            XCTAssertTrue(bar.waitForExistence(timeout: 30), "Playing must raise the playing bar")
+        }
+        try select("library")
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForExistence(timeout: 30))
+        let browse = app.buttons["dulcet.myLibrary.browse"].firstMatch
+        let playlists = app.buttons["dulcet.myLibrary.home.playlists"].firstMatch
+        let downloaded = app.buttons["dulcet.myLibrary.home.downloaded"].firstMatch
+        let recent = app.buttons["dulcet.myLibrary.section.recent"].firstMatch
+        // The playing bar's progress changes the tree every second, so settle on the content's
+        // own position rather than on a still page.
+        var settleTarget = browse
+        switch expected {
+        case "invitation":
+            XCTAssertTrue(browse.waitForExistence(timeout: 30), "An account with nothing of its own is invited to Browse")
+            try waitForSteadyFrame(of: settleTarget)
+            var floor = app.tabBars.firstMatch.exists ? app.tabBars.firstMatch.frame.minY : app.frame.maxY
+            if bar.exists { floor = min(floor, bar.frame.minY) }
+            XCTAssertLessThanOrEqual(browse.frame.maxY, floor,
+                "Browse \(browse.frame) must sit above the tabs and the playing bar (\(floor))")
+            XCTAssertTrue(browse.isHittable, "Browse must take a tap where it is drawn")
+            XCTAssertFalse(playlists.exists || downloaded.exists || recent.exists)
+        case "yourMusic":
+            let shelf = playlists.waitForExistence(timeout: 30) || downloaded.waitForExistence(timeout: 30)
+            XCTAssertTrue(shelf, "An empty My Library shows the person's playlists or downloads")
+            settleTarget = playlists.exists ? playlists : downloaded
+            try waitForSteadyFrame(of: settleTarget)
+            XCTAssertFalse(browse.exists, "No invitation while the person has music of their own")
+            XCTAssertFalse(recent.exists)
+            XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@",
+                environment["DULCET_LIBRARY_HOME_TILE"] ?? "")).firstMatch.exists, "The shelf must draw the person's own tile")
+        case "recentlyAdded":
+            XCTAssertTrue(recent.waitForExistence(timeout: 30), "Added music shows as Recently Added")
+            settleTarget = recent
+            try waitForSteadyFrame(of: settleTarget)
+            XCTAssertFalse(browse.exists || playlists.exists || downloaded.exists)
+        default:
+            XCTFail("Unknown DULCET_LIBRARY_HOME_EXPECT \(expected)")
+        }
+        try capture("library-home-\(environment["DULCET_LIBRARY_HOME_CAPTURE"] ?? expected)")
+    }
+
+    /// Waits until an element has kept one frame for a second: a page whose header moved in and
+    /// stopped, even while a playing bar keeps redrawing its progress.
+    @MainActor private func waitForSteadyFrame(of element: XCUIElement) throws {
+        let deadline = Date().addingTimeInterval(20)
+        var previous = CGRect.null
+        var steady = 0
+        repeat {
+            let frame = element.exists ? element.frame : .null
+            steady = frame == previous && !frame.isNull ? steady + 1 : 0
+            if steady >= 4 { Thread.sleep(forTimeInterval: 0.5); return }
+            previous = frame
+            Thread.sleep(forTimeInterval: 0.25)
+        } while Date() < deadline
+        XCTFail("\(element) never held one position")
+    }
+#endif
+
     @MainActor
     func testNativeBaselineTour() throws {
         guard ProcessInfo.processInfo.environment["DULCET_NATIVE_BASELINE_OUT"] != nil else {
