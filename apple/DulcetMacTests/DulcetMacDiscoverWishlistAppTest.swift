@@ -365,7 +365,7 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
         let stale = try await scenario("stale-answer"); try await search(in: app)
         _ = try await item("Fixture Album 00", in: app)
         let age = try await app.element(identifiedBy: "discover.age", timeout: .seconds(20))
-        XCTAssertTrue((app.label(age) ?? "").contains("Cached answer")); try await effect("stale-answer", revision: stale)
+        XCTAssertTrue((app.label(age) ?? "").contains("showing results from 2 hours ago")); try await effect("stale-answer", revision: stale)
         let busy = try await scenario("rate-limit-120")
         try await type("Fixture new", in: app)
         let retry = try await reveal("rate-limit Retry", in: app) { app.identifier($0) == "discover.retry" }
@@ -589,9 +589,11 @@ final class DulcetMacDiscoverWishlistAppTest: XCTestCase {
             print("DISCOVER_SHELVES_MAC staleReady=true variant=\(variant) artists=\(artists.items.count) sourceAge=\(artists.age.sourceAgeSeconds ?? -1)")
             let failure = try await scenario("shelves-unavailable")
             try await press("discover.home.refresh", in: app)
-            _ = try await app.element(identifiedBy: "discover.shelf.trendingArtists.error", timeout: .seconds(30))
+            let failed = try await app.element(identifiedBy: "discover.shelf.trendingArtists.error", timeout: .seconds(30))
             try await effect("shelves-unavailable", revision: failure)
-            _ = try await app.element(identifiedBy: "discover.shelf.trendingArtists.age", timeout: .seconds(15))
+            // A failed refresh over rows it keeps is one line, with the rows' age.
+            XCTAssertTrue((app.label(failed) ?? "").contains("showing results from"))
+            XCTAssertNil(app.firstElement { app.identifier($0) == "discover.shelf.trendingArtists.age" })
             _ = try await app.element(identifiedBy: retainedID, timeout: .seconds(15))
             let retained = try XCTUnwrap(app.session.discoverPublication?.home?.shelves.first { $0.id == "trendingArtists" }?.page)
             XCTAssertEqual(retained.items.map(\.id), artists.items.map(\.id), "Failure must retain the populated stale page")

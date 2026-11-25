@@ -57,8 +57,12 @@ enum DulcetReaderCopy {
     }
 
     /// A list's coverage, stated ABOVE the list (§16.14): an open window only while it cannot be
-    /// extended -- offline, or sorted on this device -- and a scanning or changing server always.
-    /// `unverifiedNoEpoch` is stated once per account, never here.
+    /// extended -- offline, or sorted on this device -- and a list whose stamp kept changing.
+    /// A scanning server is stated only over a list that has no rows yet, where the scan is the
+    /// reason the page is empty. A server that rescans every few minutes would otherwise put the
+    /// line over complete pages a quarter of the time, and the scan's end rebases the window
+    /// quietly anyway (§16.12; §28, 2026-11-24). `unverifiedNoEpoch` is stated once per account,
+    /// never here.
     static func coverageLine(_ window: DulcetLibraryWindow) -> String? {
         switch window.coverage {
         case .open:
@@ -74,7 +78,8 @@ enum DulcetReaderCopy {
             }
             return DulcetStrings.readerCoverageOpen(shown: DulcetStrings.readerCount(kind, shown))
         case .unverifiedScanning:
-            return DulcetStrings.readerCoverageScanning
+            let settledEmpty = window.items.isEmpty && window.itemsState != .loading && window.freshness != .loading
+            return settledEmpty ? DulcetStrings.readerCoverageScanning : nil
         case .unverifiedChanging:
             return DulcetStrings.readerCoverageChanging
         case .unverifiedNoEpoch, .complete, nil:
