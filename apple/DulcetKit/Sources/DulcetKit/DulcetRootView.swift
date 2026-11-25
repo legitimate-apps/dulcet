@@ -686,6 +686,7 @@ private struct DulcetCompactShell: View {
     @State private var allowsTabMinimization = false
     @State private var searchPresented = false
     @State private var searchFieldEcho: String?
+    @State private var reshowGeneration = 0
     /// Set when a regular-width submission ends presentation, until the field is presented again.
     @State private var retainsSubmittedSearch = false
     @FocusState private var searchFieldFocused: Bool
@@ -780,6 +781,9 @@ private struct DulcetCompactShell: View {
                 searchPresented = false
             }
         }
+        .onChange(of: leftSearch) { _, left in
+            if !left { reshowQuery() }
+        }
         .onChange(of: store.searchFocusRequested) { _, requested in
             if requested && !usesInlineSearch {
                 searchPresented = true
@@ -807,6 +811,8 @@ private struct DulcetCompactShell: View {
         Binding(
             get: { searchFieldEcho ?? store.searchQuery },
             set: { text in
+                // The field reporting the echo's own empty text back is not an edit.
+                if let echo = searchFieldEcho, text == echo { return }
                 if text.isEmpty, !store.searchQuery.isEmpty,
                    (retainsSubmittedSearch && !searchPresented) || leftSearch {
                     // The field has already emptied itself, and SwiftUI writes a value back only
@@ -818,6 +824,36 @@ private struct DulcetCompactShell: View {
                 store.searchQuery = text
             }
         )
+    }
+
+    /// Puts the query back into the native field once Search's results show again. The field
+    /// emptied itself when the person left, and the echo in `searchText` lands while a pushed
+    /// page or another tab covers the bar: OBSERVED on iOS 27, Back to the results and a return
+    /// to the tab both showed the placeholder above results for the query. Wait out the pop or
+    /// tab transition, so the bar is attached again, then change the binding's value twice.
+    /// Writing the text after Back focused the field: OBSERVED on an iPhone with iOS 26, the
+    /// keyboard rose over the results, where Apple Music keeps it down. Only the text comes back,
+    /// so a focus the write raised is resigned, as submission does; presentation, which keeps
+    /// the query, is left alone.
+    private func reshowQuery() {
+        guard !usesInlineSearch else { return }
+        reshowGeneration &+= 1
+        let generation = reshowGeneration
+        Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(450))
+            guard generation == reshowGeneration, !leftSearch, !store.searchQuery.isEmpty else { return }
+            let focusedBefore = searchFieldFocused
+            searchFieldEcho = ""
+            try? await Task.sleep(for: .milliseconds(50))
+            guard generation == reshowGeneration else { return }
+            searchFieldEcho = nil
+            guard !focusedBefore else { return }
+            for _ in 0..<6 {
+                try? await Task.sleep(for: .milliseconds(50))
+                guard generation == reshowGeneration else { return }
+                if searchFieldFocused { searchFieldFocused = false; return }
+            }
+        }
     }
 
     private var hasSystemAccessory: Bool { if #available(iOS 26.1, *) { true } else { false } }
