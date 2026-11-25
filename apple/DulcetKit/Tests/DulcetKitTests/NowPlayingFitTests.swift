@@ -104,7 +104,12 @@ func aTallPhoneSharesItsSpareHeightAroundTheCoverInsteadOfOneBandUnderIt(size: C
     )
     let gapToTitle = layout.column.minY - layout.cover.maxY
     #expect(abs(layout.cover.width - layout.column.width) <= 1, "\(size): cover \(layout.cover.width), column \(layout.column.width)")
+#if os(iOS)
+    // The absolute bound is a phone claim: macOS lays the same sheet out with its smaller system
+    // text, so the controls are shorter and more height is spare (109 pt at 440 x 860). The split
+    // below still holds there.
     #expect(gapToTitle <= DulcetNowPlayingView.coverToTitleSpacing + 70, "\(size): \(gapToTitle) pt between cover and title")
+#endif
     #expect(layout.footer.maxY <= size.height, "\(size): footer ends at \(layout.footer.maxY)")
     // The spare height is split, with the larger share above the cover.
     let spare = gapToTitle - DulcetNowPlayingView.coverToTitleSpacing
