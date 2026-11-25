@@ -2281,6 +2281,9 @@ struct DulcetReaderTrackListPage: View {
 struct DulcetReaderArtistPage: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(DulcetPresentationStore.self) private var store
+#if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+#endif
     let id: DulcetProviderItemID
 
     var body: some View {
@@ -2298,6 +2301,68 @@ struct DulcetReaderArtistPage: View {
     private var stackedPage: some View {
         DulcetReaderScreen(query: .artist(rawID: id.rawID), showsDestinationStatus: true) { model in
           DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { topSongs in
+#if os(iOS)
+            // A phone's artist page opens on the artist's picture, edge to edge, as Music's does.
+            // A regular-width iPad keeps the shared detail header beside its wide columns.
+            if horizontalSizeClass == .compact {
+                heroPage(model: model, topSongs: topSongs)
+            } else {
+                readerPage(model: model, topSongs: topSongs)
+            }
+#else
+            readerPage(model: model, topSongs: topSongs)
+#endif
+          }
+        }
+    }
+
+#if os(iOS)
+    private func heroPage(model: DulcetLibraryWindowModel, topSongs: DulcetLibraryWindowModel) -> some View {
+        DulcetArtistHeroPage(title: model.window?.header?.displayTitle ?? "") { width, height, barBottom in
+            if let header = model.window?.header {
+                let albums = model.window?.items.filter { $0.kind == .album } ?? []
+                let playable = topSongs.window?.playableTracks ?? []
+                let hasMusic = !playable.isEmpty || !albums.isEmpty
+                DulcetArtistHero(
+                    title: header.displayTitle,
+                    metadata: DulcetArtistDiscography.albumCountLabel(albums),
+                    artwork: header.artwork,
+                    fallback: DulcetArtistHeroLayout.newestAlbum(albums)?.artwork,
+                    height: height,
+                    barBottom: barBottom
+                ) {
+                    DulcetArtistHeroActions(isEnabled: hasMusic) {
+                        store.playArtist(id: id, name: header.displayTitle, topSongs: playable, albums: albums, shuffle: false)
+                    } shuffle: {
+                        store.playArtist(id: id, name: header.displayTitle, topSongs: playable, albums: albums, shuffle: true)
+                    }
+                }
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Menu(DulcetStrings.more, systemImage: "ellipsis") { DulcetReaderItemMenuItems(item: header) }
+                            .accessibilityLabel(DulcetStrings.more)
+                            .accessibilityIdentifier("dulcet.artist.more")
+                    }
+                }
+            } else {
+                // The bar's own space while the artist loads, so the spinner is not under it.
+                Color.clear.frame(height: barBottom)
+            }
+        } content: { width in
+            if let window = model.window {
+                DulcetArtistTopSongsSection(id: id, model: topSongs)
+                    .accessibilityIdentifier("dulcet.artist.topSongs")
+                DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { _ in
+                    DulcetArtistDiscography(items: window.items, width: width)
+                }
+            } else {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 120) // design-token: allow the shared artist page's loading placeholder
+            }
+        }
+    }
+#endif
+
+    private func readerPage(model: DulcetLibraryWindowModel, topSongs: DulcetLibraryWindowModel) -> some View {
             DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false, titleInHeader: true) { width in
                 if let window = model.window {
                     if let header = window.header {
@@ -2322,8 +2387,6 @@ struct DulcetReaderArtistPage: View {
                     ProgressView().frame(maxWidth: .infinity, minHeight: 120)
                 }
             }
-          }
-        }
     }
 
     /// The shared detail header: the artist's circle, name and album count, then Play and Shuffle.

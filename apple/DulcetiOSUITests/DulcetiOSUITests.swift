@@ -5273,6 +5273,96 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         proveTrackRowAndArtistHeartsReachTheServer(compact: false)
     }
 
+    /// The iPhone artist page opens on its hero, the artist's name over the picture and not in the
+    /// navigation bar; scrolled until that name is under the bar, the bar takes it; scrolled back,
+    /// the bar gives it up. A page that put the name in the bar at rest, or never, looks fine in
+    /// any single screenshot, so this is asserted from the bar itself.
+    ///
+    /// `DULCET_ARTIST_HERO_ARTIST` names another fixture artist (default Dulcet Fixtures, which has
+    /// no photo); `DULCET_ARTIST_HERO_CAPTURE_DIR` writes the rest, pulled and scrolled frames
+    /// there as PNGs for review.
+    @MainActor
+    func testTheArtistNameMovesIntoTheBarOnlyOnceTheHeroScrollsAwayOnIPhone() {
+        guard ProcessInfo.processInfo.environment["SIMULATOR_UDID"] != nil else {
+            XCTFail("This proof requires a simulator; a physical device is not the destination it names")
+            return
+        }
+        guard let configuration = livePlaybackConfiguration() else { return }
+        let environment = ProcessInfo.processInfo.environment
+        let artist = environment["DULCET_ARTIST_HERO_ARTIST"] ?? "Dulcet Fixtures"
+        let captureDirectory = environment["DULCET_ARTIST_HERO_CAPTURE_DIR"]
+        func capture(_ name: String) {
+            guard let captureDirectory else { return }
+            let slug = artist.lowercased().replacingOccurrences(of: " ", with: "-")
+            let url = URL(fileURLWithPath: captureDirectory).appendingPathComponent("\(slug)-\(name).png")
+            try? XCUIScreen.main.screenshot().pngRepresentation.write(to: url)
+        }
+        guard let app = launchConnected(serverURL: configuration.serverURL, configuration: configuration, compact: true),
+              openSidebarLibrarySection("artists", in: app, compact: true) else { return }
+        let row = app.buttons.matching(identifier: "dulcet.library.artist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", artist)).firstMatch
+        guard row.waitForExistence(timeout: 20), scrollIntoView(row, in: app) else {
+            XCTFail("Artists must list \(artist): " + app.debugDescription)
+            return
+        }
+        row.tap()
+        let heroTitle = app.staticTexts["dulcet.artist.title"].firstMatch
+        guard heroTitle.waitForExistence(timeout: 15), heroTitle.label == artist else {
+            XCTFail("The artist row must open \(artist)'s page: " + app.debugDescription)
+            return
+        }
+        let bar = app.navigationBars.firstMatch
+        let barTitle = bar.staticTexts[artist]
+        XCTAssertTrue(bar.waitForExistence(timeout: 5), app.debugDescription)
+        // At rest: the name sits on the hero below the bar, and the bar is untitled.
+        XCTAssertGreaterThan(heroTitle.frame.minY, bar.frame.maxY, "The name must rest on the hero below the bar")
+        XCTAssertTrue(app.buttons["dulcet.artist.play"].firstMatch.exists && app.buttons["dulcet.artist.shuffle"].firstMatch.exists)
+        XCTAssertFalse(barTitle.exists, "The bar must not carry the name while the hero shows it: " + bar.debugDescription)
+        RunLoop.current.run(until: Date().addingTimeInterval(2))
+        capture("1-rest")
+
+        // Pulled down: the hero stretches and the name moves down with it, still out of the bar.
+        let restingMinY = heroTitle.frame.minY
+        let window = app.windows.firstMatch
+        let pullStart = window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55))
+        pullStart.press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.85)),
+                        withVelocity: .slow, thenHoldForDuration: 1.0)
+        XCTAssertGreaterThanOrEqual(heroTitle.frame.minY, restingMinY, "A pull must not move the name up")
+        XCTAssertFalse(barTitle.exists)
+        if let captureDirectory {
+            // A held pull, photographed from outside the test (simctl io) while it is held: the
+            // runner cannot take its own screenshot in the middle of its own gesture.
+            let marker = URL(fileURLWithPath: captureDirectory).appendingPathComponent("pull-held")
+            try? Data().write(to: marker)
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                .press(forDuration: 0.1, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8)),
+                       withVelocity: .slow, thenHoldForDuration: 4)
+            try? FileManager.default.removeItem(at: marker)
+        }
+
+        // Scrolled until the hero's name is under the bar: the bar takes the name.
+        var swipes = 0
+        while heroTitle.exists, heroTitle.frame.maxY >= bar.frame.maxY, swipes < 6 {
+            window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7))
+                .press(forDuration: 0.05, thenDragTo: window.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.55)))
+            swipes += 1
+            RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+            capture("3-scroll-\(swipes)")
+        }
+        XCTAssertTrue(barTitle.waitForExistence(timeout: 5),
+            "Once the hero has scrolled away the bar must carry the name: " + bar.debugDescription)
+        app.swipeUp(velocity: .slow)
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        capture("4-collapsed")
+
+        // Back to the top: the hero shows the name again and the bar lets it go.
+        for _ in 0..<(swipes + 3) { app.swipeDown(velocity: .fast) }
+        let released = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: barTitle)
+        XCTAssertEqual(XCTWaiter.wait(for: [released], timeout: 5), .completed,
+            "Back at the top the bar must give the name back to the hero: " + bar.debugDescription)
+        XCTAssertGreaterThan(heroTitle.frame.minY, bar.frame.maxY)
+    }
+
     /// The heart beside a track on an album page, then the heart on that album's artist page: each
     /// fills with the tap, before the server answers, and the star reaches the server for that
     /// track or artist; taking it off empties it at once and unstars it, so the server ends as it
