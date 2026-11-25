@@ -233,6 +233,12 @@ struct DulcetLibraryCategoryControls: View {
                         Text(DulcetStrings.libraryUndatedAlbums).font(.caption).dulcetForeground(.secondaryTextOnWindow)
                     }
                 }
+#if os(iOS)
+                // Inside a `List` cell a menu picker draws as a settings row, its label ("Sort
+                // By") at the leading edge and the value at the trailing one. Outside one it shows
+                // only the value; hidden labels keep that in both, and stay the accessibility label.
+                .labelsHidden()
+#endif
             }
 #endif
         }
@@ -371,20 +377,22 @@ struct DulcetLibrarySongsPage: View {
             DulcetReaderListPage(title: title, freshness: model.window?.freshness) { _ in
                 // Keep the Downloaded status in the scrolling document. Its intrinsic text
                 // height must not become a minimum height for the Mac split-view column.
-                if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
-                Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
-                    .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
-                DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
-                Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
-                    if downloaded {
-                        store.playReaderTracks(model.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
-                    } else { store.librarySession?.shuffleLibrarySongs(using: store) }
-                }
-                .buttonStyle(.dulcetProminent)
-                .disabled((downloaded || store.librarySession?.isOnline != true) && (model.window?.playableTracks.isEmpty ?? true))
-                .accessibilityIdentifier("dulcet.songs.shuffleAll")
-                if !downloaded && store.librarySession?.isOnline == true {
-                    Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                DulcetReaderListHeader {
+                    if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
+                    Text(downloaded ? DulcetStrings.libraryDownloadedHint : DulcetStrings.librarySongsHint)
+                        .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+                    DulcetLibraryCategoryControls(category: downloaded ? "downloaded" : "songs")
+                    Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
+                        if downloaded {
+                            store.playReaderTracks(model.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
+                        } else { store.librarySession?.shuffleLibrarySongs(using: store) }
+                    }
+                    .buttonStyle(.dulcetProminent)
+                    .disabled((downloaded || store.librarySession?.isOnline != true) && (model.window?.playableTracks.isEmpty ?? true))
+                    .accessibilityIdentifier("dulcet.songs.shuffleAll")
+                    if !downloaded && store.librarySession?.isOnline == true {
+                        Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                    }
                 }
 #if os(iOS)
                 DulcetReaderListRows(model: model) { window in
@@ -446,23 +454,27 @@ struct DulcetDownloadedPage: View {
     var body: some View {
         DulcetReaderScreen(query: .downloaded) { songs in
             DulcetReaderListPage(title: title, freshness: songs.window?.freshness) { width in
-                Text(DulcetStrings.libraryDownloadedHint)
-                    .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
-                Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
-                    store.playReaderTracks(songs.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
+                DulcetReaderListHeader {
+                    Text(DulcetStrings.libraryDownloadedHint)
+                        .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
+                    Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
+                        store.playReaderTracks(songs.window?.playableTracks ?? [], shuffle: true, sourceKind: .library, sourceID: nil, sourceName: title)
+                    }
+                    .buttonStyle(.dulcetProminent)
+                    .disabled(songs.window?.playableTracks.isEmpty ?? true)
+                    .accessibilityIdentifier("dulcet.songs.shuffleAll")
+                    Picker(title, selection: $section) {
+                        ForEach(DulcetDownloadedSection.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .accessibilityIdentifier("dulcet.downloaded.section")
+                    if section == .songs {
+                        DulcetLibraryCategoryControls(category: "downloaded")
+                    }
                 }
-                .buttonStyle(.dulcetProminent)
-                .disabled(songs.window?.playableTracks.isEmpty ?? true)
-                .accessibilityIdentifier("dulcet.songs.shuffleAll")
-                Picker(title, selection: $section) {
-                    ForEach(DulcetDownloadedSection.allCases) { Text($0.title).tag($0) }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .accessibilityIdentifier("dulcet.downloaded.section")
                 switch section {
                 case .songs:
-                    DulcetLibraryCategoryControls(category: "downloaded")
                     songList(songs)
                 default:
                     DulcetDownloadedCollection(section: section, width: width)

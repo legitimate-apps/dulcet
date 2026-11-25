@@ -1515,6 +1515,23 @@ struct DulcetReaderListRows<Rows: View>: View {
 }
 #endif
 
+/// The controls above a `DulcetReaderListPage`'s rows. A `List` spaces none of its cells, so on
+/// iOS they share one cell stacked with the page's section gap; elsewhere they join the page's
+/// own stack unchanged.
+struct DulcetReaderListHeader<Content: View>: View {
+    @ViewBuilder let content: Content
+
+    var body: some View {
+#if os(iOS)
+        VStack(alignment: .leading, spacing: DulcetSpacing.md) { content }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, DulcetSpacing.md)
+#else
+        content
+#endif
+    }
+}
+
 /// A song-row page hosted in a plain `List` on iOS so row `swipeActions` reach each song, and
 /// forwarding to `DulcetReaderPage` on macOS and tvOS.
 struct DulcetReaderListPage<Content: View>: View {
@@ -2187,6 +2204,9 @@ struct DulcetReaderTrackListPage: View {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             }
         }
+#if os(iOS)
+        .toolbar { pageToolbar(model.window?.header) }
+#endif
     }
 
 #if os(tvOS)
@@ -2314,18 +2334,25 @@ struct DulcetReaderTrackListPage: View {
             playbackActions(window)
 #endif
         }
-#if !os(tvOS)
-        .toolbar {
-            if let item {
-                ToolbarItem(placement: .primaryAction) {
-                    Menu { DulcetReaderItemMenuItems(item: item) }
-                    label: { Label(DulcetStrings.more, systemImage: "ellipsis") }
-                        .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
-                }
-            }
-        }
+#if os(macOS)
+        .toolbar { pageToolbar(item) }
 #endif
     }
+
+#if !os(tvOS)
+    /// The page's More. On iOS the header is a `List` cell, and a cell scrolled out of the list
+    /// takes its toolbar items with it, so the page carries them instead of the header.
+    @ToolbarContentBuilder
+    private func pageToolbar(_ item: DulcetReaderItem?) -> some ToolbarContent {
+        if let item {
+            ToolbarItem(placement: .primaryAction) {
+                Menu { DulcetReaderItemMenuItems(item: item) }
+                label: { Label(DulcetStrings.more, systemImage: "ellipsis") }
+                    .accessibilityIdentifier("dulcet.\(kind.rawValue).more")
+            }
+        }
+    }
+#endif
 
     private func playbackActions(_ window: DulcetLibraryWindow) -> some View {
         DulcetEqualWidthActions {

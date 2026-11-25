@@ -224,6 +224,11 @@ private struct DulcetPlaylistPageContent: View {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             }
         }
+#if os(iOS)
+        .toolbar {
+            if let window = model.window { pageToolbar(window) }
+        }
+#endif
     }
 
     private static func isUnavailable(_ window: DulcetLibraryWindow) -> Bool {
@@ -281,29 +286,41 @@ private struct DulcetPlaylistPageContent: View {
                 .accessibilityIdentifier("dulcet.playlist.shuffle")
             }
         }
-#if !os(tvOS)
-        .toolbar {
-            if let item {
-                if item.isEditable, store.playlistEditor != nil {
-                    ToolbarItem(placement: .primaryAction) {
-                        Button(DulcetStrings.playlistEdit) { editing = true }
-                            .disabled(DulcetPlaylistEditContext(window: window, id: id) == nil)
-                            .accessibilityIdentifier("dulcet.playlist.edit")
-                    }
-                }
-                ToolbarItem(placement: .primaryAction) {
-                    // Built from a title: a Mac menu with a custom label reached accessibility as
-                    // no element at all. This one is a menu button named More.
-                    Menu(DulcetStrings.more, systemImage: "ellipsis") {
-                        playlistMenuItems(item)
-                    }
-                    .accessibilityLabel(DulcetStrings.more)
-                    .accessibilityIdentifier("dulcet.playlist.more")
-                }
-            }
-        }
+#if os(macOS)
+        .toolbar { pageToolbar(window) }
 #endif
     }
+
+#if !os(tvOS)
+    /// Edit and More. On iOS the header is a `List` cell, and a cell scrolled out of the list
+    /// takes its toolbar items with it, so the page carries them instead of the header.
+    @ToolbarContentBuilder
+    private func pageToolbar(_ window: DulcetLibraryWindow) -> some ToolbarContent {
+        let item = window.header
+        if let item {
+            if item.isEditable, store.playlistEditor != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(DulcetStrings.playlistEdit) { editing = true }
+                        .disabled(DulcetPlaylistEditContext(window: window, id: id) == nil)
+                        .accessibilityIdentifier("dulcet.playlist.edit")
+#if os(iOS)
+                        // In the label colour the header's content gave it when it carried the toolbar.
+                        .dulcetForeground(.primaryTextOnWindow)
+#endif
+                }
+            }
+            ToolbarItem(placement: .primaryAction) {
+                // Built from a title: a Mac menu with a custom label reached accessibility as
+                // no element at all. This one is a menu button named More.
+                Menu(DulcetStrings.more, systemImage: "ellipsis") {
+                    playlistMenuItems(item)
+                }
+                .accessibilityLabel(DulcetStrings.more)
+                .accessibilityIdentifier("dulcet.playlist.more")
+            }
+        }
+    }
+#endif
 
 #if !os(tvOS)
     /// The page's More: Rename and Delete for the person's own playlist, around the actions every
