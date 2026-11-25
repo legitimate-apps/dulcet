@@ -920,6 +920,42 @@ struct DulcetTrackRow<Trailing: View>: View {
         offline && (searchPresentation != nil || !track.downloadState.isLocallyPlayable)
     }
 
+    private var resolvedQueueAddition: DulcetQueueAddition {
+        queueAddition ?? .track(track, in: store)
+    }
+
+    @MainActor
+    static func offersQueueSwipeActions(
+        track: DulcetTrack,
+        addition: DulcetQueueAddition,
+        in store: DulcetPresentationStore,
+        offline: Bool = false,
+        isSearchResult: Bool = false,
+        hasActivation: Bool = true,
+        allowsTrackDrag: Bool = true
+    ) -> Bool {
+        let unavailable = offline && (isSearchResult || !track.downloadState.isLocallyPlayable || !hasActivation)
+        return allowsTrackDrag
+            && track.availability == .playable
+            && DulcetQueueInsertionMenuItems.isOffered(
+                addition: addition,
+                in: store,
+                unavailableOffline: unavailable
+            )
+    }
+
+    private var offersQueueSwipeActions: Bool {
+        Self.offersQueueSwipeActions(
+            track: track,
+            addition: resolvedQueueAddition,
+            in: store,
+            offline: offline,
+            isSearchResult: searchPresentation != nil,
+            hasActivation: onActivate != nil,
+            allowsTrackDrag: allowsTrackDrag
+        )
+    }
+
     var body: some View {
 #if os(macOS)
         if managedByTable {
@@ -934,6 +970,15 @@ struct DulcetTrackRow<Trailing: View>: View {
             .swipeActions(edge: .leading, allowsFullSwipe: false) {
                 DulcetFavouriteMenuItem(target: .init(kind: .track, id: track.id), published: track.isFavorite)
                     .tint(.accentColor)
+            }
+            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                if offersQueueSwipeActions {
+                    DulcetQueueInsertionMenuItems(
+                        addition: resolvedQueueAddition,
+                        haptic: .queue,
+                        tintsForSwipe: true
+                    )
+                }
             }
 #endif
 #endif
@@ -1484,6 +1529,48 @@ struct DulcetAlbumDetailView: View {
         GeometryReader { geometry in
             let width = geometry.size.width
             let inset = DulcetLibraryMetrics.horizontalInset(forWidth: width)
+#if os(iOS)
+            List {
+                Group {
+                    DulcetAlbumHeader(
+                        album: album,
+                        layout: Self.headerLayout(
+                            width: width,
+                            accessibilitySize: dynamicTypeSize.isAccessibilitySize
+                        ),
+                        artworkSize: Self.artworkSize(
+                            width: width,
+                            inset: inset,
+                            accessibilitySize: dynamicTypeSize.isAccessibilitySize
+                        ),
+                        onPlay: onPlay,
+                        onShuffle: onShuffle
+                    )
+                    .padding(.bottom, DulcetSpacing.lg)
+
+                    if let tracksFailure {
+                        trackListFailure(tracksFailure)
+                            .padding(.bottom, DulcetSpacing.lg)
+                    } else if !album.areTracksLoaded {
+                        trackListLoading
+                            .padding(.bottom, DulcetSpacing.lg)
+                    }
+
+                    trackListingRows
+                }
+                .listRowInsets(EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset))
+                .listRowSeparator(.hidden)
+                .listRowBackground(Color.clear)
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .environment(\.defaultMinListRowHeight, 0)
+            .contentMargins(.vertical, DulcetSpacing.lg, for: .scrollContent)
+            .coordinateSpace(name: "dulcet.detail.scroll")
+            .onPreferenceChange(DulcetDetailTitleBottom.self) { bottom in
+                if bottom.isFinite { titleAboveViewport = bottom < 0 }
+            }
+#else
             ScrollView {
                 VStack(alignment: .leading, spacing: DulcetSpacing.lg) {
                     DulcetAlbumHeader(
@@ -1515,6 +1602,7 @@ struct DulcetAlbumDetailView: View {
             }
             .coordinateSpace(name: "dulcet.detail.scroll")
             .onPreferenceChange(DulcetDetailTitleBottom.self) { titleAboveViewport = $0 < 0 }
+#endif
         }
         .background(Color.dulcetWindow)
         .dulcetForeground(.primaryTextOnWindow)
@@ -1541,6 +1629,39 @@ struct DulcetAlbumDetailView: View {
         )
     }
 
+#if os(iOS)
+    @ViewBuilder
+    private var trackListingRows: some View {
+        let multipleDiscs = album.discNumbers.count > 1
+        ForEach(album.discNumbers, id: \.self) { disc in
+            if multipleDiscs {
+                Text(DulcetStrings.discTitle(disc))
+                    .font(.headline)
+                    .dulcetForeground(.secondaryTextOnWindow)
+                    .padding(.top, disc == album.discNumbers.first ? 0 : DulcetSpacing.lg)
+                    .padding(.bottom, DulcetSpacing.xs)
+                    .accessibilityAddTraits(.isHeader)
+            }
+            let tracks = album.tracks.filter { ($0.discNumber ?? 1) == disc }
+            ForEach(Array(tracks.enumerated()), id: \.element.id) { index, track in
+                DulcetTrackRow(
+                    track: track,
+                    showAlbum: false,
+                    index: index + 1,
+                    surface: .window,
+                    isCurrent: store.isNowPlaying(track),
+                    showsArtwork: false,
+                    albumArtists: album.albumArtists,
+                    onActivate: { onActivateTrack(track) },
+                    onDownload: onDownloadTrack.map { handler in
+                        { handler(track) }
+                    }
+                )
+                .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: false)
+            }
+        }
+    }
+#else
     @ViewBuilder
     private var trackListing: some View {
         let multipleDiscs = album.discNumbers.count > 1
@@ -1585,6 +1706,7 @@ struct DulcetAlbumDetailView: View {
             }
         }
     }
+#endif
 
     private var trackListLoading: some View {
         HStack(spacing: DulcetSpacing.sm) {
@@ -2065,15 +2187,65 @@ struct DulcetContextMenuPreview: View {
 struct DulcetQueueInsertionMenuItems: View {
     @Environment(DulcetPresentationStore.self) private var store
     let addition: DulcetQueueAddition
+    var haptic: DulcetHaptic? = nil
+    var tintsForSwipe = false
+
+    @MainActor
+    static func isOffered(
+        addition: DulcetQueueAddition,
+        in store: DulcetPresentationStore,
+        unavailableOffline: Bool = false
+    ) -> Bool {
+        store.queueEditingEnabled
+            && !unavailableOffline
+            && addition.tracks.contains { $0.availability == .playable }
+    }
+
+    @MainActor
+    static func playNext(
+        _ addition: DulcetQueueAddition,
+        in store: DulcetPresentationStore,
+        unavailableOffline: Bool = false,
+        haptic: DulcetHaptic? = nil
+    ) {
+        guard isOffered(addition: addition, in: store, unavailableOffline: unavailableOffline) else { return }
+        haptic?.play()
+        store.editQueue(.playNext(addition))
+    }
+
+    @MainActor
+    static func addToQueue(
+        _ addition: DulcetQueueAddition,
+        in store: DulcetPresentationStore,
+        unavailableOffline: Bool = false,
+        haptic: DulcetHaptic? = nil
+    ) {
+        guard isOffered(addition: addition, in: store, unavailableOffline: unavailableOffline) else { return }
+        haptic?.play()
+        store.editQueue(.playLater(addition))
+    }
 
     var body: some View {
-        if store.queueEditingEnabled, !addition.tracks.isEmpty {
-            Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") {
-                store.editQueue(.playNext(addition))
+        if Self.isOffered(addition: addition, in: store) {
+            if tintsForSwipe {
+                playNextButton.tint(.indigo)
+                addToQueueButton.tint(.orange)
+            } else {
+                playNextButton
+                addToQueueButton
             }
-            Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") {
-                store.editQueue(.playLater(addition))
-            }
+        }
+    }
+
+    private var playNextButton: some View {
+        Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") {
+            Self.playNext(addition, in: store, haptic: haptic)
+        }
+    }
+
+    private var addToQueueButton: some View {
+        Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") {
+            Self.addToQueue(addition, in: store, haptic: haptic)
         }
     }
 }

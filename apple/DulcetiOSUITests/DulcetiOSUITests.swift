@@ -6331,7 +6331,7 @@ final class DulcetiOSUITests: PlayerHittabilityTestCase {
         // every row already. Keep the reachability check for smaller windows and keyboards,
         // and preserve the rank assertions above independently of any scrolling.
         let canaryResult = app.buttons["dulcet.search.result.\(canaryRank)"].firstMatch
-        let resultsList = app.scrollViews.firstMatch
+        let resultsList = app.collectionViews.firstMatch.exists ? app.collectionViews.firstMatch : app.scrollViews.firstMatch
         guard resultsList.waitForExistence(timeout: 5) else {
             XCTFail("The ranked results must render in a scrollable list: " + app.debugDescription)
             return

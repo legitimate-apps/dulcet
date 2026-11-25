@@ -170,14 +170,24 @@ struct DulcetMyLibraryCollection: View {
 #endif
     }
 
+    @ViewBuilder
     private func tracks(_ items: [DulcetReaderItem]) -> some View {
+#if os(iOS)
+        trackRows(items)
+#else
         LazyVStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
-                DulcetReaderTrackRow(item: item, index: index + 1) { track in
-                    store.playReaderTracks(items.compactMap(\.playableTrack), startingAt: track, sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
-                }
-                .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
+            trackRows(items)
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private func trackRows(_ items: [DulcetReaderItem]) -> some View {
+        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                store.playReaderTracks(items.compactMap(\.playableTrack), startingAt: track, sourceKind: .library, sourceID: nil, sourceName: DulcetStrings.library)
             }
+            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
         }
     }
 }
@@ -193,6 +203,41 @@ struct DulcetMyLibrarySectionPage: View {
                 DulcetPlaylistsView()
             } else {
                 GeometryReader { geometry in
+#if os(iOS)
+                    let inset = DulcetSpacing.md
+                    List {
+                        Group {
+                            if let library = store.librarySession?.myLibrary {
+                                if section == .songs && !library.songs.isEmpty {
+                                    DulcetMyLibraryShuffle(songs: library.songs)
+                                        .padding(.bottom, DulcetSpacing.md)
+                                }
+                                if section == .songs && library.songs.isEmpty && library.syncState != "syncing" {
+                                    DulcetStateMessage(symbol: "music.note", title: DulcetStrings.readerEmptyList,
+                                                       accessibilityIdentifier: "dulcet.myLibrary.songs.empty")
+                                        .embeddedInScrollingPage()
+                                } else if library.albums.isEmpty && library.artists.isEmpty && library.songs.isEmpty {
+                                    if library.syncState != "syncing" { DulcetMyLibraryEmptyState() }
+                                } else {
+                                    DulcetMyLibraryCollection(
+                                        library: library,
+                                        section: section,
+                                        width: max(0, geometry.size.width - inset * 2)
+                                    )
+                                }
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 0, leading: inset, bottom: 0, trailing: inset))
+                        .listRowSeparator(.hidden)
+                        .listRowBackground(Color.clear)
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                    .environment(\.defaultMinListRowHeight, 0)
+                    .contentMargins(.vertical, DulcetSpacing.md, for: .scrollContent)
+                    .modifier(DulcetSystemScrollChrome())
+                    .refreshable { refresh() }
+#else
                     ScrollView {
                         VStack(alignment: .leading, spacing: DulcetSpacing.md) {
                             if let library = store.librarySession?.myLibrary {
@@ -214,6 +259,7 @@ struct DulcetMyLibrarySectionPage: View {
                     .modifier(DulcetSystemScrollChrome())
 #if !os(tvOS)
                     .refreshable { refresh() }
+#endif
 #endif
                 }
             }

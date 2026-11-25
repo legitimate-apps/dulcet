@@ -1543,13 +1543,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             step("search-ax-song", app) {
                 let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
                                                             "dulcet.search.result."))
-                let songs = rows.allElementsBoundByIndex.filter { row in
-                    (row.value as? String)?.range(of: #"^\d+:\d{2}"#, options: .regularExpression) != nil
-                }
                 let field = app.textFields["dulcet.search.field"].firstMatch
-                guard !songs.isEmpty, field.exists else { return false }
-                let results = app.scrollViews.firstMatch
+                guard field.exists else { return false }
+                let results = app.collectionViews.firstMatch.exists ? app.collectionViews.firstMatch : app.scrollViews.firstMatch
                 for _ in 0..<4 {
+                    let songs = rows.allElementsBoundByIndex.filter { row in
+                        (row.value as? String)?.range(of: #"^\d+:\d{2}"#, options: .regularExpression) != nil
+                    }
                     let viewport = self.contentViewport(in: app)
                     let top = max(viewport.minY, field.frame.maxY)
                     if songs.contains(where: {
