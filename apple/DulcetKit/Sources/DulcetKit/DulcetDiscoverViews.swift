@@ -352,13 +352,13 @@ struct DulcetDiscoverArtworkView: View {
     enum Shape { case rounded, circle }
     let reader: any DulcetDiscoverReading
     let artworkId: String?
-    var size: CGFloat = 48
+    var size: CGFloat = DulcetDiscoverMetrics.rowArtworkSide
     var shape: Shape = .rounded
     /// Names the placeholder: an artist without a cover shows their initial.
     var title = ""
     @State private var image: DulcetDiscoverImageMemory.Platform?
     @State private var operation: (any DulcetLibraryReaderCancellable)?
-    init(reader: any DulcetDiscoverReading, artworkId: String?, size: CGFloat = 48, shape: Shape = .rounded, title: String = "") {
+    init(reader: any DulcetDiscoverReading, artworkId: String?, size: CGFloat = DulcetDiscoverMetrics.rowArtworkSide, shape: Shape = .rounded, title: String = "") {
         self.reader = reader; self.artworkId = artworkId; self.size = size; self.shape = shape; self.title = title
         _image = State(initialValue: artworkId.flatMap { DulcetDiscoverImageMemory.image(for: $0) })
     }
@@ -377,7 +377,7 @@ struct DulcetDiscoverArtworkView: View {
         .onDisappear { operation?.cancel(); operation = nil }
     }
     private var outline: AnyShape {
-        shape == .circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: size > 80 ? 10 : 8, style: .continuous))
+        shape == .circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: DulcetDiscoverMetrics.artworkCornerRadius(forSize: size), style: .continuous))
     }
     private func load() {
         guard image == nil, operation == nil, let artworkId else { return }

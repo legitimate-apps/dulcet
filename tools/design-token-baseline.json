@@ -135,9 +135,7 @@
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetDiscoverViews.swift": {
       "artwork-size": 1,
-      "corner-radius": 2,
-      "frame": 1,
-      "local-metric": 1
+      "frame": 1
     },
     "apple/DulcetKit/Sources/DulcetKit/DulcetLibraryDepth.swift": {
       "frame": 3,

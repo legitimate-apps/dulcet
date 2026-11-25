@@ -196,7 +196,7 @@ struct DulcetDiscoverShelfStatus: View {
 /// a sentence and a button under every tile. In lists it is a row with the same marks trailing.
 struct DulcetDiscoverShelfItem: View {
     enum Style { case tile, row }
-    static let tileSide: CGFloat = 156
+    static let tileSide = DulcetDiscoverMetrics.tileSide
     let model: DulcetDiscoverModel
     let item: DulcetDiscoverItem
     let source: DulcetWishSource
@@ -251,7 +251,7 @@ struct DulcetDiscoverShelfItem: View {
                     VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                         DulcetDiscoverArtworkView(reader: model.reader, artworkId: item.artworkId, size: side,
                                                   shape: circle ? .circle : .rounded, title: item.title)
-                        VStack(alignment: circle ? .center : .leading, spacing: 2) {
+                        VStack(alignment: circle ? .center : .leading, spacing: DulcetDiscoverMetrics.captionLineSpacing) {
                             Text(verbatim: item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                                 .dulcetForeground(.primaryTextOnWindow)
                             if let subtitle {
@@ -261,7 +261,7 @@ struct DulcetDiscoverShelfItem: View {
                          .multilineTextAlignment(circle ? .center : .leading)
                     }.contentShape(Rectangle())
                 }.buttonStyle(.plain).accessibilityIdentifier(identifier).accessibilityLabel(accessibilityTitle)
-                marks.padding(circle ? 6 : 0).frame(width: side, height: side, alignment: .bottomTrailing)
+                marks.padding(circle ? DulcetDiscoverMetrics.circleMarkInset : 0).frame(width: side, height: side, alignment: .bottomTrailing)
             }
             notes
         }.frame(width: side, alignment: .leading)
@@ -292,7 +292,7 @@ struct DulcetDiscoverShelfItem: View {
     private func badge(_ symbol: String) -> some View {
         Image(systemName: symbol).font(.footnote.weight(.semibold)).dulcetForeground(.primaryTextOnRegularMaterial)
             .frame(width: 30, height: 30).background(.regularMaterial, in: Circle())
-            .padding(7).contentShape(Rectangle())
+            .padding(DulcetDiscoverMetrics.markHitInset).contentShape(Rectangle())
     }
     @ViewBuilder private var notes: some View {
         if row?.pending == true { Text(DulcetStrings.discoverWaiting).font(.caption) }
@@ -311,8 +311,8 @@ struct DulcetDiscoverPlaylistTile: View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
             Color.dulcetControl.frame(width: side, height: side)
                 .overlay { Image(systemName: "music.note.list").font(.system(size: side * 0.3)).dulcetForeground(.secondaryTextOnControl) }
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous)).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
+                .clipShape(RoundedRectangle(cornerRadius: DulcetDiscoverMetrics.artworkCornerRadius(forSize: side), style: .continuous)).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: DulcetDiscoverMetrics.captionLineSpacing) {
                 Text(verbatim: summary.title).font(.subheadline.weight(.semibold)).lineLimit(1).dulcetForeground(.primaryTextOnWindow)
                 if let creator = summary.creator { Text(verbatim: creator).font(.caption).lineLimit(1).dulcetForeground(.secondaryTextOnWindow) }
             }.frame(width: side, alignment: .leading)
@@ -436,5 +436,20 @@ struct DulcetDiscoverHomeDestination: View {
             }.id(session.readerGeneration)
         }
     }
+}
+/// Discover's own layout tokens: the cover-led tile, its caption and the wish mark on the cover.
+enum DulcetDiscoverMetrics {
+    /// A shelf tile's cover, square, or a circle for an artist.
+    static let tileSide: CGFloat = 156
+    /// Between a tile's title and its quiet second line.
+    static let captionLineSpacing: CGFloat = 2
+    /// Pulls the wish mark in from the edge of a circular artist cover so it sits on the circle.
+    static let circleMarkInset: CGFloat = 6
+    /// Padding around the 30 pt wish mark so the tap target reaches 44 pt.
+    static let markHitInset: CGFloat = 7
+    /// The default artwork side for a Discover row.
+    static let rowArtworkSide: CGFloat = 48
+    /// Corner radius for Discover artwork `size` points wide: 10 pt on tiles, 8 pt on rows.
+    static func artworkCornerRadius(forSize size: CGFloat) -> CGFloat { size > 80 ? 10 : 8 }
 }
 #endif
