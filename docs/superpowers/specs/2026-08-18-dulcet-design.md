@@ -8072,6 +8072,37 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-25 — Discover shows real covers promptly and by tile (§16.14, §30, Discover).**
+Seen on an iPhone against the household server: every artist and song tile held the grey note
+placeholder, and the album covers arrived minutes after the page. OBSERVED causes, by reading the
+code and a live ListenBrainz row: (1) the server minted an `artworkId` only for albums, so songs and
+artists had none; the trending-recordings rows carry `caa_release_mbid` and the server dropped it;
+(2) the core read its device cache only after a network failure, so a cover this device already held
+still waited on the server; the Swift tile kept bytes per view, so scrolling back or a second visit
+asked again; (3) the server's upstream client spaces requests to one origin by a second and the
+Cover Art Archive answers with a redirect, so a shelf of covers takes as long as the shelf is wide.
+Changes: a song, and an album whose source names a cover release, gets an `artworkId` that resolves
+the release's `front-250` first and the release group's when the release has none (a placeholder is
+not an answer while the other exists); a row first seen without a cover gains one when a later
+source names it. Artists still have none: the Cover Art Archive holds no artist images. The core
+answers a cover it holds from the device store without a server request (covers are immutable under
+an opaque id; the store keeps its 32 MiB ceiling and the server its 30-day cache). On iPhone, iPad and Mac
+the shelves are cover-led tiles, round for artists with their initial until an image exists; the
+library and wish state is a small mark on the cover (a bookmark to wish, a filled one once wished, a
+check when held), and wishing or opening the library item is also in the tile's context menu. The
+sentence "Not in your library" and the per-tile "Wish for" row are gone from tiles; detail pages
+keep them. The accessibility label of a tile still names the availability, so VoiceOver reads it.
+**Option written down, not adopted: artist photos.** They need an image source outside the services
+Dulcet already uses. Candidates and what each would receive from the server (ASSUMED from each
+service's public documentation; none was called): Wikimedia Commons by the artist's Wikidata link
+(a MusicBrainz `url-rels` lookup, then a Wikidata entity request carrying the Wikidata id, then an
+image request to the Wikimedia upload host; no account, and the images carry per-file licences that
+a client would have to show); Deezer's public artist search (sends the artist name; a commercial
+catalogue whose terms limit reuse); TheAudioDB (sends the artist MusicBrainz id and an API key the
+project would have to hold). Any of them would add a third party that learns which artists this
+server's users look at; `CORPUS.md` lists no such service, so adopting one is a maintainer
+decision. Until then artists show a monogram.
+
 **2026-11-24 — Apple pages show music, not scan and cache state (§16.12, §16.14, Discover).**
 Seen on an iPhone against a server that rescans about every 2.5 minutes (74 scans in 3 hours, each
 about 35 seconds): the scan line stood over complete album pages about a quarter of the time, and

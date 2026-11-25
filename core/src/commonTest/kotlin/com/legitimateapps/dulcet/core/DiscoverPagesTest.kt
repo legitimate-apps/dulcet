@@ -111,6 +111,22 @@ class DiscoverPagesTest {
         assertTrue(DiscoverRoutePolicy.safeLink("https://example.test/buy"))
         pages.close()
     }
+    @Test fun savedArtworkAnswersWithoutAnotherServerRequestEvenWhenOnline() = discoverStoreTest { env ->
+        val wire=DiscoverTestTransport();val store=env.store()
+        val first=DiscoverPages(this,wire,store,{true})
+        first.artwork("opaque:art"){};advanceUntilIdle();first.close()
+        assertEquals(listOf("opaque:art"),wire.artworkRequests)
+        // A second visit: the cover comes from the device and the server is not asked again.
+        val second=DiscoverPages(this,wire,store,{true})
+        var result:DiscoverResult<ByteArray>?=null
+        second.artwork("opaque:art"){result=it};advanceUntilIdle()
+        assertContentEquals(byteArrayOf(-1,-40,-1),assertIs<DiscoverResult.Value<ByteArray>>(result).value)
+        assertEquals(listOf("opaque:art"),wire.artworkRequests,"a saved cover must not cost a second server request")
+        // Control: a cover never saved still goes to the server.
+        second.artwork("opaque:other"){};advanceUntilIdle()
+        assertEquals(listOf("opaque:art","opaque:other"),wire.artworkRequests)
+        second.close()
+    }
     @Test fun offlineFallbackRetainsAgeAndCancellationCompletesOnce() = discoverStoreTest { env ->
         val wire=DiscoverTestTransport();val store=env.store();var online=true
         var result:DiscoverResult<DiscoverAlbum>?=null

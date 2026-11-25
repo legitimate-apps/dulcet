@@ -86,6 +86,9 @@ extension DulcetStrings {
     static func discoverWishedFor(_ title: String) -> String {
         dynamicFormatted("discover.discoverWishedFor", fallback: "Wished for %@", title)
     }
+    static func discoverListens(_ count: Int64) -> String {
+        dynamicFormatted("discover.discoverListens", fallback: "%@ listens", count.formatted(.number.notation(.compactName)))
+    }
     static func discoverWishFor(_ title: String) -> String {
         dynamicFormatted("discover.discoverWishFor", fallback: "Wish for %@", title)
     }

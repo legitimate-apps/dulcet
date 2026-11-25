@@ -179,7 +179,14 @@ import Testing
     func artistAlbums(mbid: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { token() }
     func album(mbid: String, releaseId: String?, completion: @escaping @MainActor (Result<DulcetDiscoverAlbum, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { albumCompletions.append(completion); return DulcetDiscoverCancellation { self.albumCancellationCount += 1 } }
     func albumTracks(mbid: String, releaseId: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { token() }
-    func artwork(artworkId: String, completion: @escaping @MainActor (Result<Data, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable { token() }
+    /// Covers the reader would serve, by artwork id. An id with no entry stays pending, as before.
+    var covers: [String: Data] = [:]
+    var artworkRequests: [String] = []
+    func artwork(artworkId: String, completion: @escaping @MainActor (Result<Data, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
+        artworkRequests.append(artworkId)
+        if let data = covers[artworkId] { completion(.success(data)) }
+        return token()
+    }
     func add(item: DulcetDiscoverItem, source: DulcetWishSource, completion: @escaping @MainActor (Result<DulcetWishEnqueued, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
         added.append((item, source)); addCompletion = completion
         guard holdMutation else { return token() }

@@ -3,7 +3,7 @@ package com.legitimateapps.dulcet.server.discover
 import kotlinx.serialization.json.*
 
 class ListenBrainzClient(private val http:PoliteHttp,private val cache:DiscoverCache,private val settings:DiscoverSettings) {
-    companion object { const val SIMILAR_ALGORITHM="session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30" }
+    companion object { const val COVER_ART_RELEASE="coverArtArchiveReleaseId"; const val SIMILAR_ALGORITHM="session_based_days_7500_session_300_contribution_5_threshold_10_limit_100_filter_True_skip_30" }
     private suspend fun <T> load(path:String,query:Map<String,String>,ttl:Long,base:String=settings.listenBrainzUrl,decode:(JsonElement)->T)=
         cache.read(CacheKey(base,path,query),ttl,{ decode(Json.parseToJsonElement(it.decodeToString())) }) { if(!settings.enabled)throw UpstreamUnavailable(reason=UpstreamFailure.CacheOnly); http.get(base,path,query) }
     suspend fun trending(kind:DiscoverKind):Cached<List<DiscoverItem>> {
@@ -16,6 +16,9 @@ class ListenBrainzClient(private val http:PoliteHttp,private val cache:DiscoverC
                 val title=row.requiredText(when(kind) { DiscoverKind.Artist->"artist_name"; DiscoverKind.Album->"release_group_name"; DiscoverKind.Song->"track_name" })
                 val ids=mutableMapOf<String,String>(); if(id!=null) ids[kind.registryKey]=id
                 (row["artist_mbids"] as? JsonArray)?.firstOrNull()?.jsonPrimitive?.contentOrNull?.let(::mbidOrNull)?.let { ids[DiscoverKind.Artist.registryKey]=it }
+                // ListenBrainz names the release whose Cover Art Archive front image it knows. Albums and songs
+                // both show that cover; artists have no Cover Art Archive image.
+                if(kind!=DiscoverKind.Artist) mbidOrNull(row.text("caa_release_mbid"))?.let { ids[COVER_ART_RELEASE]=it }
                 DiscoverItem(kind=kind,title=title,artist=if(kind==DiscoverKind.Artist) null else row.text("artist_name"),externalIds=ids,wishable=id!=null,listenCount=row.text("listen_count")?.toLongOrNull() ?: throw UpstreamUnavailable())
             }
         }
@@ -27,7 +30,7 @@ class ListenBrainzClient(private val http:PoliteHttp,private val cache:DiscoverC
                 val row=source.obj(); val group=mbidOrNull(row.text("release_group_mbid")) ?: return@mapNotNull null
                 val ids=mutableMapOf(DiscoverKind.Album.registryKey to group)
                 mbidOrNull(row.text("release_mbid"))?.let { ids["musicbrainzReleaseId"]=it }
-                mbidOrNull(row.text("caa_release_mbid"))?.let { ids["coverArtArchiveReleaseId"]=it }
+                mbidOrNull(row.text("caa_release_mbid"))?.let { ids[COVER_ART_RELEASE]=it }
                 row.text("caa_id")?.let { ids["coverArtArchiveId"]=it }
                 (row["artist_mbids"] as? JsonArray)?.firstOrNull()?.jsonPrimitive?.contentOrNull?.let(::mbidOrNull)?.let { ids[DiscoverKind.Artist.registryKey]=it }
                 val date=row.text("release_date")

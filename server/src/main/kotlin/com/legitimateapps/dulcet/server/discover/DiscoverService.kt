@@ -127,7 +127,10 @@ class DiscoverService(private val ctx:ServerContext) {
     }
     suspend fun artwork(userId:String,id:String):DiscoverImage {
         // Artwork remains usable from existing references while discovery is disabled.
-        val mbid=ids.artwork(id) ?: throw ApiProblem(404,"not-found")
-        return ctx.discoverArtwork.thumbnail(mbid)
+        val source=ids.artwork(id) ?: throw ApiProblem(404,"not-found")
+        // The named release's own front image first; an album then falls back to its release group's.
+        val release=source.releaseMbid?.let { ctx.discoverArtwork.releaseThumbnail(it) }
+        if(release!=null && !release.placeholder) return release
+        return source.groupMbid?.let { ctx.discoverArtwork.thumbnail(it) } ?: release ?: throw ApiProblem(404,"not-found")
     }
 }
