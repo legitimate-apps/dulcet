@@ -76,6 +76,44 @@ class ApiDiscoverTest {
             } finally {ctx.close();ctx.db.close()}
         }
     }
+    @Test fun trendingSongsAndAlbumsCarryTheNamedReleaseCoverAndArtistsCarryNone() = testApplication {
+        FixtureDiscoverUpstream().use { f -> val ctx=context(f)
+            try {
+                val user=ctx.users.create("user","password",false);val token=ctx.apiAuth.bootstrapPersonal(user,setOf("catalog:read"))
+                ctx.discoverHttp.configureOrigin(f.baseUrl,0)
+                val recording="11111111-2222-4333-8444-555555555555";val artist="66666666-7777-4888-8999-aaaaaaaaaaaa";val cover="bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+                f.json("/1/stats/sitewide/recordings","""{"payload":{"recordings":[
+                    {"recording_mbid":"$recording","track_name":"Song","artist_name":"Artist","artist_mbids":["$artist"],"listen_count":5,"release_mbid":"$id","caa_release_mbid":"$cover","caa_id":1},
+                    {"recording_mbid":"22222222-3333-4444-8555-666666666666","track_name":"No Cover","artist_name":"Artist","artist_mbids":["$artist"],"listen_count":4}]}}""")
+                f.json("/1/stats/sitewide/artists",resource("listenbrainz/trending-artists"))
+                f.respond("/release/$cover/front-250",body=artworkFixture("png"))
+                application { dulcetModule(ctx) }
+                suspend fun get(path:String)=client.get("/dulcet/v1/discover$path") { bearerAuth(token) }
+                val songs=Json.parseToJsonElement(get("/shelves/trendingSongs").bodyAsText()).jsonObject["items"]!!.jsonArray.map { it.jsonObject }
+                val art=songs[0]["artworkId"]!!.jsonPrimitive.content;assertTrue(art.startsWith("da_"))
+                assertNull(songs[1]["artworkId"],"a song whose source names no cover has none")
+                val image=get("/artwork/$art");assertEquals(200,image.status.value);assertEquals("image/png",image.headers["Content-Type"])
+                assertTrue(f.requests.any { it.path=="/release/$cover/front-250" })
+                // The cover id is stable across reads and across a later sighting without a cover.
+                val again=Json.parseToJsonElement(get("/shelves/trendingSongs").bodyAsText()).jsonObject["items"]!!.jsonArray[0].jsonObject["artworkId"]!!.jsonPrimitive.content
+                assertEquals(art,again)
+                val artists=Json.parseToJsonElement(get("/shelves/trendingArtists").bodyAsText()).jsonObject["items"]!!.jsonArray.map { it.jsonObject }
+                assertTrue(artists.isNotEmpty() && artists.all { it["artworkId"]==null },"CAA holds no artist images")
+            } finally {ctx.close();ctx.db.close()}
+        }
+    }
+    @Test fun aRowFirstSeenWithoutACoverGainsOneWhenALaterSourceNamesIt() {
+        val db=Db.inMemory();val ids=DiscoverIdentity(db)
+        val recording="11111111-2222-4333-8444-555555555555";val release="bbbbbbbb-cccc-4ddd-8eee-ffffffffffff"
+        val bare=ids.register(DiscoverItem(kind=DiscoverKind.Song,title="Song",externalIds=mapOf(DiscoverKind.Song.registryKey to recording)))
+        assertNull(bare.artworkId)
+        val covered=ids.register(DiscoverItem(kind=DiscoverKind.Song,title="Song",externalIds=mapOf(DiscoverKind.Song.registryKey to recording,ListenBrainzClient.COVER_ART_RELEASE to release)))
+        assertEquals(bare.id,covered.id);assertTrue(covered.artworkId!!.startsWith("da_"))
+        assertEquals(DiscoverIdentity.ArtworkSource(release,null),ids.artwork(covered.artworkId!!))
+        val artist=ids.register(DiscoverItem(kind=DiscoverKind.Artist,title="A",externalIds=mapOf(DiscoverKind.Artist.registryKey to recording,ListenBrainzClient.COVER_ART_RELEASE to release)))
+        assertNull(artist.artworkId)
+        db.close()
+    }
     @Test fun malformedArtworkUsesTemporaryFailureAndLaterRequestRecovers() = testApplication {
         FixtureDiscoverUpstream().use { f -> val ctx=context(f)
             try {

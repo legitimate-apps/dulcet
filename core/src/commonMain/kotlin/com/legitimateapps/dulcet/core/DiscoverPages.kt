@@ -79,21 +79,28 @@ internal class DiscoverPages(
         cachedFailure={value,error -> value.copy(age=value.age.copy(fromDeviceCache=true),refreshError=error)}) {transport.playlist(mbid,cursor)}
     fun artwork(artworkId: String,completion: (DiscoverResult<ByteArray>)->Unit): DiscoverOperation = request(
         "artwork:$artworkId",true,{bytes -> if(!validDiscoverArtwork(bytes)) invalidDiscover();bytes},
-        {bytes -> if(!validDiscoverArtwork(bytes)) invalidDiscover();bytes},{it},completion,{true}) {transport.artwork(artworkId)}
+        {bytes -> if(!validDiscoverArtwork(bytes)) invalidDiscover();bytes},{it},completion,{true},cacheFirst=true) {transport.artwork(artworkId)}
     fun close() {closed=true;operations.toList().forEach {it.cancel()};albumOperations.clear()}
 
     private fun <T> json(key: String,serializer: KSerializer<T>,cached: (T)->T,completion: (DiscoverResult<T>)->Unit,
         valid: ()->Boolean = {true},cachedFailure: (T,DiscoverFailure)->T = {value,_ -> cached(value)},fetch: suspend ()->DiscoverResult<T>): DiscoverOperation = request(key,false,
-            {Json.decodeFromString(serializer,it.decodeToString())},{Json.encodeToString(serializer,it).encodeToByteArray()},cached,completion,valid,cachedFailure,fetch)
+            {Json.decodeFromString(serializer,it.decodeToString())},{Json.encodeToString(serializer,it).encodeToByteArray()},cached,completion,valid,cachedFailure,false,fetch)
 
     private fun <T> request(key: String,artwork: Boolean,decode: (ByteArray)->T,encode: (T)->ByteArray,cached: (T)->T,
-        completion: (DiscoverResult<T>)->Unit,valid: ()->Boolean,cachedFailure: (T,DiscoverFailure)->T = {value,_ -> cached(value)},fetch: suspend ()->DiscoverResult<T>): DiscoverOperation {
+        completion: (DiscoverResult<T>)->Unit,valid: ()->Boolean,cachedFailure: (T,DiscoverFailure)->T = {value,_ -> cached(value)},
+        // A saved cover is the answer: server artwork ids name immutable images, so a second visit
+        // paints from the device with no network wait, offline or not.
+        cacheFirst: Boolean = false,fetch: suspend ()->DiscoverResult<T>): DiscoverOperation {
         val op=PageOperation(completion)
         operations.add(op)
         if(closed || !active() || !valid()) {op.cancel();return op}
         op.job=scope.launch {
             try {
                 val saved=store.read(key)?.let {runCatching {cached(decode(it))}.getOrNull()}
+                if(cacheFirst && saved!=null) {
+                    if(!active() || !valid() || closed) op.cancel() else op.finish(DiscoverResult.Value(saved))
+                    return@launch
+                }
                 val error=if(!online()) DiscoverFailure("offline",null,true) else backoff.error()
                 val result=if(error!=null) DiscoverResult.Failed(error) else {
                     if(!active() || !valid() || op.done || closed) {op.cancel();return@launch}

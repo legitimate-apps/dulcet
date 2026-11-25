@@ -95,8 +95,10 @@ class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache
         }
         throw UpstreamUnavailable()
     }
-    suspend fun thumbnail(groupMbid:String):DiscoverImage {
-        val path="/release-group/${canonicalMbid(groupMbid)}/front-250"
+    suspend fun thumbnail(groupMbid:String):DiscoverImage = thumbnailAt("/release-group/${canonicalMbid(groupMbid)}/front-250")
+    /** The front image of one named release: no release-group lookup and redirect before the image. */
+    suspend fun releaseThumbnail(releaseMbid:String):DiscoverImage = thumbnailAt("/release/${canonicalMbid(releaseMbid)}/front-250")
+    private suspend fun thumbnailAt(path:String):DiscoverImage {
         try {
             val cached=cache.read(CacheKey(settings.coverArtArchiveUrl,path,emptyMap()),30*DiscoverCache.DAY,{ bytes ->
                 if(bytes.size>MAX_BYTES)throw UpstreamUnavailable(); imageType(bytes);bytes
@@ -110,14 +112,30 @@ class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache
 
 /** Durable opaque ids; devices cannot turn the artwork endpoint into an arbitrary URL proxy. */
 class DiscoverIdentity(private val db:com.legitimateapps.dulcet.server.db.Db) {
-    init { db.write { execute("CREATE TABLE IF NOT EXISTS discover_identity(kind TEXT NOT NULL,mbid TEXT NOT NULL,id TEXT NOT NULL UNIQUE,artwork_id TEXT UNIQUE,PRIMARY KEY(kind,mbid))") } }
+    /** What an artwork id resolves to: a release whose front image is known, and/or an album's release group. */
+    data class ArtworkSource(val releaseMbid:String?,val groupMbid:String?)
+    init { db.write {
+        execute("CREATE TABLE IF NOT EXISTS discover_identity(kind TEXT NOT NULL,mbid TEXT NOT NULL,id TEXT NOT NULL UNIQUE,artwork_id TEXT UNIQUE,art_release TEXT,PRIMARY KEY(kind,mbid))")
+        if(query("PRAGMA table_info(discover_identity)") { it.string("name") }.none { it=="art_release" }) execute("ALTER TABLE discover_identity ADD COLUMN art_release TEXT")
+    } }
     fun register(item:DiscoverItem):DiscoverItem {
         val mbid=item.externalIds[item.kind.registryKey] ?: return item.copy(wishable=false)
+        val release=item.externalIds[ListenBrainzClient.COVER_ART_RELEASE]?.let { runCatching { canonicalMbid(it) }.getOrNull() }
+        // Albums always carry an artwork id (their release group has a cover). A song carries one only when
+        // its source names a release with a front image; an artist never does.
+        val hasArt=item.kind==DiscoverKind.Album || (item.kind==DiscoverKind.Song && release!=null)
         return db.write {
-            execute("INSERT OR IGNORE INTO discover_identity(kind,mbid,id,artwork_id) VALUES(?,?,?,?)",item.kind.wire,canonicalMbid(mbid),"di_"+java.util.UUID.randomUUID(),if(item.kind==DiscoverKind.Album) "da_"+java.util.UUID.randomUUID() else null)
+            execute("INSERT OR IGNORE INTO discover_identity(kind,mbid,id,artwork_id,art_release) VALUES(?,?,?,?,?)",item.kind.wire,canonicalMbid(mbid),"di_"+java.util.UUID.randomUUID(),if(hasArt) "da_"+java.util.UUID.randomUUID() else null,release)
+            // A row first seen without a cover (a search hit, a playlist entry) gains one when a later source names it.
+            if(hasArt) {
+                execute("UPDATE discover_identity SET artwork_id=? WHERE kind=? AND mbid=? AND artwork_id IS NULL","da_"+java.util.UUID.randomUUID(),item.kind.wire,canonicalMbid(mbid))
+                if(release!=null) execute("UPDATE discover_identity SET art_release=? WHERE kind=? AND mbid=? AND art_release IS NULL",release,item.kind.wire,canonicalMbid(mbid))
+            }
             single("SELECT id,artwork_id FROM discover_identity WHERE kind=? AND mbid=?",item.kind.wire,canonicalMbid(mbid)) { item.copy(id=it.string("id"),artworkId=item.artworkId ?: it.stringOrNull("artwork_id")) }!!
         }
     }
     fun item(id:String):Pair<DiscoverKind,String>?=db.read { single("SELECT kind,mbid FROM discover_identity WHERE id=?",id) { DiscoverKind.parse(it.string("kind")) to it.string("mbid") } }
-    fun artwork(id:String):String?=db.read { string("SELECT mbid FROM discover_identity WHERE artwork_id=? AND kind='album'",id) }
+    fun artwork(id:String):ArtworkSource?=db.read { single("SELECT kind,mbid,art_release FROM discover_identity WHERE artwork_id=?",id) {
+        ArtworkSource(it.stringOrNull("art_release"),if(it.string("kind")=="album") it.string("mbid") else null)
+    } }
 }

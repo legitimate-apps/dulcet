@@ -605,6 +605,7 @@
 "discover.discoverSeeAllNamed" = "See All %@";
 "discover.discoverRetryAt" = "Retry available at %@";
 "discover.discoverWishedFor" = "Wished for %@";
+"discover.discoverListens" = "%@ listens";
 "discover.discoverWishFor" = "Wish for %@";
 "discover.discoverShowingResults" = "Showing results for %@";
 "discover.discoverSongPosition" = "Song %ld";

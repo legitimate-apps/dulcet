@@ -110,3 +110,114 @@ import Testing
         #expect(navigation.page(route, reader: reader) !== page)
     }
 }
+
+#if os(iOS)
+import SwiftUI
+import Testing
+import UIKit
+@testable import DulcetKit
+
+/// Renders the Discover home with real cover bytes and checks what a person sees: the cover leads each
+/// tile, and the library and wish state is a mark on it rather than a sentence under it. When
+/// `DULCET_DISCOVER_RENDER_DIR` names a directory the frame is also written there as a PNG.
+@Suite @MainActor struct DulcetDiscoverTilesRenderTests {
+    let age = DulcetDiscoverAge(receivedAt: Date(timeIntervalSince1970: 1000))
+    func cover(_ hue: CGFloat) -> Data {
+        let size = CGSize(width: 250, height: 250)
+        return UIGraphicsImageRenderer(size: size).pngData { context in
+            UIColor(hue: hue, saturation: 0.55, brightness: 0.75, alpha: 1).setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor(hue: hue, saturation: 0.7, brightness: 0.45, alpha: 1).setFill()
+            context.cgContext.fillEllipse(in: CGRect(x: 40, y: 40, width: 170, height: 170))
+        }
+    }
+    func item(_ id: String, _ kind: String, _ title: String, artist: String? = nil, listens: Int64? = nil, cover: Bool = true, held: Bool = false) -> DulcetDiscoverItem {
+        .init(id: id, kind: kind, target: .init(kind: kind, mbid: id), title: title, artist: artist,
+              artworkId: cover ? "da_\(id)" : nil, listenCount: listens, wishable: !held,
+              availability: .init(status: held ? "held" : "notHeld", completeness: held ? "known" : "unknown"))
+    }
+    func publication() -> DulcetDiscoverPublication {
+        let artists = (0..<5).map { item("a\($0)", "artist", ["Ado", "Aimer", "BTS", "Lorde", "Yoasobi"][$0], listens: 120_000 + Int64($0) * 9_000, cover: false) }
+        let albums = (0..<5).map { item("b\($0)", "album", ["ARIRANG", "Blue Hour", "Midnight Clear", "Plum", "Soft Static"][$0], artist: ["BTS", "Lorde", "Ado", "Aimer", "Yoasobi"][$0], held: $0 == 1) }
+        let songs = (0..<5).map { item("c\($0)", "song", ["Hands Up", "Silver", "Seaside", "Ember", "Quiet Hours"][$0], artist: ["BTS", "Lorde", "Ado", "Aimer", "Yoasobi"][$0], listens: 80_000 + Int64($0) * 7_000) }
+        func state(_ shelf: DulcetDiscoverShelf, _ items: [DulcetDiscoverItem]) -> DulcetDiscoverShelfState {
+            .init(id: shelf.rawValue, page: .init(id: shelf.rawValue, items: items, nextCursor: "next", age: age))
+        }
+        return .init(providerInstanceId: "account-a", generation: 2,
+                     access: .init(detection: "known", discoverAvailable: true, wishlistAvailable: true, canReadWishlist: true, canAddWish: true, canRemoveWish: true),
+                     connection: "online", query: "",
+                     home: .init(shelves: [state(.trendingArtists, artists), state(.trendingAlbums, albums), state(.trendingSongs, songs)]))
+    }
+    func snapshot<Content: View>(_ content: Content) -> UIImage {
+        let controller = UIHostingController(rootView: content)
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 393, height: 852))
+        window.rootViewController = controller
+        window.makeKeyAndVisible()
+        controller.view.frame = window.bounds
+        // Let the covers decode and the tiles settle.
+        RunLoop.main.run(until: Date().addingTimeInterval(1.0))
+        controller.view.layoutIfNeeded()
+        let image = UIGraphicsImageRenderer(bounds: window.bounds).image { context in
+            UIColor.systemBackground.setFill()
+            context.fill(window.bounds)
+            if !controller.view.drawHierarchy(in: window.bounds, afterScreenUpdates: true) {
+                controller.view.layer.render(in: context.cgContext)
+            }
+        }
+        window.isHidden = true
+        return image
+    }
+    func write(_ image: UIImage, _ name: String) throws {
+        guard let directory = ProcessInfo.processInfo.environment["DULCET_DISCOVER_RENDER_DIR"] else { return }
+        try FileManager.default.createDirectory(atPath: directory, withIntermediateDirectories: true)
+        try #require(image.pngData()).write(to: URL(fileURLWithPath: directory).appendingPathComponent(name))
+    }
+    func render(_ publication: DulcetDiscoverPublication, covers: [String: Data]) throws -> (UIImage, DiscoverProofReader) {
+        let reader = DiscoverProofReader()
+        reader.value = publication
+        reader.covers = covers
+        let store = DulcetPresentationStore(source: DulcetDeterministicDataSource(initialState: .libraryBrowse))
+        let view = NavigationStack {
+            DulcetDiscoverHomeView(reader: reader, navigation: DulcetDiscoverNavigation())
+        }.environment(store)
+        return (snapshot(view), reader)
+    }
+    // Row ids differ from the home test: decoded covers are shared across a run, so a repeat id would not ask.
+    @Test func listRowsKeepTheCoverAndTheMarksQuiet() throws {
+        let reader = DiscoverProofReader()
+        reader.value = publication()
+        reader.covers = ["da_r0": cover(0), "da_r1": cover(0.2)]
+        let model = DulcetDiscoverModel(reader: reader)
+        model.open()
+        let rows = VStack(alignment: .leading) {
+            ForEach(["r0", "r1", "a0"], id: \.self) { id in
+                DulcetDiscoverShelfItem(model: model, item: item(id, id.hasPrefix("a") ? "artist" : "album", id == "r0" ? "ARIRANG" : id == "r1" ? "Blue Hour" : "Ado", artist: id.hasPrefix("a") ? nil : "BTS", cover: !id.hasPrefix("a"), held: id == "r1"),
+                                        source: .init(type: "shelf", id: "trendingAlbums"), identifier: "row." + id, style: .row,
+                                        navigate: { _ in }, openLibrary: { _ in })
+            }
+        }.padding()
+        let image = snapshot(rows)
+        #expect(reader.artworkRequests.sorted() == ["da_r0", "da_r1"])
+        try write(image, "discover-rows.png")
+    }
+    @Test func homeShowsCoverLedTilesAndAsksForEachCoverOnce() throws {
+        var covers: [String: Data] = [:]
+        for index in 0..<5 {
+            covers["da_b\(index)"] = cover(CGFloat(index) / 5)
+            covers["da_c\(index)"] = cover(CGFloat(index) / 5 + 0.1)
+        }
+        let (image, reader) = try render(publication(), covers: covers)
+        #expect(image.size.width == 393)
+        // Artists carry no cover id, so no request is made for them; every cover on screen asks once.
+        #expect(!reader.artworkRequests.contains { $0.hasPrefix("da_a") })
+        #expect(Set(reader.artworkRequests).count == reader.artworkRequests.count)
+        // The first tiles are on screen; tiles scrolled off the edge may or may not have asked yet.
+        #expect(reader.artworkRequests.contains("da_b0") && reader.artworkRequests.contains("da_b1"))
+        try write(image, "discover-home.png")
+    }
+    @Test func listenCountsReadCompactly() {
+        #expect(DulcetStrings.discoverListens(120_000).contains("120"))
+        #expect(DulcetStrings.discoverListens(1_200_000).contains("1.2"))
+    }
+}
+#endif

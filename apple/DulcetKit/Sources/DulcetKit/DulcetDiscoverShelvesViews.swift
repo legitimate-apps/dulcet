@@ -89,15 +89,13 @@ struct DulcetDiscoverHomeView: View {
             }
             if let page = state.page {
                 ScrollView(.horizontal) {
-                    HStack(alignment: .top, spacing: DulcetSpacing.md) {
+                    HStack(alignment: .top, spacing: DulcetSpacing.xs) {
                         ForEach(page.items, id: \.id) { item in
                             DulcetDiscoverShelfItem(model: model, item: item, source: presentation.source,
-                                identifier: prefix + ".item." + item.id, navigate: { navigation.path.append(.metadata($0, presentation.source)) }, openLibrary: store.openDiscoverLibrary)
-                                .frame(width: 300, alignment: .leading)
+                                identifier: prefix + ".item." + item.id, style: .tile, navigate: { navigation.path.append(.metadata($0, presentation.source)) }, openLibrary: store.openDiscoverLibrary)
                         }
                         ForEach(page.playlists, id: \.id) { playlist in
                             playlistButton(playlist, prefix: prefix + ".playlist.")
-                                .frame(width: 260, alignment: .leading)
                         }
                     }
                 }
@@ -106,7 +104,7 @@ struct DulcetDiscoverHomeView: View {
         }.accessibilityElement(children: .contain).accessibilityIdentifier(prefix)
     }
     private func playlistButton(_ playlist: DulcetDiscoverPlaylistSummary, prefix: String) -> some View {
-        Button { navigation.path.append(.playlist(playlist.id)) } label: { DulcetDiscoverPlaylistLabel(summary: playlist) }
+        Button { navigation.path.append(.playlist(playlist.id)) } label: { DulcetDiscoverPlaylistTile(summary: playlist) }
             .buttonStyle(.plain).accessibilityIdentifier(prefix + playlist.id)
     }
     private func wishes(_ home: DulcetDiscoverHome) -> some View {
@@ -193,11 +191,17 @@ struct DulcetDiscoverShelfStatus: View {
     }
 }
 
+/// One Discover entry. On the home shelves it is an artwork tile: the cover leads, the title and one
+/// quiet line sit under it, and the library and wish state are small marks on the cover rather than
+/// a sentence and a button under every tile. In lists it is a row with the same marks trailing.
 struct DulcetDiscoverShelfItem: View {
+    enum Style { case tile, row }
+    static let tileSide: CGFloat = 156
     let model: DulcetDiscoverModel
     let item: DulcetDiscoverItem
     let source: DulcetWishSource
     let identifier: String
+    var style: Style = .row
     let navigate: (DulcetDiscoverDestination) -> Void
     let openLibrary: (DulcetDiscoverLibraryRef) -> Void
     private var row: DulcetWishRow? { model.row(for: item) }
@@ -205,32 +209,114 @@ struct DulcetDiscoverShelfItem: View {
         [item.title, item.artist, DulcetDiscoverItemPresentation(item: item).availabilityText,
          row?.pending == true ? DulcetStrings.discoverWaiting : nil].compactMap { $0 }.joined(separator: ", ")
     }
+    private var wished: Bool { row?.wish != nil || row?.pending == true }
+    private var held: Bool { item.availability.status == "held" }
+    private var canWish: Bool { model.publication?.access.canAddWish == true && DulcetDiscoverItemPresentation(item: item).canWish }
+    /// The one library reference that a tap or the menu may open, as the tap has always required.
+    private var libraryReference: DulcetDiscoverLibraryRef? {
+        guard item.target?.kind == item.kind, ["artist", "album", "song"].contains(item.kind),
+              held, (item.kind != "album" || item.availability.completeness == "known"),
+              item.availability.libraryItems.count == 1 else { return nil }
+        return item.availability.libraryItems.first
+    }
+    private func open() {
+        if let libraryReference { openLibrary(libraryReference) } else { navigate(.init(item: item, source: source)) }
+    }
+    private var subtitle: String? {
+        if let artist = item.artist { return artist }
+        return item.listenCount.map { DulcetStrings.discoverListens($0) }
+    }
     var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            Button {
-                if item.target?.kind == item.kind, ["artist", "album", "song"].contains(item.kind),
-                   item.availability.status == "held", (item.kind != "album" || item.availability.completeness == "known"),
-                   item.availability.libraryItems.count == 1, let ref = item.availability.libraryItems.first {
-                    openLibrary(ref)
-                } else { navigate(.init(item: item, source: source)) }
-            } label: { DulcetDiscoverItemRow(item: item, reader: model.reader) }
-                .buttonStyle(.plain).accessibilityIdentifier(identifier)
-                .accessibilityLabel(accessibilityTitle)
-            if row?.pending == true { Text(DulcetStrings.discoverWaiting).font(.caption) }
-            if row?.error != nil { Text(DulcetStrings.discoverNotSaved).font(.caption) }
-            if row?.wish != nil || row?.pending == true {
-                Label(DulcetStrings.discoverWishedFor(item.title), systemImage: "bookmark.fill")
-                    .font(.callout).dulcetForeground(.secondaryTextOnWindow)
-                    .accessibilityIdentifier(identifier + ".wished")
-            } else if model.publication?.access.canAddWish == true, DulcetDiscoverItemPresentation(item: item).canWish {
+        Group {
+            switch style {
+            case .tile: tile
+            case .row: listRow
+            }
+        }
+        .contextMenu {
+            if canWish && !wished {
                 Button(DulcetStrings.discoverWishFor(item.title), systemImage: "bookmark") { model.add(item, source: source) }
-                    .accessibilityIdentifier(identifier + ".wish")
             }
-            if item.target == nil {
-                Text(DulcetStrings.discoverRecordingUnavailable).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+            if let libraryReference {
+                Button(DulcetStrings.discoverOpenLibrary, systemImage: "music.note.list") { openLibrary(libraryReference) }
             }
-            if model.mutationError != nil { Text(DulcetStrings.discoverNotSaved).font(.caption) }
+        }
+    }
+    private var tile: some View {
+        let side = Self.tileSide
+        let circle = item.kind == "artist"
+        return VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            ZStack(alignment: .topLeading) {
+                Button(action: open) {
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                        DulcetDiscoverArtworkView(reader: model.reader, artworkId: item.artworkId, size: side,
+                                                  shape: circle ? .circle : .rounded, title: item.title)
+                        VStack(alignment: circle ? .center : .leading, spacing: 2) {
+                            Text(verbatim: item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                .dulcetForeground(.primaryTextOnWindow)
+                            if let subtitle {
+                                Text(verbatim: subtitle).font(.caption).lineLimit(1).dulcetForeground(.secondaryTextOnWindow)
+                            }
+                        }.frame(width: side, alignment: circle ? .center : .leading)
+                         .multilineTextAlignment(circle ? .center : .leading)
+                    }.contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityIdentifier(identifier).accessibilityLabel(accessibilityTitle)
+                marks.padding(circle ? 6 : 0).frame(width: side, height: side, alignment: .bottomTrailing)
+            }
+            notes
+        }.frame(width: side, alignment: .leading)
+    }
+    private var listRow: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            HStack(spacing: 0) {
+                Button(action: open) { DulcetDiscoverItemRow(item: item, reader: model.reader, quietAvailability: true) }
+                    .buttonStyle(.plain).accessibilityIdentifier(identifier).accessibilityLabel(accessibilityTitle)
+                marks.padding(.leading, DulcetSpacing.xxs)
+            }
+            notes
         }.fixedSize(horizontal: false, vertical: true)
+    }
+    /// A wish already made, a held item, or the one quiet control to make a wish. Never a sentence.
+    @ViewBuilder private var marks: some View {
+        if wished {
+            badge("bookmark.fill").accessibilityLabel(DulcetStrings.discoverWishedFor(item.title))
+                .accessibilityIdentifier(identifier + ".wished").allowsHitTesting(false)
+        } else if canWish {
+            Button { model.add(item, source: source) } label: { badge("bookmark") }
+                .buttonStyle(.plain).accessibilityLabel(DulcetStrings.discoverWishFor(item.title))
+                .accessibilityIdentifier(identifier + ".wish")
+        } else if held {
+            badge("checkmark").accessibilityHidden(true).allowsHitTesting(false)
+        }
+    }
+    private func badge(_ symbol: String) -> some View {
+        Image(systemName: symbol).font(.footnote.weight(.semibold)).dulcetForeground(.primaryTextOnRegularMaterial)
+            .frame(width: 30, height: 30).background(.regularMaterial, in: Circle())
+            .padding(7).contentShape(Rectangle())
+    }
+    @ViewBuilder private var notes: some View {
+        if row?.pending == true { Text(DulcetStrings.discoverWaiting).font(.caption) }
+        if row?.error != nil || model.mutationError != nil { Text(DulcetStrings.discoverNotSaved).font(.caption) }
+        if item.target == nil {
+            Text(DulcetStrings.discoverRecordingUnavailable).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+        }
+    }
+}
+
+/// A public playlist as a tile on the home shelf: no cover to show, so a quiet square with the list mark.
+struct DulcetDiscoverPlaylistTile: View {
+    let summary: DulcetDiscoverPlaylistSummary
+    var body: some View {
+        let side = DulcetDiscoverShelfItem.tileSide
+        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            Color.dulcetControl.frame(width: side, height: side)
+                .overlay { Image(systemName: "music.note.list").font(.system(size: side * 0.3)).dulcetForeground(.secondaryTextOnControl) }
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous)).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: summary.title).font(.subheadline.weight(.semibold)).lineLimit(1).dulcetForeground(.primaryTextOnWindow)
+                if let creator = summary.creator { Text(verbatim: creator).font(.caption).lineLimit(1).dulcetForeground(.secondaryTextOnWindow) }
+            }.frame(width: side, alignment: .leading)
+        }.multilineTextAlignment(.leading).contentShape(Rectangle())
     }
 }
 

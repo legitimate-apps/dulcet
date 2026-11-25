@@ -97,13 +97,22 @@ public struct DulcetDiscoverSearchView: View {
 struct DulcetDiscoverItemRow: View {
     let item: DulcetDiscoverItem
     let reader: any DulcetDiscoverReading
+    /// Shelf rows say "In your library" for what is held and nothing for what is not; a search
+    /// result says every state, because there it is the answer to the question asked.
+    var quietAvailability = false
+    private var availability: String? {
+        let text = DulcetDiscoverItemPresentation(item: item).availabilityText
+        guard quietAvailability else { return text }
+        return ["held", "partlyHeld"].contains(item.availability.status) ? text : nil
+    }
     var body: some View {
         HStack(spacing: DulcetSpacing.sm) {
-            DulcetDiscoverArtworkView(reader: reader, artworkId: item.artworkId)
+            DulcetDiscoverArtworkView(reader: reader, artworkId: item.artworkId,
+                                      shape: item.kind == "artist" ? .circle : .rounded, title: item.title)
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                 Text(verbatim: item.title).font(.headline).dulcetForeground(.primaryTextOnWindow)
                 if let artist = item.artist { Text(verbatim: artist).font(.subheadline).dulcetForeground(.secondaryTextOnWindow) }
-                Text(DulcetDiscoverItemPresentation(item: item).availabilityText).font(.caption).dulcetForeground(.secondaryTextOnWindow)
+                if let availability { Text(availability).font(.caption).dulcetForeground(.secondaryTextOnWindow) }
             }
             Spacer(minLength: 0)
             Image(systemName: "chevron.right").font(.caption).dulcetForeground(.secondaryTextOnWindow).accessibilityHidden(true)
@@ -318,33 +327,78 @@ struct DulcetDiscoverWishActions: View {
     }
 }
 
+/// Decoded Discover covers for this run of the app, so a tile that scrolls back or a shelf visited a
+/// second time paints its first frame with the cover already there. The server's cover ids name
+/// immutable images, and the core keeps the bytes on the device across launches.
+@MainActor
+enum DulcetDiscoverImageMemory {
+#if os(iOS)
+    typealias Platform = UIImage
+#else
+    typealias Platform = NSImage
+#endif
+    private static let cache: NSCache<NSString, Platform> = {
+        let cache = NSCache<NSString, Platform>(); cache.countLimit = 200; return cache
+    }()
+    static func image(for artworkId: String) -> Platform? { cache.object(forKey: artworkId as NSString) }
+    @discardableResult static func store(_ data: Data, for artworkId: String) -> Platform? {
+        guard let image = Platform(data: data) else { return nil }
+        cache.setObject(image, forKey: artworkId as NSString)
+        return image
+    }
+}
+
 struct DulcetDiscoverArtworkView: View {
+    enum Shape { case rounded, circle }
     let reader: any DulcetDiscoverReading
     let artworkId: String?
     var size: CGFloat = 48
-    @State private var data: Data?
+    var shape: Shape = .rounded
+    /// Names the placeholder: an artist without a cover shows their initial.
+    var title = ""
+    @State private var image: DulcetDiscoverImageMemory.Platform?
     @State private var operation: (any DulcetLibraryReaderCancellable)?
+    init(reader: any DulcetDiscoverReading, artworkId: String?, size: CGFloat = 48, shape: Shape = .rounded, title: String = "") {
+        self.reader = reader; self.artworkId = artworkId; self.size = size; self.shape = shape; self.title = title
+        _image = State(initialValue: artworkId.flatMap { DulcetDiscoverImageMemory.image(for: $0) })
+    }
     var body: some View {
         Group {
+            if let image {
 #if os(iOS)
-            if let data, let image = UIImage(data: data) { Image(uiImage: image).resizable().scaledToFill() }
-            else { placeholder }
+                Image(uiImage: image).resizable().scaledToFill()
 #else
-            if let data, let image = NSImage(data: data) { Image(nsImage: image).resizable().scaledToFill() }
-            else { placeholder }
+                Image(nsImage: image).resizable().scaledToFill()
 #endif
+            } else { placeholder }
         }
-        .frame(width: size, height: size).clipped().clipShape(RoundedRectangle(cornerRadius: 8)).accessibilityHidden(true)
-        .onAppear {
-            guard data == nil, operation == nil, let artworkId else { return }
-            operation = reader.artwork(artworkId: artworkId) { result in
-                if case let .success(value) = result { data = value }
-            }
-        }
+        .frame(width: size, height: size).clipped().clipShape(outline).accessibilityHidden(true)
+        .onAppear(perform: load)
         .onDisappear { operation?.cancel(); operation = nil }
     }
-    private var placeholder: some View {
-        RoundedRectangle(cornerRadius: 8).fill(Color.dulcetControl).overlay { Image(systemName: "music.note").dulcetForeground(.secondaryTextOnControl) }
+    private var outline: AnyShape {
+        shape == .circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: size > 80 ? 10 : 8, style: .continuous))
+    }
+    private func load() {
+        guard image == nil, operation == nil, let artworkId else { return }
+        operation = reader.artwork(artworkId: artworkId) { result in
+            // Finished either way: a tile that scrolls away and back asks again after a failure.
+            operation = nil
+            if case let .success(value) = result { image = DulcetDiscoverImageMemory.store(value, for: artworkId) }
+        }
+    }
+    @ViewBuilder private var placeholder: some View {
+        if shape == .circle, let initial = title.first(where: { $0.isLetter || $0.isNumber }) {
+            Color.dulcetControl.overlay {
+                Text(String(initial).uppercased()).font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
+                    .dulcetForeground(.secondaryTextOnControl)
+            }
+        } else {
+            Color.dulcetControl.overlay {
+                Image(systemName: shape == .circle ? "person.fill" : "music.note").font(.system(size: size * 0.32))
+                    .dulcetForeground(.secondaryTextOnControl)
+            }
+        }
     }
 }
 #endif
