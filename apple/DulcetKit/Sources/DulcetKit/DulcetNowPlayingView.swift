@@ -237,12 +237,21 @@ struct DulcetNowPlayingView: View {
 #else
                 let verticalPadding = presentation == .sheet ? Self.sheetVerticalPadding : DulcetSpacing.xl
                 let bottomPadding = oneColumnBottomPadding
+                let panelHeight = geometry.size.height - verticalPadding - bottomPadding
+                let stackedCover = stackedArtworkSize(
+                    innerWidth: max(0, min(Self.oneColumnLyricsMaxWidth, width) - 2 * padding),
+                    availableHeight: panelHeight
+                )
                 ScrollView {
                     playerPanel(
-                        artworkSize: stackedArtworkSize(
-                            innerWidth: max(0, min(Self.oneColumnLyricsMaxWidth, width) - 2 * padding),
-                            availableHeight: geometry.size.height - verticalPadding - bottomPadding
-                        ),
+                        artworkSize: stackedCover,
+                        coverTopInset: presentation == .sheet
+                            ? Self.sheetCoverTopInset(
+                                availableHeight: panelHeight,
+                                chromeHeight: playerChromeHeight,
+                                coverSize: stackedCover
+                            )
+                            : 0,
                         alignment: presentation == .sheet ? .leading : .center,
                         showsQueueToggle: true
                     )
@@ -726,8 +735,33 @@ struct DulcetNowPlayingView: View {
 #endif
     }
 
+    /// The share of a phone sheet's spare height that goes above the cover; the rest stays between
+    /// the cover and the title. A cover pinned to the top with the controls pinned to the bottom
+    /// left all of it in one band under the cover (observed on an iPhone 11 Pro Max: ~130 pt of
+    /// empty window between cover and title). Weighted to the top, so the title still sits close
+    /// under the cover, as the system player sets it, and the cover has room to breathe from the
+    /// close button.
+    static let sheetSpareHeightAboveCover: CGFloat = 0.6
+
+    /// How far a phone sheet's cover is pushed down from the top of its page: its share
+    /// (``sheetSpareHeightAboveCover``) of the height the cover, the gap and the controls leave
+    /// unused. Nothing until the controls have been measured, and nothing when there is none.
+    static func sheetCoverTopInset(
+        availableHeight: CGFloat,
+        chromeHeight: CGFloat?,
+        coverSize: CGFloat
+    ) -> CGFloat {
+        guard let chromeHeight else { return 0 }
+        let spare = availableHeight - chromeHeight - coverToTitleSpacing - coverSize
+        return max(0, (spare * sheetSpareHeightAboveCover).rounded(.down))
+    }
+
     private func stackedArtworkSize(innerWidth: CGFloat, availableHeight: CGFloat) -> CGFloat {
-        let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 220 : 360
+        // A phone's cover takes the whole column -- the same edges as the title and the
+        // scrubber -- as the system player's does; a wider window keeps the cover from
+        // outgrowing the lines of text beside it.
+        let cap: CGFloat = dynamicTypeSize.isAccessibilitySize ? 220
+            : presentation == .sheet ? .infinity : 360
         let widthLimit = max(Self.stackedMinimumArtwork, min(innerWidth, cap))
         return Self.fittedArtworkSize(
             widthLimit: widthLimit,
@@ -740,6 +774,7 @@ struct DulcetNowPlayingView: View {
 
     private func playerPanel(
         artworkSize: CGFloat,
+        coverTopInset: CGFloat = 0,
         alignment: HorizontalAlignment,
         showsQueueToggle: Bool
     ) -> some View {
@@ -747,6 +782,7 @@ struct DulcetNowPlayingView: View {
             playerCover(size: artworkSize)
                 .anchorPreference(key: DulcetPlayerLayoutKey.self, value: .bounds) { [.cover: $0] }
                 .frame(maxWidth: .infinity)
+                .padding(.top, coverTopInset)
 
             VStack(alignment: alignment, spacing: 0) {
                 trackIdentity(alignment: alignment)
@@ -1434,7 +1470,7 @@ private struct DulcetArtworkSwipes: ViewModifier {
 /// at full size clears it paused too.
 struct DulcetPlayerCover: View {
     /// How far a presented player's cover shrinks while paused.
-    static let pausedScale: CGFloat = 0.9
+    static let pausedScale: CGFloat = 0.86
     let artwork: DulcetArtwork
     let size: CGFloat
     let isPlaying: Bool
@@ -1446,8 +1482,13 @@ struct DulcetPlayerCover: View {
             .shadow(color: .black.opacity(isPlaying ? 0.28 : 0.14), radius: 18, y: 8)
 
             .scaleEffect(scale)
-            .animation(reduceMotion ? nil : .spring(duration: 0.4), value: isPlaying)
+            // A little overshoot on the way back up: the cover springs out on play. Reduce Motion
+            // takes the animation away (and the caller keeps the scale at 1).
+            .animation(reduceMotion ? nil : Self.spring, value: isPlaying)
     }
+
+    /// Shrinking on pause and growing on play use one spring, so the pair reads as one gesture.
+    static let spring: Animation = .spring(duration: 0.5, bounce: 0.3)
 }
 
 /// The artwork's own colours, blurred, glowing out from behind the cover: the player takes on
