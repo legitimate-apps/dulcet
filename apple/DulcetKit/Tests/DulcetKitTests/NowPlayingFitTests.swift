@@ -86,6 +86,48 @@ func theFittedCoverTakesWhatTheControlsLeave() {
     ) == 333)
 }
 
+/// A tall phone leaves spare height once the cover spans the column and the controls are under
+/// it. The sheet shares that height between the space above the cover and the gap beneath it, so
+/// the title stays close under the cover instead of a band of empty window opening between them
+/// (an iPhone 11 Pro Max showed ~130 pt there), and the cover is still the full column width.
+@Test(arguments: [
+    CGSize(width: 414, height: 780),
+    CGSize(width: 440, height: 860),
+    CGSize(width: 402, height: 700),
+])
+@MainActor
+func aTallPhoneSharesItsSpareHeightAroundTheCoverInsteadOfOneBandUnderIt(size: CGSize) async throws {
+    let layout = try await laidOutPlayer(
+        DulcetNowPlayingView(player: fitPlayer(titled: "Twenty Nine Seconds"), presentation: .sheet),
+        size: size,
+        textSize: .large
+    )
+    let gapToTitle = layout.column.minY - layout.cover.maxY
+    #expect(abs(layout.cover.width - layout.column.width) <= 1, "\(size): cover \(layout.cover.width), column \(layout.column.width)")
+    #expect(gapToTitle <= DulcetNowPlayingView.coverToTitleSpacing + 70, "\(size): \(gapToTitle) pt between cover and title")
+    #expect(layout.footer.maxY <= size.height, "\(size): footer ends at \(layout.footer.maxY)")
+    // The spare height is split, with the larger share above the cover.
+    let spare = gapToTitle - DulcetNowPlayingView.coverToTitleSpacing
+    if spare > 8 { #expect(layout.cover.minY - DulcetNowPlayingView.sheetVerticalPadding > spare, "\(size): top \(layout.cover.minY), below \(spare)") }
+}
+
+@Test
+func theSheetCoverTakesItsShareOfTheSpareHeightAbove() {
+    let spacing = DulcetNowPlayingView.coverToTitleSpacing
+    let share = DulcetNowPlayingView.sheetSpareHeightAboveCover
+    // 100 points spare once the cover, the gap and the controls are placed.
+    #expect(DulcetNowPlayingView.sheetCoverTopInset(
+        availableHeight: 400 + spacing + 300, chromeHeight: 300, coverSize: 300
+    ) == (100 * share).rounded(.down))
+    // Nothing spare, or the controls over the window: no inset.
+    #expect(DulcetNowPlayingView.sheetCoverTopInset(
+        availableHeight: 300 + spacing + 300, chromeHeight: 300, coverSize: 300
+    ) == 0)
+    #expect(DulcetNowPlayingView.sheetCoverTopInset(availableHeight: 500, chromeHeight: 300, coverSize: 360) == 0)
+    // Not yet measured: the cover stays where it is.
+    #expect(DulcetNowPlayingView.sheetCoverTopInset(availableHeight: 900, chromeHeight: nil, coverSize: 300) == 0)
+}
+
 @MainActor
 private func fitPlayer(
     titled title: String? = nil,
