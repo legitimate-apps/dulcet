@@ -3528,6 +3528,131 @@ func queueEditingIsOfferedOnlyWhenTheControllerCanEdit() {
 }
 
 @Test @MainActor
+func trackRowQueueSwipeWiringReusesQueueEditsPlaysLightHapticAndSkipsUnavailableOfflineRows() throws {
+    let (nonEditingStore, _, _, _) = connectedShellStore(navigation: .stayOnCurrentSurface)
+    let editing = EditingPlaybackController()
+    let store = DulcetPresentationStore(source: DulcetAccountDataSource(
+        connector: ControlledAccountConnector(),
+        playbackController: editing
+    ))
+    let baseTrack = try #require(fixtureLibraryAlbum().tracks.first)
+    let addition = DulcetQueueAddition.track(baseTrack, in: store)
+    let searchAddition = DulcetQueueAddition.searchResult(baseTrack)
+
+    // Without a queue-editing playback controller, no swipe queue action is offered.
+    #expect(!DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+        track: baseTrack,
+        addition: addition,
+        in: nonEditingStore
+    ))
+
+    // Online playable catalog and search rows offer trailing queue swipe actions; queue entries do not.
+    #expect(DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+        track: baseTrack,
+        addition: addition,
+        in: store
+    ))
+    #expect(DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+        track: baseTrack,
+        addition: searchAddition,
+        in: store,
+        offline: false,
+        isSearchResult: true
+    ))
+    #expect(!DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+        track: baseTrack,
+        addition: addition,
+        in: store,
+        allowsTrackDrag: false
+    ))
+
+    // Offline rows offer queue actions only when locally playable and activatable.
+    for state in [DulcetDownloadState.notDownloaded, .queued, .downloading, .failed, .interrupted] {
+        let notLocal = baseTrack.replacingDownloadState(state)
+        #expect(!DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+            track: notLocal,
+            addition: DulcetQueueAddition.track(notLocal, in: store),
+            in: store,
+            offline: true
+        ))
+    }
+    for state in [DulcetDownloadState.downloaded, .cached, .stale] {
+        let local = baseTrack.replacingDownloadState(state)
+        #expect(DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+            track: local,
+            addition: DulcetQueueAddition.track(local, in: store),
+            in: store,
+            offline: true,
+            hasActivation: true
+        ))
+        // If the reader still marks the row unavailable offline (no activation), do not offer queue actions.
+        #expect(!DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+            track: local,
+            addition: DulcetQueueAddition.track(local, in: store),
+            in: store,
+            offline: true,
+            hasActivation: false
+        ))
+    }
+    // An offline-unavailable search result row never offers queue actions.
+    #expect(!DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+        track: baseTrack.replacingDownloadState(.downloaded),
+        addition: searchAddition,
+        in: store,
+        offline: true,
+        isSearchResult: true
+    ))
+    // An unplayable track never offers queue actions.
+    let unplayable = DulcetTrack(
+        id: baseTrack.id,
+        title: baseTrack.title,
+        credits: baseTrack.credits,
+        albumTitle: baseTrack.albumTitle,
+        discNumber: baseTrack.discNumber,
+        trackNumber: baseTrack.trackNumber,
+        duration: baseTrack.duration,
+        sourceContainer: baseTrack.sourceContainer,
+        mediaSourceID: baseTrack.mediaSourceID,
+        artwork: baseTrack.artwork,
+        availability: .metadataOnly,
+        isFavorite: baseTrack.isFavorite,
+        downloadState: .downloaded,
+        albumID: baseTrack.albumID
+    )
+    #expect(!DulcetTrackRow<EmptyView>.offersQueueSwipeActions(
+        track: unplayable,
+        addition: DulcetQueueAddition(tracks: [unplayable], sourceKind: .library, sourceID: nil, sourceDisplayName: "Library"),
+        in: store
+    ))
+
+    #if DEBUG
+    let wasEnabled = DulcetUIProofMarkers.isEnabled
+    DulcetUIProofMarkers.isEnabled = true
+    defer { DulcetUIProofMarkers.isEnabled = wasEnabled }
+    let markerBaseline = DulcetUIProofMarkers.log.entries.count
+    #endif
+
+    // Swipe actions fire the light queue haptic and forward Play Next / Add to Queue.
+    DulcetQueueInsertionMenuItems.playNext(addition, in: store, haptic: .queue)
+    DulcetQueueInsertionMenuItems.addToQueue(searchAddition, in: store, haptic: .queue)
+    // Context and More menus leave haptic nil, keeping menu actions silent.
+    DulcetQueueInsertionMenuItems.playNext(addition, in: store)
+    // Unavailable-offline calls neither edit the queue nor fire a haptic.
+    DulcetQueueInsertionMenuItems.playNext(addition, in: store, unavailableOffline: true, haptic: .queue)
+    DulcetQueueInsertionMenuItems.addToQueue(addition, in: nonEditingStore, haptic: .queue)
+
+    #expect(editing.edits == [
+        .playNext(addition),
+        .playLater(searchAddition),
+        .playNext(addition),
+    ])
+    #if DEBUG
+    let haptics = DulcetUIProofMarkers.log.entries.dropFirst(markerBaseline).filter { $0.hasPrefix("haptic:") }
+    #expect(Array(haptics) == ["haptic:queue", "haptic:queue"])
+    #endif
+}
+
+@Test @MainActor
 func droppingDraggedItemsOntoTheQueueAddsEachResolvableOneToTheEnd() throws {
     DulcetQueueDragRegistry.removeAll()
     let editing = EditingPlaybackController()

@@ -368,7 +368,7 @@ struct DulcetLibrarySongsPage: View {
 
     var body: some View {
         DulcetReaderScreen(query: downloaded ? .downloaded : .songs, showsDestinationStatus: !scrollsStatus) { model in
-            DulcetReaderPage(title: title) { _ in
+            DulcetReaderListPage(title: title, freshness: model.window?.freshness) { _ in
                 // Keep the Downloaded status in the scrolling document. Its intrinsic text
                 // height must not become a minimum height for the Mac split-view column.
                 if scrollsStatus { DulcetReaderStatusView(window: model.window, localCollection: true) }
@@ -386,20 +386,31 @@ struct DulcetLibrarySongsPage: View {
                 if !downloaded && store.librarySession?.isOnline == true {
                     Text(DulcetStrings.libraryRandomQueueHint).font(.caption).dulcetForeground(.secondaryTextOnWindow)
                 }
+#if os(iOS)
+                DulcetReaderListRows(model: model) { window in
+                    songRows(window, model: model)
+                }
+#else
                 DulcetReaderListBody(model: model) { window in
                     // Row appearances drive paging: offscreen songs must not report themselves
                     // as the viewport and eagerly extend the window to the whole catalogue.
                     LazyVStack(alignment: .leading, spacing: 0) {
-                        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-                            DulcetReaderTrackRow(item: item, index: index + 1) { track in
-                                store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
-                            }
-                            .dulcetReaderRow(index, in: model)
-                            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
-                        }
+                        songRows(window, model: model)
                     }
                 }
+#endif
             }
+        }
+    }
+
+    @ViewBuilder
+    private func songRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
+        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+            DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
+            }
+            .dulcetReaderRow(index, in: model)
+            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
         }
     }
 }
@@ -434,7 +445,7 @@ struct DulcetDownloadedPage: View {
 
     var body: some View {
         DulcetReaderScreen(query: .downloaded) { songs in
-            DulcetReaderPage(title: title) { width in
+            DulcetReaderListPage(title: title, freshness: songs.window?.freshness) { width in
                 Text(DulcetStrings.libraryDownloadedHint)
                     .font(.subheadline).dulcetForeground(.secondaryTextOnWindow)
                 Button(DulcetStrings.libraryShuffleAll, systemImage: "shuffle") {
@@ -461,17 +472,29 @@ struct DulcetDownloadedPage: View {
         }
     }
 
+    @ViewBuilder
     private func songList(_ model: DulcetLibraryWindowModel) -> some View {
+#if os(iOS)
+        DulcetReaderListRows(model: model, emptyState: Self.emptyState) { window in
+            downloadedSongRows(window, model: model)
+        }
+#else
         DulcetReaderListBody(model: model, emptyState: Self.emptyState) { window in
             LazyVStack(alignment: .leading, spacing: 0) {
-                ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-                    DulcetReaderTrackRow(item: item, index: index + 1) { track in
-                        store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
-                    }
-                    .dulcetReaderRow(index, in: model)
-                    .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
-                }
+                downloadedSongRows(window, model: model)
             }
+        }
+#endif
+    }
+
+    @ViewBuilder
+    private func downloadedSongRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
+        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+            DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
+            }
+            .dulcetReaderRow(index, in: model)
+            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
         }
     }
 

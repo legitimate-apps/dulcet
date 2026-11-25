@@ -303,22 +303,33 @@ struct DulcetListenNowShelfPage: View {
     let shelf: DulcetListenNowShelf
     var body: some View {
         DulcetReaderScreen(query: .listenNow(shelf), showsDestinationStatus: true) { model in
-            DulcetReaderPage(title: shelf.title) { width in
-                DulcetReaderListBody(model: model) { window in
-                    if window.items.first?.kind == .track {
-                        ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-                            DulcetReaderTrackRow(item: item, index: index + 1) { track in
-                                store.playReaderTracks(window.playableTracks, startingAt: track,
-                                    sourceKind: .library, sourceID: nil, sourceName: shelf.title)
-                            }
-                            .dulcetReaderRow(index, in: model)
-                            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
-                        }
-                    } else {
-                        DulcetReaderGrid(model: model, width: width)
-                    }
+            DulcetReaderListPage(title: shelf.title, freshness: model.window?.freshness) { width in
+#if os(iOS)
+                DulcetReaderListRows(model: model) { window in
+                    shelfRows(window, model: model, width: width)
                 }
+#else
+                DulcetReaderListBody(model: model) { window in
+                    shelfRows(window, model: model, width: width)
+                }
+#endif
             }
+        }
+    }
+
+    @ViewBuilder
+    private func shelfRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel, width: CGFloat) -> some View {
+        if window.items.first?.kind == .track {
+            ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
+                DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                    store.playReaderTracks(window.playableTracks, startingAt: track,
+                        sourceKind: .library, sourceID: nil, sourceName: shelf.title)
+                }
+                .dulcetReaderRow(index, in: model)
+                .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
+            }
+        } else {
+            DulcetReaderGrid(model: model, width: width)
         }
     }
 }

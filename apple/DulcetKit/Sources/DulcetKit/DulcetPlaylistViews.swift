@@ -192,7 +192,12 @@ private struct DulcetPlaylistPageContent: View {
 #endif
 
     private func stackedPage(_ model: DulcetLibraryWindowModel) -> some View {
-        DulcetReaderPage(title: model.window?.header?.displayTitle ?? "", keepsTVNavigationBar: false, titleInHeader: true) { width in
+        DulcetReaderListPage(
+            title: model.window?.header?.displayTitle ?? "",
+            keepsTVNavigationBar: false,
+            titleInHeader: true,
+            freshness: model.window?.freshness
+        ) { width in
             if let window = model.window {
                 // Gone from the server, or never read and offline, with nothing kept: the core has
                 // no playlist to name, so there is no title to show and nothing to play -- an empty header and
@@ -200,12 +205,21 @@ private struct DulcetPlaylistPageContent: View {
                 // about a failed edit comes first, then the statement in place of the tracks.
                 if window.header != nil || !window.items.isEmpty || !Self.isUnavailable(window) {
                     header(window, width: width)
+#if os(iOS)
+                        .padding(.bottom, DulcetSpacing.md)
+#endif
                 }
                 awaitingChoiceBanner
                 problemBanner
+#if os(iOS)
+                DulcetReaderListRows(model: model, subject: window.header == nil ? .list : .albumTracks) { window in
+                    trackRows(window, model: model)
+                }
+#else
                 DulcetReaderListBody(model: model, subject: window.header == nil ? .list : .albumTracks) { window in
                     tracks(window, model: model)
                 }
+#endif
             } else {
                 ProgressView().frame(maxWidth: .infinity, minHeight: 120)
             }
@@ -381,31 +395,34 @@ private struct DulcetPlaylistPageContent: View {
 
     @ViewBuilder
     private func tracks(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
-        let playable = window.playableTracks
         LazyVStack(alignment: .leading, spacing: 0) {
-            // By position: a playlist may hold one song twice (§18.6).
-            ForEach(Array(window.items.enumerated()), id: \.offset) { index, item in
-                DulcetReaderTrackRow(
-                    item: item, index: window.leadingOffset + index + 1,
-                    showsIndex: false,
-                    queueAddition: item.playableTrack.map {
-                        DulcetQueueAddition(tracks: [$0], sourceKind: playlistSourceKind(window),
-                                            sourceID: playlistSourceID(window), sourceDisplayName: window.header?.displayTitle ?? "")
-                    }
-                ) { track in
-                    store.playReaderTracks(
-                        playable,
-                        startingAt: track,
-                        sourceKind: playlistSourceKind(window),
-                        sourceID: playlistSourceID(window),
-                        sourceName: window.header?.displayTitle ?? ""
-                    )
+            trackRows(window, model: model)
+        }
+    }
+
+    @ViewBuilder
+    private func trackRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
+        let playable = window.playableTracks
+        // By position: a playlist may hold one song twice (§18.6).
+        ForEach(Array(window.items.enumerated()), id: \.offset) { index, item in
+            DulcetReaderTrackRow(
+                item: item, index: window.leadingOffset + index + 1,
+                showsIndex: false,
+                queueAddition: item.playableTrack.map {
+                    DulcetQueueAddition(tracks: [$0], sourceKind: playlistSourceKind(window),
+                                        sourceID: playlistSourceID(window), sourceDisplayName: window.header?.displayTitle ?? "")
                 }
-                .dulcetReaderRow(index, in: model)
-                if index < window.items.count - 1 {
-                    DulcetTrackListSeparator(songRowShowingIndex: false, artwork: true)
-                }
+            ) { track in
+                store.playReaderTracks(
+                    playable,
+                    startingAt: track,
+                    sourceKind: playlistSourceKind(window),
+                    sourceID: playlistSourceID(window),
+                    sourceName: window.header?.displayTitle ?? ""
+                )
             }
+            .dulcetReaderRow(index, in: model)
+            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: false, artwork: true)
         }
     }
 
