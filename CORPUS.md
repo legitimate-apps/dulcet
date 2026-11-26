@@ -250,6 +250,33 @@ that must argue against the recorded rationale, not a blank to fill in.
    commit; the full UI suite is required before a PROD release, never for DEV. Its failures are fix
    work, not a DEV hold.
 
+## 5c · Decided 2026-11-26 by the maintainer
+
+1. **Dulcet has three layers: Connections, Library and My Library.** Dulcet has no ingest. Music
+   arrives in the server's music folder from the tools a person already runs (Lidarr, for example)
+   or by hand, and Dulcet scans it.
+   - **Connections** are the tools and services a server or a person links to Dulcet (for example
+     Lidarr, Jellyfin, Emby, Plex, ListenBrainz and image sources), plus storage. A connection
+     offers capabilities: artist images, album art, metadata, popularity, requests and import.
+     Each capability has its own ordered list of connections, and each entry can be turned on or
+     off, so artwork can come from one tool while requests go to another. A connection may offer a
+     single capability: an artwork-only source is a connection like any other. Connections that
+     answer for every user, such as artwork, are configured by the server's administrator.
+     Connections that hold one person's own data, such as their favourites in another server,
+     belong to that person. Every connection is off until someone configures it, and is
+     documented, not advertised. Storage means each device's downloads and stream cache first,
+     then the server's disk.
+   - **Library** is everything on the server. Dulcet Server is its library manager: it shows the
+     whole library and its problems (split albums, missing art, duplicates, scan state) and fixes
+     them, including editing tags, merging albums, and moving and deleting files. Writing to the
+     music folder is an administrator's explicit opt-in, and how each write stays safe and
+     reversible is designed before that write ships.
+   - **My Library** is each person's own selection: what they add, their favourites and their
+     playlists (`dulcetLibrary`, spec §29.9).
+2. **Integrations to build in Connections:** artist images first, then a Wishlist item becoming a
+   Lidarr request, import from Jellyfin and Plex, more image and metadata sources, and ListenBrainz
+   popularity for the top songs of artists a person hasn't played.
+
 ## 6 · How we know something works
 
 1. **Conformance suite** — the core against a real Navidrome, pinned to the reference version, on a
@@ -273,7 +300,8 @@ that must argue against the recorded rationale, not a blank to fill in.
 
 ## 7 · What Dulcet is not
 
-Not a library manager. Not a tag editor. Not a video player. Not a podcast or audiobook
+Not a video player. Not a podcast or audiobook
 app — long-form media gets ordinary-song behavior and nothing more. Not a last.fm client: we scrobble
-to the server and its relays are its business. Not a Jellyfin client. Not a wrapper around a web app.
+to the server and its relays are its business. Not a Jellyfin client: the apps speak Dulcet API or OpenSubsonic only, and Dulcet Server may read
+from Jellyfin as a connection (§5c). Not a wrapper around a web app.
 Not an analytics product.
