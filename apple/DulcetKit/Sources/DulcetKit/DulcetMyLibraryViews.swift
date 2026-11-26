@@ -66,7 +66,8 @@ extension DulcetMyLibrarySection {
 
 /// The sync status and failure lines a My Library surface states above its content.
 struct DulcetMyLibraryStatusLines: View {
-    @Environment(DulcetPresentationStore.self) private var store
+    /// Optional: a host with no store (a render test) draws the failure lines and no indicator.
+    @Environment(DulcetPresentationStore.self) private var store: DulcetPresentationStore?
     let library: DulcetMyLibrarySnapshot
     let onRetry: () -> Void
 
@@ -76,7 +77,7 @@ struct DulcetMyLibraryStatusLines: View {
             // "Couldn't refresh" (§16.14). The session's one connection indicator words it, so
             // "the device has no network" and "the server does not answer" read differently, and
             // a reconnect just starting says nothing.
-            if let indicator = store.librarySession?.connectionIndicator(
+            if let store, let indicator = store.librarySession?.connectionIndicator(
                 connecting: store.snapshot.accountConnection == .connecting) {
                 DulcetDestinationStatus(title: indicator.pageTitle, symbol: indicator.symbol,
                     identifier: "dulcet.myLibrary.offline",
