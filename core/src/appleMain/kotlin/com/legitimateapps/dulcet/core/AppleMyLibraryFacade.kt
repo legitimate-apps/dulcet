@@ -309,7 +309,7 @@ internal fun MyLibrarySnapshot.toApple(sequence: Int, reader: LibraryReader? = n
         )
     },
     artists = if (availability == MyLibraryAvailability.Unavailable) emptyList() else artists.map {
-        AppleMyLibraryArtist(it.record.rawId, it.record.name, it.record.artworkKey, it.record.albumCount ?: -1, it.explicitlyAdded, it.pending, it.deviceOnly)
+        AppleMyLibraryArtist(it.record.rawId, it.record.name, it.record.artworkKey, albumCountFor(it) ?: -1, it.explicitlyAdded, it.pending, it.deviceOnly)
     },
     songs = if (availability == MyLibraryAvailability.Unavailable) emptyList() else songs.map { song ->
         AppleMyLibrarySong(

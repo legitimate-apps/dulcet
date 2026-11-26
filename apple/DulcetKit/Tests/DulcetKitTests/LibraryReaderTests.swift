@@ -706,7 +706,8 @@ func anUnreachableReportThatOutlastsTheGraceTakesTheReaderOfflineAndRecoveryReco
     #expect(events() == ["setOnline(false)"], "already offline: nothing more")
 
     reachability.report(reachable: true)
-    #expect(events() == ["setOnline(false)", "setOnline(true)"], "reachable again is told at once")
+    #expect(events() == ["setOnline(false)", "setOnline(true)", "reconnect"],
+            "reachable again is told at once, and the reconnect it starts reports back to the session")
     #expect(log().last == "reachable; the reader is told and reconnects")
     for line in log() {
         #expect(!line.contains("http") && !line.contains(readerAccount.username) && !line.contains(readerAccount.password),
@@ -3068,4 +3069,190 @@ func aPlaylistDownloadIsCompleteOnlyWhenEveryKnownSongIsHere() {
             "a playlist whose songs are still being read is on its way")
     #expect(!DulcetPlaylistDownload(wanted: true, songCount: 3, downloadedCount: 1).isDownloading,
             "nothing moving is waiting, not downloading")
+}
+
+// MARK: - One connection indicator (round 5: offline and back)
+
+@Test
+func theIndicatorSeparatesADeviceWithNoNetworkFromAServerThatDoesNotAnswer() {
+    typealias Indicator = DulcetConnectionIndicator
+    func choose(_ mode: DulcetLibraryReaderMode, offline: Bool = false, failure: DulcetReaderErrorKind? = nil,
+                connecting: Bool = false) -> Indicator? {
+        Indicator.choose(mode: mode, deviceOffline: offline, connectionFailure: failure, connecting: connecting)
+    }
+    // No network path: "You're offline", and nothing to retry.
+    let offline = choose(.connected, offline: true)
+    #expect(offline?.cause == .deviceOffline)
+    #expect(offline?.offersRetry == false)
+    #expect(offline?.pageTitle == DulcetStrings.readerPageOffline)
+    #expect(offline?.bannerTitle == DulcetStrings.readerOfflineNotice)
+    // A failure recorded while the network was gone says nothing about the server.
+    #expect(choose(.connected, offline: true, failure: .unreachable)?.cause == .deviceOffline)
+    #expect(choose(.deviceOnly, offline: true)?.cause == .deviceOffline)
+    // A path with a server that does not answer: say so, and offer Try Again.
+    let unreachable = choose(.connected, failure: .unreachable)
+    #expect(unreachable?.cause == .serverUnreachable)
+    #expect(unreachable?.offersRetry == true)
+    #expect(unreachable?.bannerTitle == DulcetStrings.connectionsUnreachableNotice)
+    #expect(unreachable?.pageTitle == DulcetStrings.readerPageServerUnreachable)
+    // A saved account not connected in this launch, with a network: the server, never "offline".
+    #expect(choose(.deviceOnly)?.cause == .serverUnreachable)
+    #expect(choose(.deviceOnly, connecting: true)?.cause == .reconnecting)
+    #expect(choose(.deviceOnly, connecting: true)?.retryEnabled == false)
+    // A refusal is not "unreachable"; a healthy connection says nothing.
+    #expect(choose(.connected, failure: .invalidCredentials)?.cause == .connectionFailed)
+    #expect(choose(.connected) == nil)
+    #expect(choose(.none, offline: true) == nil)
+}
+
+@Test @MainActor
+func aScreenStatesTheConnectionOnceAndNeverRepeatsItInAFreshnessLine() {
+    let offlineFreshness = DulcetReaderFreshness.cached(.offline, asOf: Date())
+    let offline = DulcetConnectionIndicator.choose(mode: .connected, deviceOffline: true, connectionFailure: nil, connecting: false)
+    func plan(_ freshness: DulcetReaderFreshness, indicator: DulcetConnectionIndicator? = offline,
+              shown: Bool = false, local: Bool = false, canReconnect: Bool = true) -> DulcetReaderCopy.StatusPlan {
+        DulcetReaderCopy.statusPlan(
+            window: window([], freshness: freshness, coverage: "open"), indicator: indicator,
+            accountMessageShown: shown, localCollection: local, reconnectAvailable: canReconnect)
+    }
+    let offlinePlan = plan(offlineFreshness)
+    #expect(offlinePlan.indicator?.cause == .deviceOffline)
+    #expect(offlinePlan.lines.isEmpty, "the freshness line would say \"You're offline\" a second time")
+    #expect(!offlinePlan.offersRetry)
+    // The same page, reader offline while the server is unreachable: Try Again belongs to the indicator.
+    let unreachable = DulcetConnectionIndicator.choose(mode: .connected, deviceOffline: false, connectionFailure: .unreachable, connecting: false)
+    let unreachablePlan = plan(offlineFreshness, indicator: unreachable)
+    #expect(unreachablePlan.indicator?.cause == .serverUnreachable)
+    #expect(unreachablePlan.lines.isEmpty && !unreachablePlan.offersRetry)
+    // A reconnect that is just starting has no indicator yet: say nothing, never a guess.
+    #expect(plan(offlineFreshness, indicator: nil).isEmpty)
+    // A banner above, a device-only list, or a page that explains itself: nothing more.
+    #expect(plan(offlineFreshness, shown: true).isEmpty)
+    #expect(plan(offlineFreshness, local: true).isEmpty)
+    #expect(plan(.unavailable(.notCachedOffline)).isEmpty)
+    // A failed refresh is a different statement: its line and its Try Again, but no indicator.
+    let failed = plan(.cached(.failed(.serverBusy), asOf: Date()), indicator: nil)
+    #expect(failed.indicator == nil && failed.lines.count == 1 && failed.offersRetry)
+    #expect(!plan(.cached(.failed(.serverBusy), asOf: Date()), indicator: nil, canReconnect: false).offersRetry)
+    #expect(plan(.live, indicator: nil).isEmpty)
+}
+
+@Test @MainActor
+func theSessionNamesTheDeviceOfflineOnlyAfterTheGraceAndTheServerOtherwise() throws {
+    let (session, reachability, delays, _, _) = try connectedSessionWithManualTime()
+    #expect(session.connectionIndicator() == nil, "control: online says nothing")
+    reachability.report(reachable: false)
+    #expect(!session.isDeviceOffline, "a blip inside the grace is not offline")
+    #expect(session.connectionIndicator() == nil)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    #expect(session.isDeviceOffline)
+    #expect(session.connectionIndicator()?.cause == .deviceOffline)
+    #expect(session.ownsConnectionMessage)
+    reachability.report(reachable: true)
+    #expect(!session.isDeviceOffline)
+}
+
+/// The network's return, not a timer, clears what the outage left on screen (round 5: Listen Now
+/// kept "Can't reach your server" for 30-40 s after Airplane Mode went off).
+@Test @MainActor
+func theNetworksReturnClearsAnOutagesFailureAtOnceAndReconnectsWithoutATimer() throws {
+    let factory = RecordingReaderFactory()
+    let reachability = ManualReachability()
+    let delays = ManualDelays()
+    let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    reachability.report(reachable: true)
+    // The server stopped answering while the device was still online: the server is unreachable.
+    reader.answerConnections(DulcetReaderConnection(
+        epochKnown: false, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: "unreachable"))
+    #expect(session.connectionIndicator()?.cause == .serverUnreachable)
+    // Then the device lost its network: the device is what is offline, and that outranks it.
+    reachability.report(reachable: false)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    #expect(session.connectionIndicator()?.cause == .deviceOffline)
+    #expect(session.connectionIndicator()?.offersRetry == false)
+
+    let mark = reader.events.count
+    reachability.report(reachable: true)
+    // No timer ran: the one report did all of it.
+    #expect(delays.pending == 0)
+    #expect(Array(reader.events.dropFirst(mark).filter { !$0.hasPrefix("setNetworkConstrained") }) == ["setOnline(true)", "reconnect"])
+    #expect(session.connectionFailure == nil, "the outage's failure is stale the moment a path exists")
+    #expect(session.connectionIndicator() == nil, "nothing is said while the reconnect runs")
+    // Still no server: the reconnect's own answer says so again.
+    reader.answerConnections(DulcetReaderConnection(
+        epochKnown: false, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: "unreachable"))
+    #expect(session.connectionIndicator()?.cause == .serverUnreachable)
+}
+
+/// The radio can be up a moment before the server answers: the first reconnect after the path
+/// returns may fail. The screens must not wait for the epoch cadence; a short retry, only while the
+/// path stays up, finds the server (round 5: 30-40 s of "Can't reach your server").
+@Test @MainActor
+func aServerSlowBehindTheReturnedNetworkIsRetriedSoonAndStopsAtTheFirstAnswer() throws {
+    let factory = RecordingReaderFactory()
+    let reachability = ManualReachability()
+    let delays = ManualDelays()
+    let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    reachability.report(reachable: true)
+    reader.answerConnections(DulcetReaderConnection(
+        epochKnown: true, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: nil))
+    reachability.report(reachable: false)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    reachability.report(reachable: true)
+    func reconnects() -> Int { reader.events.filter { $0 == "reconnect" }.count }
+    #expect(reconnects() == 1)
+    let down = DulcetReaderConnection(epochKnown: false, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: "unreachable")
+    reader.answerConnections(down)
+    #expect(session.connectionIndicator()?.cause == .serverUnreachable)
+    #expect(delays.pending == 1)
+    delays.advance(by: .milliseconds(900))
+    #expect(reconnects() == 1, "not before its time")
+    delays.advance(by: .milliseconds(100))
+    #expect(reconnects() == 2, "the first retry is a second after the failure")
+    reader.answerConnections(down)
+    delays.advance(by: .seconds(1))
+    #expect(reconnects() == 2, "each retry waits longer than the last")
+    delays.advance(by: .seconds(1))
+    #expect(reconnects() == 3)
+    reader.answerConnections(DulcetReaderConnection(
+        epochKnown: true, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: nil))
+    #expect(session.connectionFailure == nil)
+    #expect(session.connectionIndicator() == nil)
+    #expect(delays.pending == 0, "an answer ends the retries")
+    delays.advance(by: .seconds(60))
+    #expect(reconnects() == 3)
+
+    // Losing the path again cancels a retry that was waiting: the device is offline, not the server.
+    reachability.report(reachable: false)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    reachability.report(reachable: true)
+    reader.answerConnections(down)
+    #expect(delays.pending == 1)
+    reachability.report(reachable: false)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    let before = reconnects()
+    delays.advance(by: .seconds(60))
+    #expect(reconnects() == before, "no retry fires into a network that is gone")
+    #expect(session.connectionIndicator()?.cause == .deviceOffline)
+}
+
+@Test @MainActor
+func aRefusalIsNotClearedByTheNetworksReturn() throws {
+    let factory = RecordingReaderFactory()
+    let reachability = ManualReachability()
+    let delays = ManualDelays()
+    let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    reachability.report(reachable: true)
+    reader.answerConnections(DulcetReaderConnection(
+        epochKnown: false, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: "invalidCredentials"))
+    reachability.report(reachable: false)
+    delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
+    reachability.report(reachable: true)
+    #expect(session.connectionFailure == .invalidCredentials, "a sign-in the server refused is not a network failure")
 }

@@ -2297,7 +2297,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         self.launchInInteractionScope(app)
         step("listen-now-offline", app) {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
-                && app.staticTexts["You're offline. Showing music on this device."].firstMatch.waitForExistence(timeout: 60)
+                && app.staticTexts["Can't reach your server. Showing music on this device."].firstMatch.waitForExistence(timeout: 60)
                 && app.buttons["Try Again"].firstMatch.exists
                 && self.restoredMiniPlayerSettled(in: app) && self.settle(app)
                 && self.offlineCatalogueShelvesAbsent(in: app)

@@ -202,6 +202,12 @@ public final class DulcetLibrarySession {
     @ObservationIgnored private let reachabilityLog: @MainActor (String) -> Void
     /// An unreachable report not yet acted on, and when it arrived (for the log only).
     @ObservationIgnored private var heldUnreachable: (timer: any DulcetLibraryReaderCancellable, since: ContinuousClock.Instant)?
+    /// After the network returned and the server still did not answer: the next reconnect waits
+    /// here (1, 2, 4, 8 then 15 s), so a radio still coming up is found within seconds. The path's
+    /// return is the trigger; this only covers a server that is slow to answer behind it.
+    @ObservationIgnored private var recoveryRetry: (any DulcetLibraryReaderCancellable)?
+    @ObservationIgnored private var recoveryDelay: Duration = .seconds(1)
+    @ObservationIgnored private var recoveringFromOutage = false
     @ObservationIgnored private var noticeSequence = 0
     /// The reader to make once the previous one has closed.
     @ObservationIgnored private var awaitingOpen: OpenRequest?
@@ -296,7 +302,21 @@ public final class DulcetLibrarySession {
     public var isForeground: Bool { foreground }
     /// The account banner owns this message; shelves retain their independent list errors.
     public var ownsConnectionMessage: Bool {
-        mode == .deviceOnly || connectionFailure != nil
+        mode == .deviceOnly || connectionFailure != nil || isDeviceOffline
+    }
+
+    /// The platform has reported no network path for longer than the unreachable grace. This is
+    /// the device's own state, never the server's: with a path, an unanswered server is
+    /// "unreachable" instead. nil (no report yet) and a report still inside the grace are not
+    /// offline.
+    public var isDeviceOffline: Bool { lastReachable == false }
+
+    /// The one connection indicator every screen draws, or nil when there is nothing to say.
+    /// `connecting` is the account's own reconnect in flight (the store knows it, the session does
+    /// not).
+    public func connectionIndicator(connecting: Bool = false) -> DulcetConnectionIndicator? {
+        DulcetConnectionIndicator.choose(
+            mode: mode, deviceOffline: isDeviceOffline, connectionFailure: connectionFailure, connecting: connecting)
     }
 
     /// Whether the reader may read the server now, as far as this session knows: connected, and
@@ -595,6 +615,18 @@ public final class DulcetLibrarySession {
                 if regained { onSavedReconnectRequested?() }
             } else {
                 reader.setOnline(true)
+                if regained {
+                    // The network's return is the trigger, not a retry timer: a transport failure
+                    // recorded while it was gone is stale the moment a path exists, so the screens
+                    // stop saying it at once, and the reconnect this report starts (joined, not
+                    // doubled, by the core) reports back what is true now.
+                    if connectionFailure == .unreachable || connectionFailure == .timeout { connectionFailure = nil }
+                    recoveringFromOutage = true
+                    recoveryDelay = .seconds(1)
+                    recoveryRetry?.cancel()
+                    recoveryRetry = nil
+                    if !serverIdentityRejected { reconnect() }
+                }
             }
             return
         }
@@ -608,6 +640,7 @@ public final class DulcetLibrarySession {
             self.reachabilityLog(
                 "unreachable for \(Self.milliseconds(since: held.since)) ms; the reader is told and goes offline")
             self.lastReachable = false
+            self.endRecoveryRetries()
             self.onConnectionEnvironmentChanged?(self.foreground, false)
             reader.setOnline(false)
         }
@@ -631,7 +664,33 @@ public final class DulcetLibrarySession {
     private func stopReachability() {
         reachability?.stop()
         releaseHeldUnreachable()
+        endRecoveryRetries()
         lastReachable = nil
+    }
+
+    private func endRecoveryRetries() {
+        recoveryRetry?.cancel()
+        recoveryRetry = nil
+        recoveringFromOutage = false
+        recoveryDelay = .seconds(1)
+    }
+
+    /// A reconnect the network's return started found no server: try again soon, while the path
+    /// stays up, and stop at the first answer (or any other failure, which is not a transport one).
+    private func scheduleRecoveryRetry() {
+        guard recoveringFromOutage, recoveryRetry == nil, lastReachable == true, mode == .connected,
+              !serverIdentityRejected else { return }
+        let generation = readerGeneration
+        let wait = recoveryDelay
+        recoveryDelay = min(recoveryDelay * 2, .seconds(15))
+        recoveryRetry = delays.schedule(after: wait) { [weak self] in
+            guard let self else { return }
+            self.recoveryRetry = nil
+            guard self.readerGeneration == generation, self.recoveringFromOutage,
+                  self.lastReachable == true, self.mode == .connected else { return }
+            self.reachabilityLog("the server did not answer after the network returned; reconnecting again")
+            self.reconnect()
+        }
     }
 
     /// Lasting rejection is distinct from a reachability update and survives foreground retries.
@@ -654,8 +713,14 @@ public final class DulcetLibrarySession {
         if connection.epochKnown {
             connectionFailure = nil
             serverReportsNoEpoch = connection.serverReportsNoEpoch
+            endRecoveryRetries()
         } else if let error = connection.error, error != .cancelled, error != .closed {
             connectionFailure = error
+            if error == .unreachable || error == .timeout {
+                scheduleRecoveryRetry()
+            } else {
+                endRecoveryRetries()
+            }
         }
         if connection.discardedPendingChanges > 0 {
             discardedChanges = connection.discardedPendingChanges

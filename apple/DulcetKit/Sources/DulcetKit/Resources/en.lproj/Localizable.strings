@@ -624,6 +624,9 @@
 "account.error.localPersistenceFailed.recovery" = "Quit and reopen Dulcet, then try again. If the problem continues, update Dulcet.";
 
 "reader.page.offline" = "You’re offline";
+"reader.page.serverUnreachable" = "Can’t reach your server";
+"reader.offline.device.title" = "You’re Offline";
+"reader.offline.device.message" = "Dulcet comes back as soon as your device is online again. Your downloaded music plays meanwhile.";
 "reader.page.refreshFailed" = "Couldn’t refresh · %@";
 "reader.offlineNotice" = "You're offline. Showing music on this device.";
 "reader.offlineConnectingNotice" = "Showing what's on this device while Dulcet reconnects…";

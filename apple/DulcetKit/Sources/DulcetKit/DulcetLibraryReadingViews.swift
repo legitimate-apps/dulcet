@@ -98,52 +98,50 @@ struct DulcetReaderStatusView: View {
     var localCollection = false
 
     var body: some View {
-        if let window, !lines(window).isEmpty || offersRetry(window) {
-            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                ForEach(lines(window), id: \.self) { line in
-                    Text(line)
-                        .font(.footnote)
-                        .dulcetForeground(.secondaryTextOnWindow)
-                        .lineLimit(nil)
-                        .fixedSize(horizontal: false, vertical: true)
+        if let window {
+            let plan = DulcetReaderCopy.statusPlan(
+                window: window,
+                indicator: store.librarySession?.connectionIndicator(
+                    connecting: store.snapshot.accountConnection == .connecting),
+                accountMessageShown: accountMessageShown,
+                localCollection: localCollection,
+                reconnectAvailable: reconnectAvailable)
+            if !plan.isEmpty {
+                VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                    // The connection, said once and in the one style every screen uses.
+                    if let indicator = plan.indicator {
+                        DulcetDestinationStatus(
+                            title: indicator.pageTitle, symbol: indicator.symbol,
+                            identifier: "dulcet.reader.status.connection",
+                            retryIdentifier: "dulcet.reader.retry",
+                            retryEnabled: indicator.retryEnabled,
+                            retry: indicator.offersRetry ? { dulcetReaderRetry(store) } : nil)
+                    }
+                    ForEach(plan.lines, id: \.self) { line in
+                        Text(line)
+                            .font(.footnote)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    if plan.offersRetry {
+                        DulcetReaderRetryButton()
+                    }
                 }
-                if offersRetry(window) {
-                    DulcetReaderRetryButton()
-                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityElement(children: .contain)
+                .padding(.vertical, 8)
+                .padding(.horizontal, 16)
+                .background(.background, ignoresSafeAreaEdges: [])
+                .accessibilityIdentifier("dulcet.reader.status")
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .accessibilityElement(children: .contain)
-            .padding(.vertical, 8)
-            .padding(.horizontal, 16)
-            .background(.background, ignoresSafeAreaEdges: [])
-            .accessibilityIdentifier("dulcet.reader.status")
         }
     }
 
-    private func lines(_ window: DulcetLibraryWindow) -> [String] {
-        // Downloaded is what is on this device: the server library's freshness says nothing
-        // about it, and the account banner already says when the device is offline.
-        if localCollection { return [] }
-        if accountMessageShown { return [] }
-        let freshness = DulcetReaderCopy.visibleFreshnessLine(window.freshness)
-        let coverage: String? = switch window.coverage {
-        case .unverifiedScanning, .unverifiedChanging: DulcetReaderCopy.coverageLine(window)
-        default: nil
-        }
-        return [freshness ?? coverage].compactMap { $0 }
-    }
-
-    private func offersRetry(_ window: DulcetLibraryWindow) -> Bool {
-        if localCollection { return false }
-        guard !accountMessageShown,
-              window.freshness.offersRetry else { return false }
-        // Offline with the network down there is nothing to retry until it returns.
-        if case .cached(.offline, _) = window.freshness,
-           store.librarySession?.mode == .connected,
-           store.librarySession?.connectionFailure == nil {
-            return false
-        }
-        return true
+    /// Whether a reconnect is worth offering for a stale or partial page: with the network down
+    /// there is nothing to retry until it returns.
+    private var reconnectAvailable: Bool {
+        store.librarySession?.isDeviceOffline != true
     }
 }
 
@@ -170,6 +168,7 @@ struct DulcetReaderRetryButton: View {
 
 /// What a screen shows instead of content it does not have -- never a spinner (§16.14).
 struct DulcetReaderUnavailableView: View {
+    @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.dulcetAccountMessageShown) private var accountMessageShown
     let reason: DulcetReaderUnavailableReason
     let subject: DulcetReaderCopy.Subject
@@ -186,7 +185,8 @@ struct DulcetReaderUnavailableView: View {
                 .lineLimit(nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .dulcetForeground(.primaryTextOnWindow)
-            if reason != .gone, !accountMessageShown {
+            if reason != .gone, !accountMessageShown,
+               !(reason == .notCachedOffline && store.librarySession?.isDeviceOffline == true) {
                 DulcetReaderRetryButton()
             }
         }
@@ -207,23 +207,17 @@ struct DulcetReaderAccountBanner: View {
     var opaque = true
 
     var body: some View {
-        if store.librarySession?.mode == .deviceOnly {
-            DulcetDestinationStatus(title: store.snapshot.accountConnection == .connecting
-                ? DulcetStrings.readerOfflineConnectingNotice : DulcetStrings.readerOfflineNotice,
-                                   identifier: "dulcet.reader.deviceOnly",
-                                   retryIdentifier: "dulcet.reader.reconnect",
-                                   retryEnabled: store.snapshot.accountConnection != .connecting) {
-                store.submitAccountConnection()
-            }
-            .modifier(DulcetAccountBannerFrame(opaque: opaque))
-        } else if let failure = store.librarySession?.connectionFailure {
-            DulcetDestinationStatus(title: failure == .unreachable
-                ? DulcetStrings.connectionsUnreachableNotice : DulcetStrings.connectionFailed,
-                                   symbol: "exclamationmark.circle",
-                                   retryIdentifier: "dulcet.reader.retry",
-                                   retryEnabled: store.snapshot.accountConnection != .connecting) {
-                dulcetReaderRetry(store)
-            }
+        if let session = store.librarySession,
+           let indicator = session.connectionIndicator(connecting: store.snapshot.accountConnection == .connecting) {
+            let deviceOnly = session.mode == .deviceOnly
+            DulcetDestinationStatus(title: indicator.bannerTitle,
+                                   symbol: indicator.symbol,
+                                   identifier: deviceOnly ? "dulcet.reader.deviceOnly" : "dulcet.destination.status",
+                                   retryIdentifier: deviceOnly ? "dulcet.reader.reconnect" : "dulcet.reader.retry",
+                                   retryEnabled: indicator.retryEnabled,
+                                   retry: indicator.offersRetry ? {
+                                       if deviceOnly { store.submitAccountConnection() } else { dulcetReaderRetry(store) }
+                                   } : nil)
             .modifier(DulcetAccountBannerFrame(opaque: opaque))
         }
     }
@@ -2531,7 +2525,7 @@ struct DulcetReaderArtistPage: View {
 
     private var stackedPage: some View {
         DulcetReaderScreen(query: .artist(rawID: id.rawID), showsDestinationStatus: true) { model in
-          DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { topSongs in
+          DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID)) { topSongs in
 #if os(iOS)
             // A phone's artist page opens on the artist's picture, edge to edge, as Music's does.
             // A regular-width iPad keeps the shared detail header beside its wide columns.
@@ -2720,7 +2714,7 @@ private struct DulcetTVArtistDetail: View {
 
     var body: some View {
         DulcetReaderScreen(query: .artist(rawID: id.rawID), showsDestinationStatus: true) { model in
-            DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID), showsDestinationStatus: true) { topSongs in
+            DulcetReaderScreen(query: .artistTopSongs(rawID: id.rawID)) { topSongs in
                 DulcetTVDetailColumns(title: model.window?.header?.displayTitle ?? "") {
                     if let header = model.window?.header {
                         artistHeader(
