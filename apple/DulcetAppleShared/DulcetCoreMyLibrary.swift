@@ -14,11 +14,13 @@ extension DulcetCoreLibraryReader: DulcetMyLibraryReading {
                 self.offlineHydrationOperation = nil
                 self.attemptedOfflineHydration = []
             }
+            // Membership only: music listed because it is downloaded here is not what Automatic
+            // Downloads follows, so its arrival does not start another reconcile.
             var membership = [publication.value.availability]
-            for album in publication.value.albums {
+            for album in publication.value.albums where !album.deviceOnly {
                 membership += ["album", album.rawId, String(album.explicitlyAdded), String(album.memberSongCount), String(album.pending)]
             }
-            for song in publication.value.songs {
+            for song in publication.value.songs where !song.deviceOnly {
                 membership += ["track", song.rawId, String(song.pending), song.sourceContainer ?? ""]
             }
             let signature = membership
@@ -82,7 +84,7 @@ extension DulcetCoreLibraryReader: DulcetMyLibraryReading {
             albums: publication.albums.map {
                 item(kind: "album", id: $0.rawId, title: $0.title, artist: $0.artistName, artistID: $0.artistRawId,
                      year: $0.year > 0 ? Int($0.year) : nil, artwork: $0.artworkKey,
-                     songCount: $0.songCount >= 0 ? Int($0.songCount) : nil)
+                     songCount: $0.songCount >= 0 ? Int($0.songCount) : nil, playability: $0.playability)
             },
             artists: publication.artists.map {
                 item(kind: "artist", id: $0.rawId, title: $0.name, artwork: $0.artworkKey,

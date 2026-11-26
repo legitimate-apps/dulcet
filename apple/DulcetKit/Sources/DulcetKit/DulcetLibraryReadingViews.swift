@@ -1302,7 +1302,7 @@ struct DulcetReaderItemMenuItems: View {
 #if os(iOS)
         if collapsesPlayActions && item.trackListQuery != nil {
             if let target = item.favouriteTarget { DulcetMyLibraryButton(target: target, menu: true) }
-            if item.trackListQuery != nil {
+            if offersPlayActions {
                 Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
                 Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
             }
@@ -1319,14 +1319,18 @@ struct DulcetReaderItemMenuItems: View {
 #endif
     }
 
+    /// Offline, an album or playlist with nothing on this device cannot play: its menu hides play
+    /// and queue actions instead of dimming them (§16.14).
+    private var offersPlayActions: Bool { item.trackListQuery != nil && !item.isUnavailableOffline }
+
     @ViewBuilder private var secondaryMenuItems: some View {
-        if store.queueEditingEnabled, item.trackListQuery != nil {
+        if store.queueEditingEnabled, offersPlayActions {
             Button(DulcetStrings.playNext, systemImage: "text.line.first.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: true) }
             Button(DulcetStrings.addToQueue, systemImage: "text.line.last.and.arrowtriangle.forward") { store.resolveAndQueue(item, next: false) }
         }
         DulcetLibraryPinControl(item: item, menu: true)
         if let target = item.favouriteTarget { DulcetFavouriteMenuItem(target: target, published: item.isFavourite) }
-        if item.kind == .album, store.downloadsEnabled {
+        if item.kind == .album, store.downloadsEnabled, !item.isUnavailableOffline {
             Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
                 .accessibilityIdentifier("dulcet.album.download")
         }
@@ -1341,7 +1345,7 @@ struct DulcetReaderItemMenuItems: View {
     /// (pin, library, favorite, download), then go elsewhere (artist, playlists).
     @ViewBuilder
     private var fullMenuItems: some View {
-        if item.trackListQuery != nil {
+        if offersPlayActions {
             Section {
                 Button(DulcetStrings.play, systemImage: "play") { store.resolveAndPlay(item, shuffle: false) }
                 Button(DulcetStrings.shuffle, systemImage: "shuffle") { store.resolveAndPlay(item, shuffle: true) }
@@ -1363,7 +1367,7 @@ struct DulcetReaderItemMenuItems: View {
                 DulcetMyLibraryButton(target: target, menu: true)
                 DulcetFavouriteMenuItem(target: target, published: item.isFavourite)
             }
-            if item.kind == .album, store.downloadsEnabled {
+            if item.kind == .album, store.downloadsEnabled, !item.isUnavailableOffline {
                 // Music's album menu offers Download; the same per-track requests a row makes.
                 Button(DulcetStrings.download, systemImage: "arrow.down.circle") { store.resolveAndDownload(item) }
                     .accessibilityIdentifier("dulcet.album.download")

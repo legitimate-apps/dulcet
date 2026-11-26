@@ -213,7 +213,8 @@ private fun MyLibrarySyncState.toAndroid(): AndroidMyLibrarySyncState = when (th
     MyLibrarySyncState.Never -> AndroidMyLibrarySyncState.Never
     MyLibrarySyncState.Syncing -> AndroidMyLibrarySyncState.Syncing
     MyLibrarySyncState.Current -> AndroidMyLibrarySyncState.Current
-    MyLibrarySyncState.Cached -> AndroidMyLibrarySyncState.Cached
+    // Android states no offline line of its own here; its reader banner says offline.
+    MyLibrarySyncState.Cached, MyLibrarySyncState.Offline -> AndroidMyLibrarySyncState.Cached
     MyLibrarySyncState.Failed -> AndroidMyLibrarySyncState.Failed
 }
 
