@@ -135,7 +135,10 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val musicBrainz = com.legitimateapps.dulcet.server.discover.MusicBrainzClient(discoverHttp,discoverCache,config.discover)
     val listenBrainz = com.legitimateapps.dulcet.server.discover.ListenBrainzClient(discoverHttp,discoverCache,config.discover)
     /** Tools beside Dulcet (Lidarr, Jellyfin, Emby); empty unless configured. */
-    val integrations = com.legitimateapps.dulcet.server.integrations.Integrations.from(config.integrations,discoverHttp,discoverCache,testingOverride={config.testMode && testing.discoverArtworkAllowLoopback})
+    val integrations = com.legitimateapps.dulcet.server.integrations.Integrations.from(config.integrations,discoverHttp,discoverCache,testingOverride={config.testMode && testing.discoverArtworkAllowLoopback}).also { chain ->
+        // A library artist whose Connections photo changed is journalled, so v1 clients re-read its artwork reference.
+        chain.onArtistImageChanged = { mbid -> db.write { execute("INSERT INTO api_journal(type,id,op,at) SELECT 'artist',id,'upsert',? FROM artist WHERE mbz_artist_id=?",System.currentTimeMillis(),mbid) } }
+    }
     val discoverArtwork = com.legitimateapps.dulcet.server.discover.CoverArtClient(discoverHttp,discoverCache,config.discover,testingOverride={config.testMode && testing.discoverArtworkAllowLoopback})
     val wishlist = com.legitimateapps.dulcet.server.wishlist.WishlistService(this)
     val discoverMatcher = com.legitimateapps.dulcet.server.discover.DiscoverMatcher(db,access,rejectedForUser=wishlist::rejectionLookup)
@@ -144,7 +147,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val apiWishlist = com.legitimateapps.dulcet.server.v1.ApiWishlist(this)
     val apiDiscover = com.legitimateapps.dulcet.server.v1.ApiDiscover(this)
     val scanner = Scanner(db, config.musicFolder, Probe(config.ffprobe),afterCatalogCommit=wishFulfilment::enqueue)
-    override fun close() { wishFulfilment.close();discoverHttp.close() }
+    override fun close() { integrations.close();wishFulfilment.close();discoverHttp.close() }
     val artwork = Artwork(db, config.musicFolder, config.dataFolder.resolve("cache"), config.ffmpeg, access, integrations.takeIf { it.configured })
     val transcoder = Transcoder(config.ffmpeg)
     val transcodeParams = TranscodeParams(java.security.MessageDigest.getInstance("SHA-256").digest(key + "transcodeParams".toByteArray()))

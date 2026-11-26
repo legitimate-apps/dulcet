@@ -4,6 +4,7 @@ import com.legitimateapps.dulcet.server.db.Db
 import com.legitimateapps.dulcet.server.discover.*
 import com.legitimateapps.dulcet.server.integrations.*
 import com.legitimateapps.dulcet.server.v1.ApiProblem
+import io.ktor.client.request.get
 import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
 import java.nio.file.Files
@@ -162,7 +163,7 @@ class ArtistImagesTest {
             assertNoCanary(config.toString(), "Config.toString"); assertNoCanary(config.integrations.toString(), "settings toString")
             assertNoCanary(config.integrations.lidarr.toString(), "endpoint toString")
             val chain = Integrations.from(config.integrations, h, DiscoverCache(db))
-            assertNull(chain.artistImage(ArtistRef(mbid, ""), Reach.Catalogue))
+            assertFailsWith<UpstreamUnavailable> { chain.artistImage(ArtistRef(mbid, ""), Reach.Catalogue) }.also { assertNoCanary(it.stackTraceToString(), "the outage error") }
             for (failure in listOf(
                 runCatching { h.get(l.baseUrl, "/api/v1/artist", emptyMap(), credentials = mapOf("X-Api-Key" to lidarrKey)).also { if (it.status != 200) throw UpstreamUnavailable(reason = UpstreamFailure.HttpStatus) } },
                 runCatching { h.get("http://127.0.0.1:1", "/api/v1/artist", emptyMap(), credentials = mapOf("X-Api-Key" to lidarrKey)) },
@@ -177,11 +178,126 @@ class ArtistImagesTest {
         } } } }
     }
 
-    private fun scannedContext(root: Path, settings: IntegrationSettings): ServerContext {
+    private val oneArtist = mapOf("Artist/Album/01.flac" to mapOf("title" to "One", "album" to "Album", "artist" to "Artist", "album_artist" to "Artist", "MUSICBRAINZ_ARTISTID" to mbid))
+    private fun scannedContext(root: Path, settings: IntegrationSettings, tracks: Map<String, Map<String, String>> = oneArtist): ServerContext {
         val config = Config(testMode = true, port = 0, bind = "127.0.0.1", musicFolder = root.resolve("music").also(Files::createDirectories), dataFolder = root.resolve("data"),
             ffmpeg = Fixtures.ffmpeg, ffprobe = Fixtures.ffprobe, scanOnStart = false, lrclibUrl = null, discover = DiscoverSettings(enabled = false), integrations = settings)
-        Fixtures.track(config.musicFolder.resolve("Artist/Album/01.flac"), tags = mapOf("title" to "One", "album" to "Album", "artist" to "Artist", "album_artist" to "Artist", "MUSICBRAINZ_ARTISTID" to mbid))
+        tracks.forEach { (path, tags) -> Fixtures.track(config.musicFolder.resolve(path), tags = tags) }
         return ServerContext(config, Db.inMemory()).also { it.scanner.scan() }
+    }
+    private fun ServerContext.artistId(name: String) = db.read { string("SELECT id FROM artist WHERE name=?", name) } ?: error("no artist $name")
+    private fun ServerContext.artistMbid(name: String) = db.read { string("SELECT mbz_artist_id FROM artist WHERE name=?", name) }
+
+    @Test fun featuredAndCollaboratingArtistsNeverBorrowAnotherArtistsId() {
+        val alpha = "11111111-1111-4111-8111-111111111111"; val epsilon = "55555555-5555-4555-8555-555555555555"; val zeta = "66666666-6666-4666-8666-666666666666"
+        val gamma = "33333333-3333-4333-8333-333333333333"; val delta = "44444444-4444-4444-8444-444444444444"
+        FixtureDiscoverUpstream().use { l ->
+            l.json("/api/v1/artist", libraryArtist(7, artist = alpha)); l.respond("/MediaCover/7/poster.jpg", body = png)
+            val root = Files.createTempDirectory("artist-images-credits")
+            val ctx = scannedContext(root, IntegrationSettings(lidarr = lidarr(l)), mapOf(
+                // One id for two credits: it cannot be told whose it is, so neither credit takes it from this track.
+                "Alpha/Album/01.flac" to mapOf("title" to "One", "album" to "Album", "artist" to "Alpha feat. Beta", "album_artist" to "Alpha",
+                    "MUSICBRAINZ_ARTISTID" to alpha, "MUSICBRAINZ_ALBUMARTISTID" to alpha),
+                // One id per credit, in credit order: each credit takes its own.
+                "Epsilon/Album/01.flac" to mapOf("title" to "Two", "album" to "Second", "artist" to "Epsilon feat. Zeta", "album_artist" to "Epsilon",
+                    "MUSICBRAINZ_ARTISTID" to "$epsilon;$zeta", "MUSICBRAINZ_ALBUMARTISTID" to epsilon),
+                // One album-artist credit carrying two ids is a collaboration, not either member.
+                "Pair/Album/01.flac" to mapOf("title" to "Three", "album" to "Third", "artist" to "Gamma", "album_artist" to "Gamma & Delta",
+                    "MUSICBRAINZ_ARTISTID" to gamma, "MUSICBRAINZ_ALBUMARTISTID" to "$gamma;$delta"),
+            ))
+            try {
+                assertEquals(alpha, ctx.artistMbid("Alpha"), "the album-artist credit is Alpha's alone")
+                assertNull(ctx.artistMbid("Beta"), "a featured artist never takes the main artist's id")
+                assertEquals(epsilon, ctx.artistMbid("Epsilon")); assertEquals(zeta, ctx.artistMbid("Zeta"))
+                assertNull(ctx.artistMbid("Gamma & Delta")); assertEquals(gamma, ctx.artistMbid("Gamma"))
+                assertContentEquals(png, ctx.artwork.image("ar-${ctx.artistId("Alpha")}", null)!!.bytes)
+                val asked = l.requests.size
+                assertFalse(ctx.artwork.image("ar-${ctx.artistId("Beta")}", null)!!.bytes.contentEquals(png), "Beta never shows Alpha's photo")
+                assertEquals(asked, l.requests.size, "an artist without its own id asks no connection")
+            } finally { ctx.close(); ctx.db.close() }
+        }
+        assertNull(com.legitimateapps.dulcet.server.scan.TrackInfo.creditMbid(null, alpha, 1, 2), "a row from an earlier scan is trusted for a single credit only")
+        assertEquals(alpha, com.legitimateapps.dulcet.server.scan.TrackInfo.creditMbid(null, alpha, 0, 1))
+    }
+
+    @Test fun aSlowConnectionNeverHoldsTheDatabaseLock() {
+        java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress()).use { blackHole ->
+            val root = Files.createTempDirectory("artist-images-blackhole")
+            val ctx = scannedContext(root, IntegrationSettings(lidarr = ServiceEndpoint("http://127.0.0.1:${blackHole.localPort}", lidarrKey)))
+            try {
+                val artist = ctx.artistId("Artist")
+                val started = System.nanoTime()
+                // Catalog pages render artwork references inside a read transaction; this is that path.
+                val image = assertNotNull(ctx.db.read { ctx.artwork.image("ar-$artist", null) })
+                val elapsedMs = (System.nanoTime() - started) / 1_000_000
+                assertTrue(elapsedMs < 2_000, "a locked render waited ${elapsedMs} ms on an unanswering connection")
+                assertEquals(com.legitimateapps.dulcet.server.media.Artwork.STAND_IN_CACHE_SECONDS, image.cacheSeconds)
+                val other = System.nanoTime(); ctx.db.write { execute("UPDATE meta SET value=value WHERE key='nothing'") }
+                assertTrue((System.nanoTime() - other) / 1_000_000 < 1_000, "another writer was not held up by the queued refresh")
+            } finally { ctx.close(); ctx.db.close() }
+        }
+    }
+
+    @Test fun aLockedRenderWarmsInTheBackgroundAndTellsClientsToReReadTheArtist() = runBlocking<Unit> {
+        FixtureDiscoverUpstream().use { l ->
+            l.json("/api/v1/artist", libraryArtist(7)); l.respond("/MediaCover/7/poster.jpg", body = png)
+            val root = Files.createTempDirectory("artist-images-warm")
+            val ctx = scannedContext(root, IntegrationSettings(lidarr = lidarr(l)))
+            try {
+                val artist = ctx.artistId("Artist"); val head = ctx.journal.head()
+                val first = ctx.db.read { ctx.artwork.image("ar-$artist", null) }!!
+                assertFalse(first.bytes.contentEquals(png), "the first locked render answers from the library without waiting")
+                ctx.integrations.awaitRefreshes()
+                assertEquals(listOf("/api/v1/artist", "/MediaCover/7/poster.jpg"), l.requests.map { it.path })
+                val journalled = ctx.db.read { query("SELECT id FROM api_journal WHERE seq>? AND type='artist'", head) { it.string("id") } }
+                assertEquals(listOf(artist), journalled, "clients are told the artist's artwork changed")
+                val second = ctx.db.read { ctx.artwork.image("ar-$artist", null) }!!
+                assertContentEquals(png, second.bytes); assertEquals(com.legitimateapps.dulcet.server.media.Artwork.REMOTE_CACHE_SECONDS, second.cacheSeconds)
+                assertEquals(2, l.requests.size, "the second render came from the cache")
+                ctx.integrations.artistImage(ArtistRef(mbid, ""), Reach.Library)
+                assertEquals(1, ctx.db.read { long("SELECT COUNT(*) FROM api_journal WHERE seq>? AND type='artist'", head) }, "an unchanged answer is not journalled again")
+            } finally { ctx.close(); ctx.db.close() }
+        }
+    }
+
+    @Test fun aStandInIsCachedBrieflyOnRestWhileConnectionsAreConfigured() = io.ktor.server.testing.testApplication {
+        FixtureDiscoverUpstream().use { l ->
+            l.json("/api/v1/artist", "[]")
+            val root = Files.createTempDirectory("artist-images-rest")
+            val ctx = scannedContext(root, IntegrationSettings(lidarr = lidarr(l)))
+            try {
+                ctx.users.create("reader", "reader-password", false)
+                val artist = ctx.artistId("Artist")
+                val album = ctx.db.read { string("SELECT id FROM album WHERE name='Album'") }!!
+                application { dulcetModule(ctx) }
+                fun header(id: String) = runBlocking { client.get("/rest/getCoverArt?u=reader&p=reader-password&v=1.16.1&c=test&id=$id").headers[io.ktor.http.HttpHeaders.CacheControl] }
+                assertEquals("private, max-age=300", header("ar-$artist"))
+                assertEquals("private, max-age=315360000", header("al-$album"), "other artwork keeps its long lifetime")
+            } finally { ctx.close(); ctx.db.close() }
+        }
+    }
+
+    @Test fun anAlbumsOwnPicturesNeverBecomeTheArtistPhotoInAMultiDiscLayout() {
+        FixtureDiscoverUpstream().use { l ->
+            l.json("/api/v1/artist", libraryArtist(7)); l.respond("/MediaCover/7/poster.jpg", body = png)
+            val root = Files.createTempDirectory("artist-images-discs")
+            val ctx = scannedContext(root, IntegrationSettings(lidarr = lidarr(l)), mapOf("Artist/Album/CD1/01.flac" to oneArtist.values.single()))
+            try {
+                for (name in listOf("poster.jpg", "thumb.jpg", "folder.jpg", "cover.jpg")) Fixtures.jpeg(ctx.config.musicFolder.resolve("Artist/Album/$name"), 24)
+                assertContentEquals(png, ctx.artwork.image("ar-${ctx.artistId("Artist")}", null)!!.bytes, "the connection's photo, not the album folder's pictures")
+            } finally { ctx.close(); ctx.db.close() }
+        }
+    }
+
+    @Test fun everySourceInAnOutageIsUnavailableNotNoPhoto() = runBlocking<Unit> {
+        FixtureDiscoverUpstream().use { l -> Db.inMemory().use { db -> http().use { h ->
+            l.json("/api/v1/artist", "{}", 500)
+            val chain = Integrations.from(IntegrationSettings(lidarr = lidarr(l)), h, DiscoverCache(db))
+            assertFailsWith<UpstreamUnavailable> { chain.artistImage(ArtistRef(mbid, ""), Reach.Library) }
+            assertFailsWith<UpstreamUnavailable> { chain.artistImage(ArtistRef(mbid, ""), Reach.Library) }
+            assertEquals(1, l.requests.size, "the failed connection is skipped, not asked again")
+            assertNull(chain.cachedArtistImage(ArtistRef(mbid, ""), Reach.Library), "an outage stores no 'no photo' answer")
+        } } }
     }
 
     @Test fun libraryArtistPrefersItsFolderFileThenTheConnectionsThenAnAlbumCover() {
@@ -194,7 +310,7 @@ class ArtistImagesTest {
                 assertEquals(mbid, ctx.db.read { string("SELECT mbz_artist_id FROM artist WHERE id=?", artist) })
                 assertContentEquals(png, ctx.artwork.image("ar-$artist", null)!!.bytes)
                 val asked = l.requests.size
-                val folder = ctx.config.musicFolder.resolve("Artist/Poster.JPG"); Fixtures.jpeg(folder, 32)
+                val folder = ctx.config.musicFolder.resolve("Artist/Artist.JPG"); Fixtures.jpeg(folder, 32)
                 assertContentEquals(Files.readAllBytes(folder), ctx.artwork.image("ar-$artist", null)!!.bytes)
                 assertEquals(asked, l.requests.size, "a folder file is used without asking any connection")
             } finally { ctx.close(); ctx.db.close() }

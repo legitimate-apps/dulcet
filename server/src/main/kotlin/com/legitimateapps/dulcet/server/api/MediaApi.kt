@@ -116,7 +116,8 @@ fun mediaHandlers(ctx: ServerContext): Map<String, Handler> {
         "getCoverArt" to { call ->
             val id = call.required("id")
             val image = withContext(Dispatchers.IO) { ctx.artwork.image(id, call.intOrNull("size"), call.user) } ?: throw SubsonicError.notFound("Artwork")
-            call.ktor.response.headers.append(HttpHeaders.CacheControl, "private, max-age=315360000")
+            // An artist's stand-in for a photo the Connections layer may still supply is kept briefly, not for years.
+            call.ktor.response.headers.append(HttpHeaders.CacheControl, "private, max-age=${image.cacheSeconds ?: 315360000}")
             call.ktor.respond(ByteContent(image.bytes, ContentType.parse(image.contentType)))
             Reply.Handled
         },

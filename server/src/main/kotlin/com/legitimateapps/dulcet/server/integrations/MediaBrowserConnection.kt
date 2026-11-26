@@ -18,12 +18,17 @@ internal class MediaBrowserConnection(override val kind: String, private val end
     private data class Entry(val id: String, val tag: String)
     private val lock = Mutex()
     private var memo: Pair<Long, Map<String, Entry>>? = null
+    private var failedUntil: Long? = null
 
     private suspend fun index(): Map<String, Entry> = lock.withLock {
+        // Re-checked under the lock: callers queued behind a failed read must not repeat it.
+        failedUntil?.let { if (it - System.nanoTime() > 0) throw UpstreamUnavailable(reason = UpstreamFailure.Backoff) }
         memo?.let { (at, value) -> if (System.nanoTime() - at < MEMO_NANOS) return@withLock value }
-        val value = cache.read(CacheKey(endpoint.url, LIST, LIST_QUERY), DiscoverCache.HOUR, ::parse) {
-            http.get(endpoint.url, LIST, LIST_QUERY, 32 * 1024 * 1024, auth)
-        }.value
+        val value = try {
+            cache.read(CacheKey(endpoint.url, LIST, LIST_QUERY), DiscoverCache.HOUR, ::parse) {
+                http.get(endpoint.url, LIST, LIST_QUERY, 32 * 1024 * 1024, auth)
+            }.value
+        } catch (e: UpstreamUnavailable) { failedUntil = System.nanoTime() + Integrations.OUTAGE_SKIP_NANOS; throw e }
         memo = System.nanoTime() to value
         value
     }

@@ -15,7 +15,10 @@ import javax.imageio.IIOImage
 import javax.imageio.ImageIO
 import javax.imageio.ImageWriteParam
 
-class Image(val bytes: ByteArray, val contentType: String)
+/** [cacheSeconds] is how long a client may keep the bytes for a stable id; null means indefinitely. */
+class Image(val bytes: ByteArray, val contentType: String, val cacheSeconds: Long? = null) {
+    fun cachedFor(seconds: Long?) = if (seconds == cacheSeconds) this else Image(bytes, contentType, seconds)
+}
 
 /**
  * Resolves a cover art id (`al-`, `mf-`, `ar-`, `pl-` or a bare catalog id) to image bytes: a
@@ -25,8 +28,8 @@ class Image(val bytes: ByteArray, val contentType: String)
  * generated placeholder, as other OpenSubsonic servers do, so a client never shows a broken image.
  */
 class Artwork(private val db: Db, private val musicFolder: Path, private val cacheFolder: Path, private val ffmpeg: String, private val access: com.legitimateapps.dulcet.server.auth.AccountAccess,
-              /** An artist photo from the integrations layer, asked only after the library's own files. */
-              private val artistImages: com.legitimateapps.dulcet.server.integrations.ArtistImageSource? = null) {
+              /** An artist photo from the Connections layer, asked only after the library's own files. */
+              private val artistImages: com.legitimateapps.dulcet.server.integrations.Integrations? = null) {
 
     private sealed interface Source {
         data class FolderFile(val path: Path) : Source
@@ -42,21 +45,22 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
             val visible = user != null && db.read { long("SELECT COUNT(*) FROM playlist WHERE id = ? AND (owner_id = ? OR public = 1 OR ? = 1)", playlistId, user.id, user.isAdmin) > 0 }
             if (!visible) return null
         }
+        var cacheSeconds: Long? = null
         val source = when {
             id.startsWith("al-") -> albumSource(id.removePrefix("al-"), user) ?: if (exists("album", id.removePrefix("al-"))) null else return null
             id.startsWith("mf-") -> trackSource(id.removePrefix("mf-"), user) ?: if (exists("track", id.removePrefix("mf-"))) null else return null
-            id.startsWith("ar-") -> artistSource(id.removePrefix("ar-"), user) ?: if (exists("artist", id.removePrefix("ar-"))) null else return null
+            id.startsWith("ar-") -> artistSource(id.removePrefix("ar-"), user).also { cacheSeconds = it.second }.first ?: if (exists("artist", id.removePrefix("ar-"))) null else return null
             id.startsWith("pl-") -> playlistSource(id.removePrefix("pl-"), user!!) ?: if (exists("playlist", id.removePrefix("pl-"))) null else return null
             exists("album", id) -> albumSource(id, user)
             exists("track", id) -> trackSource(id, user)
-            exists("artist", id) -> artistSource(id, user)
+            exists("artist", id) -> artistSource(id, user).also { cacheSeconds = it.second }.first
             playlistId != null -> playlistSource(playlistId, user!!)
             else -> return null
         }
-        if (source == null) return placeholder(size)
-        val original = runCatching { load(source) }.getOrNull() ?: return placeholder(size)
-        if (size == null || size <= 0) return original
-        return resized(source, original, size)
+        if (source == null) return placeholder(size).cachedFor(cacheSeconds)
+        val original = runCatching { load(source) }.getOrNull() ?: return placeholder(size).cachedFor(cacheSeconds)
+        if (size == null || size <= 0) return original.cachedFor(cacheSeconds)
+        return resized(source, original, size).cachedFor(cacheSeconds)
     }
 
     private fun exists(table: String, id: String): Boolean = db.read { long("SELECT COUNT(*) FROM $table WHERE id = ?", id) > 0 }
@@ -80,14 +84,17 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
         return albumSource(row.third,user)
     }
 
-    private fun artistSource(artistId: String, user: com.legitimateapps.dulcet.server.auth.User? = null): Source? {
+    /** The artist's source and how long a client may keep it: a library file indefinitely, a Connections photo a
+     * day (the tool may replace it), and a stand-in (album cover or placeholder) briefly while Connections are
+     * configured, so a photo that arrives later is not hidden behind a cached stand-in. */
+    private fun artistSource(artistId: String, user: com.legitimateapps.dulcet.server.auth.User? = null): Pair<Source?, Long?> {
         val albums = db.read { query("SELECT album_id FROM album_artist WHERE artist_id = ?", artistId) { it.string("album_id") } }.filter { user == null || access.canReadCatalog(user.id,"album",it) }
         val artistImage = db.read {
             single("SELECT t.parent_dir FROM track t JOIN album_artist aa ON aa.album_id = t.album_id WHERE aa.artist_id = ? AND ${if(user==null) "1" else access.catalogPredicate(user.id,"track","t")} ORDER BY t.id LIMIT 1", artistId) { it.string("parent_dir") }
         }?.takeIf(String::isNotEmpty)?.let { dir -> artistFolderImage(musicFolder.resolve(dir).parent) }
-        if (artistImage != null) return Source.FolderFile(artistImage)
-        remoteArtistImage(artistId)?.let { return it }
-        return albums.firstNotNullOfOrNull { albumSource(it,user) }
+        if (artistImage != null) return Source.FolderFile(artistImage) to null
+        remoteArtistImage(artistId)?.let { return it to REMOTE_CACHE_SECONDS }
+        return albums.firstNotNullOfOrNull { albumSource(it,user) } to (if (artistImages != null) STAND_IN_CACHE_SECONDS else null)
     }
 
     private fun artistFolderImage(folder: Path?): Path? = artistFolderImage(musicFolder, folder)
@@ -96,8 +103,14 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
         val source = artistImages ?: return null
         val row = db.read { single("SELECT name, mbz_artist_id FROM artist WHERE id = ?", artistId) { it.string("name") to it.stringOrNull("mbz_artist_id") } } ?: return null
         if (row.second.isNullOrBlank()) return null
-        // Library pages ask only the operator's own tools; a failure falls back to the album cover.
-        val image = runCatching { kotlinx.coroutines.runBlocking { source.artistImage(com.legitimateapps.dulcet.server.integrations.ArtistRef(row.second, row.first), com.legitimateapps.dulcet.server.integrations.Reach.Library) } }.getOrNull() ?: return null
+        // Library pages ask only the operator's own tools; a failure falls back to the album cover. Inside a database
+        // transaction (catalog pages render artwork references there) only the cache is read, and a refresh is queued:
+        // a slow tool must never hold the lock every other request and the scanner wait on.
+        val ref = com.legitimateapps.dulcet.server.integrations.ArtistRef(row.second, row.first)
+        val reach = com.legitimateapps.dulcet.server.integrations.Reach.Library
+        val image = if (db.heldByCurrentThread()) source.cachedArtistImage(ref, reach)
+            else runCatching { kotlinx.coroutines.runBlocking { source.artistImage(ref, reach) } }.getOrNull()
+        image ?: return null
         return Source.Remote(image.key, Image(image.bytes, image.contentType))
     }
 
@@ -191,10 +204,12 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
     }
 
     companion object {
-        /** Artist pictures in an artist folder, in preference order, matched in any letter case. `folder` and
-         * `cover` are left out: they are album-art names, and in a multi-disc layout the album folder is the
-         * disc folder's parent. */
-        val ARTIST_FILE_NAMES = listOf("artist", "poster", "thumb").flatMap { base -> listOf("jpg", "jpeg", "png").map { "$base.$it" } }
+        const val REMOTE_CACHE_SECONDS = 86_400L
+        const val STAND_IN_CACHE_SECONDS = 300L
+        /** Artist pictures in an artist folder, in preference order, matched in any letter case. Only `artist`: in a
+         * multi-disc layout (Artist/Album/CD1) the folder above the tracks is the album, whose `folder`, `cover`,
+         * `poster` or `thumb` picture is the album's own. */
+        val ARTIST_FILE_NAMES = listOf("artist.jpg", "artist.jpeg", "artist.png")
         /** The library root is shared by every artist of a flat layout, so it keeps only the original names. */
         val ROOT_ARTIST_FILE_NAMES = listOf("artist.jpg", "artist.png")
 

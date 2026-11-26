@@ -8078,7 +8078,8 @@ source Dulcet used holds artist images and library folders rarely carry an artis
 self-hoster already runs do: Lidarr keeps a poster for the artists it manages and its lookup names
 posters for artists it does not, and Jellyfin or Emby keep a Primary image per album artist with a
 MusicBrainz provider id. Using them adds no third party: Lidarr's lookup already asks its own
-metadata service on the operator's behalf. OBSERVED from Lidarr's source (develop branch): `GET /api/v1/artist?mbId=` returns at most the one
+metadata service on the operator's behalf. OBSERVED from Lidarr's source (develop branch, read 2026-11-25; `src/Lidarr.Api.V1/Artist/ArtistController.cs`,
+`src/NzbDrone.Core/MediaCover/MediaCoverService.cs`, `src/NzbDrone.Core/MediaCover/MediaCoverProxy.cs`): `GET /api/v1/artist?mbId=` returns at most the one
 library artist; posters are stored at `/MediaCover/{id}/poster.jpg` with 500 and 250 px copies; a
 lookup hit outside the library names a `/MediaCoverProxy/{sha256}/{file}` path that Lidarr keeps for
 24 hours in memory. ASSUMED: Emby answers the same `/Artists/AlbumArtists` and `/Items/{id}/Images`
@@ -8105,11 +8106,19 @@ per-person connections (one person's Plex favourites) are left for later.
 `integration-emby-url`/`-api-key`, `integration-artist-images` (order, default
 `lidarr,jellyfin,emby,lidarr-feed`; `off`) and `integration-lidarr-image-hosts` (default
 `images.lidarr.audio`), documented in `docs/dulcet-server/README.md`. An artist's image is, in order:
-a file in the artist folder named `artist`, `poster` or `thumb` (`.jpg`, `.jpeg`, `.png`, any case;
-not `folder` or `cover`, which name album art and would picture a multi-disc album's cover; the
-library root keeps only `artist.jpg`/`.png`; the scanner invalidates by the same choice); the configured sources in order;
+`artist.jpg`, `.jpeg` or `.png` in the artist folder (any case; the library root keeps only
+`artist.jpg`/`.png`; not `folder`, `cover`, `poster` or `thumb`, which in a multi-disc layout are the
+album's own pictures; the scanner invalidates by the same choice); the configured sources in order;
 on library pages the first album's cover. Sources match by MusicBrainz artist id only, never by
-name. Library pages ask only the tools' own holdings (Lidarr's library, Jellyfin, Emby), because
+name, and an artist takes an id only from a tag listing one id per credit in credit order (stored per
+track as `mbz_artist_ids`/`mbz_album_artist_ids`): before this, "A feat. B" gave B A's id, which
+Discover's shelves and matcher also read. Rows scanned earlier keep only their first id, trusted for a
+single credit alone until the file is rescanned. Catalog resources render inside a database read
+transaction, so there a library artist's photo is answered from the shared cache only (a pointer per
+artist and reach to the cached bytes, never the network or a refresh lock) and a missing or hour-old
+answer is refreshed in the background, which journals the artist when its photo changes; a request
+outside a transaction asks the sources directly. While sources are configured, `/rest getCoverArt`
+caches an `ar-` stand-in for five minutes and a Connections photo for a day. Library pages ask only the tools' own holdings (Lidarr's library, Jellyfin, Emby), because
 catalog pages render artwork references inline and a lookup costs Lidarr an outside request;
 Discover artists may also use Lidarr's lookup (`lidarr-feed`), fetched through Lidarr's proxy first
 and only then from the poster's own URL when its host is allowlisted, over HTTPS, at a checked and
@@ -8121,8 +8130,9 @@ image host, the poster path Lidarr named. Keys never enter a URL, log, error, di
 Discover cover checks and 5 MiB cap; images cache 30 days and misses a day, Lidarr library answers an
 hour, lookups a day; a connection that fails with an outage is skipped for a minute. Discover artists
 get an opaque `artworkId` only when an artist-image source is configured; it resolves through the
-chain by MusicBrainz id to at most 500 px, and an artist nothing can picture answers not-found, so the
-client keeps its monogram. With nothing configured, behaviour is as before. The Apple client needed no
+chain by MusicBrainz id to at most 500 px; an artist nothing can picture answers not-found, so the
+client keeps its monogram, and one no source could be asked (every source in an outage) answers
+unavailable. With nothing configured, behaviour is as before. The Apple client needed no
 change: its Discover tile already draws an image when the tile has an `artworkId` and keeps the
 initial on failure, and library artist pages already show the `ar-` artwork. Deferred: matching by
 name when an artist has no MusicBrainz id; a held Discover artist's own folder image.

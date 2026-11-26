@@ -30,6 +30,7 @@ internal class LidarrConnection(
         override suspend fun artistImage(artist: ArtistRef, reach: Reach) = libraryImage(canonicalMbid(artist.musicBrainzId!!))
     }
     val lookup = object : ArtistImageSource {
+        override fun serves(reach: Reach) = reach == Reach.Catalogue
         override suspend fun artistImage(artist: ArtistRef, reach: Reach) = if (reach == Reach.Catalogue) lookupImage(canonicalMbid(artist.musicBrainzId!!)) else null
     }
 

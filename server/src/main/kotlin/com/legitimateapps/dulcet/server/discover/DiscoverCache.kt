@@ -77,6 +77,22 @@ class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDisc
             }
         }
     }
+    /** A stored answer without taking the key's refresh lock or calling upstream, so it is safe while the caller
+     * holds the database lock. Positives are returned up to [MAX_AGE], negatives for their day; age in milliseconds. */
+    fun peek(key:CacheKey):Peeked? = peek(key.digest())
+    fun peek(digest:String):Peeked? = db.read {
+        single("SELECT status,body,fetched FROM discover_cache WHERE key=?",digest) { Peeked(it.int("status"),it.bytes("body")!!,(clock.wallMillis()-it.long("fetched")).coerceAtLeast(0)) }
+    }?.takeIf { (it.status==200 && it.ageMillis<=MAX_AGE) || (it.status==404 && it.ageMillis<DAY) }
+    /** Stores [body] under [key] as a positive (200) or a negative (404), replacing any earlier answer. */
+    fun put(key:CacheKey,status:Int,body:ByteArray) {
+        require(status==200 || status==404)
+        val now=clock.wallMillis()
+        db.write {
+            execute("INSERT OR REPLACE INTO discover_cache(key,status,body,fetched,accessed,generation,bytes) VALUES(?,?,?,?,?,?,?)",key.digest(),status,body,now,now,UUID.randomUUID().toString(),body.size)
+            pruneIn(this,now)
+        }
+    }
+    class Peeked(val status:Int,val body:ByteArray,val ageMillis:Long)
     fun contains(dependencies:Map<String,String>):Boolean = db.read {
         dependencies.all { (key,generation) -> long("SELECT count(*) FROM discover_cache WHERE key=? AND generation=? AND fetched>=?",key,generation,clock.wallMillis()-MAX_AGE)==1L }
     }

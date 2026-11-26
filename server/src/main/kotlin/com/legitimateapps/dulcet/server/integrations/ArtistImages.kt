@@ -5,7 +5,10 @@ import com.legitimateapps.dulcet.server.discover.PoliteHttp
 import com.legitimateapps.dulcet.server.discover.UpstreamFailure
 import com.legitimateapps.dulcet.server.discover.UpstreamNotFound
 import com.legitimateapps.dulcet.server.discover.UpstreamUnavailable
-import kotlinx.coroutines.CancellationException
+import com.legitimateapps.dulcet.server.discover.CacheKey
+import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import java.net.InetAddress
 import java.util.concurrent.ConcurrentHashMap
 
@@ -28,8 +31,9 @@ data class ArtistRef(val musicBrainzId: String?, val name: String)
  */
 enum class Reach { Library, Catalogue }
 
-/** Validated image bytes; [key] is a stable identity for downstream resize caches. */
-class RemoteImage(val bytes: ByteArray, val contentType: String, val key: String)
+/** Validated image bytes; [key] is a stable identity for downstream resize caches, and [cacheDigest] names the
+ * shared-cache entry that holds the bytes, so a later cache-only read can find them again. */
+class RemoteImage(val bytes: ByteArray, val contentType: String, val key: String, internal val cacheDigest: String? = null)
 
 /**
  * A configured connection (one Lidarr, Jellyfin or Emby instance) and the capabilities it offers, each keyed by
@@ -46,6 +50,8 @@ interface Connection {
 /** One capability. Adding a source (Plex, a Subsonic server's getArtistInfo2, fanart.tv with a user key)
  * is one implementation of this interface and one entry in [Integrations.from]. */
 interface ArtistImageSource {
+    /** Whether this source is asked at [reach] at all; one that is not never counts as having answered. */
+    fun serves(reach: Reach): Boolean = true
     /** null when this source has no image for the artist. Throws [UpstreamUnavailable] when the source failed. */
     suspend fun artistImage(artist: ArtistRef, reach: Reach): RemoteImage?
 }
@@ -53,27 +59,102 @@ interface ArtistImageSource {
 /**
  * The configured sources in order. A source that fails with an outage is skipped for a minute, so an
  * unreachable tool costs one timeout a minute rather than one per artist on a page.
+ *
+ * Each answer is remembered as a small pointer (per artist and [Reach]) to the cache entry holding the bytes, so
+ * [cachedArtistImage] can answer without the network while the caller holds the database lock; a pointer that is
+ * missing or over an hour old is refreshed in the background. [onArtistImageChanged] is told the MusicBrainz id
+ * whenever the Library-reach answer changes, so the catalog can tell clients to re-read that artist.
  */
-class Integrations(private val sources: List<ArtistImageSource>, private val monotonicNanos: () -> Long = System::nanoTime) : ArtistImageSource {
+class Integrations(
+    private val sources: List<ArtistImageSource>,
+    private val cache: DiscoverCache? = null,
+    private val monotonicNanos: () -> Long = System::nanoTime,
+) : ArtistImageSource, AutoCloseable {
     val configured: Boolean get() = sources.isNotEmpty()
+    @Volatile var onArtistImageChanged: (String) -> Unit = {}
     private val downUntil = ConcurrentHashMap<ArtistImageSource, Long>()
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val refreshing = ConcurrentHashMap<Pair<String, Reach>, Job>()
+    private val refreshPermits = Semaphore(2)
+
+    internal fun isDown(source: ArtistImageSource): Boolean = downUntil[source]?.let { it - monotonicNanos() > 0 } == true
+
+    /**
+     * null when no source has an image. Throws [UpstreamUnavailable] when every source that could answer was in an
+     * outage, so a caller can tell "no photo" from "could not ask".
+     */
     override suspend fun artistImage(artist: ArtistRef, reach: Reach): RemoteImage? {
-        val mbid = artist.musicBrainzId?.let { runCatching { com.legitimateapps.dulcet.server.discover.canonicalMbid(it.trim().lowercase()) }.getOrNull() } ?: return null
+        val mbid = canonical(artist) ?: return null
         val ref = artist.copy(musicBrainzId = mbid)
+        var answered = false
+        var skipped = false
         for (source in sources) {
-            val until = downUntil[source]
-            if (until != null && until - monotonicNanos() > 0) continue
+            if (!source.serves(reach)) continue
+            if (isDown(source)) { skipped = true; continue }
             try {
-                source.artistImage(ref, reach)?.let { return it }
+                val image = source.artistImage(ref, reach)
+                answered = true
+                if (image != null) return image.also { remember(mbid, reach, it) }
             } catch (e: CancellationException) { throw e }
-              catch (e: UpstreamUnavailable) { if (e.reason in OUTAGES) downUntil[source] = monotonicNanos() + OUTAGE_SKIP_NANOS }
-              catch (_: UpstreamNotFound) { }
-              catch (_: Exception) { }
+              catch (e: UpstreamUnavailable) { if (e.reason in OUTAGES) { downUntil[source] = monotonicNanos() + OUTAGE_SKIP_NANOS; skipped = true } else answered = true }
+              catch (_: UpstreamNotFound) { answered = true }
+              catch (_: Exception) { answered = true }
         }
+        if (!answered && configured) throw UpstreamUnavailable(reason = UpstreamFailure.Unavailable)
+        // "No photo" is remembered only when every source answered; an outage leaves the earlier answer standing.
+        if (!skipped) remember(mbid, reach, null)
         return null
     }
+
+    /**
+     * The last answer for [artist] from the shared cache only: never the network and never a refresh lock, so it is
+     * safe inside a database transaction. Queues a background refresh when the answer is missing or stale.
+     */
+    fun cachedArtistImage(artist: ArtistRef, reach: Reach): RemoteImage? {
+        val cache = cache ?: return null
+        val mbid = canonical(artist) ?: return null
+        val pointer = cache.peek(pointerKey(mbid, reach))
+        if (pointer == null || (pointer.status == 200 && pointer.ageMillis > POINTER_REFRESH_MILLIS)) refresh(artist.copy(musicBrainzId = mbid), reach)
+        if (pointer?.status != 200) return null
+        val (digest, key) = pointer.body.decodeToString().split('\n', limit = 2).takeIf { it.size == 2 } ?: return null
+        val stored = cache.peek(digest)?.takeIf { it.status == 200 } ?: return null.also { refresh(artist.copy(musicBrainzId = mbid), reach) }
+        val type = runCatching { com.legitimateapps.dulcet.server.discover.CoverArtClient.imageType(stored.body) }.getOrNull() ?: return null
+        return RemoteImage(stored.body, type, key, digest)
+    }
+
+    private fun refresh(artist: ArtistRef, reach: Reach) {
+        val id = artist.musicBrainzId!! to reach
+        refreshing.computeIfAbsent(id) {
+            scope.launch(start = CoroutineStart.LAZY) {
+                try { refreshPermits.withPermit { runCatching { artistImage(artist, reach) } } } finally { refreshing.remove(id) }
+            }
+        }.start()
+    }
+
+    /** Waits for queued background refreshes (tests and shutdown). */
+    suspend fun awaitRefreshes() { while (true) { val jobs = refreshing.values.toList(); if (jobs.isEmpty()) return; jobs.joinAll() } }
+
+    private fun remember(mbid: String, reach: Reach, image: RemoteImage?) {
+        val cache = cache ?: return
+        val key = pointerKey(mbid, reach)
+        val previous = cache.peek(key)
+        val digest = image?.cacheDigest
+        if (image != null && digest == null) return
+        val body = if (image == null) ByteArray(0) else "$digest\n${image.key}".toByteArray()
+        cache.put(key, if (image == null) 404 else 200, body)
+        val before = previous?.takeIf { it.status == 200 }?.body?.decodeToString()?.substringBefore('\n')
+        if (reach == Reach.Library && before != digest && !(previous == null && image == null)) runCatching { onArtistImageChanged(mbid) }
+    }
+
+    private fun canonical(artist: ArtistRef): String? =
+        artist.musicBrainzId?.let { runCatching { com.legitimateapps.dulcet.server.discover.canonicalMbid(it.trim().lowercase()) }.getOrNull() }
+    private fun pointerKey(mbid: String, reach: Reach) = CacheKey("dulcet:integrations", "/artist-image", mapOf("mbid" to mbid, "reach" to reach.name))
+
+    override fun close() { scope.cancel() }
+
     companion object {
         const val OUTAGE_SKIP_NANOS = 60_000_000_000L
+        const val POINTER_REFRESH_MILLIS = DiscoverCache.HOUR
         private val OUTAGES = setOf(UpstreamFailure.Timeout, UpstreamFailure.Transport, UpstreamFailure.DnsTimeout, UpstreamFailure.DnsTransport,
             UpstreamFailure.HttpStatus, UpstreamFailure.Backoff, UpstreamFailure.WaitingCap)
         val NONE = Integrations(emptyList())
@@ -99,7 +180,7 @@ class Integrations(private val sources: List<ArtistImageSource>, private val mon
             if (order != null) order.forEach { require(it in offered) { "integration-artist-images names $it, which no configured connection offers" } }
             // Operator services are spaced by their own queue only; the outside image host keeps the default gap.
             listOfNotNull(settings.lidarr, settings.jellyfin, settings.emby).forEach { http.configureOrigin(it.url, 0) }
-            return Integrations((order ?: DEFAULT_ARTIST_IMAGE_ORDER).mapNotNull { offered[it] })
+            return Integrations((order ?: DEFAULT_ARTIST_IMAGE_ORDER).mapNotNull { offered[it] }, cache)
         }
         val DEFAULT_ARTIST_IMAGE_ORDER = listOf("lidarr", "jellyfin", "emby", "lidarr-feed")
     }

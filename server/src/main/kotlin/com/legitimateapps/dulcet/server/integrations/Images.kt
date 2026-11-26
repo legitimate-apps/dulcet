@@ -26,7 +26,7 @@ internal fun isImage(bytes: ByteArray) = runCatching { validImage(bytes) }.isSuc
 /** 30 days for an image, a day for a 404 (the shared cache's negative lifetime); null when there is none. */
 internal suspend fun cachedImage(cache: DiscoverCache, key: CacheKey, stamp: String, fetch: suspend () -> UpstreamResponse): RemoteImage? = try {
     val bytes = cache.read(key, IMAGE_TTL, ::validImage, fetch).value
-    RemoteImage(bytes, CoverArtClient.imageType(bytes), stamp)
+    RemoteImage(bytes, CoverArtClient.imageType(bytes), stamp, key.digest())
 } catch (_: UpstreamNotFound) { null }
 
 internal fun JsonObject.text(name: String): String? = (this[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
