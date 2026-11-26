@@ -220,7 +220,8 @@ Navidrome's private `/api` surface. §2.4 forbids it.
 ### 1.3 Non-goals for v1
 
 - No Jellyfin adapter (§9.5 explains why the seam still exists).
-- No server-side management: no library administration, no user administration, no tag editing.
+- No management of other servers: no library administration, no user administration, no tag editing
+  through OpenSubsonic. Dulcet Server manages its own library (CORPUS §5c, §28 2026-11-26).
 - No video.
 - **Podcasts and audiobooks receive ordinary-song behavior in v1** and nothing more — no chapters, no
   long-form completion rules, no podcast endpoints (§18.7). We do not claim to support them.
@@ -8071,6 +8072,22 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-26 — Connections, Library and My Library; Dulcet Server manages its library (CORPUS §5c, §1.3, §29).**
+The maintainer set three layers. Dulcet has no ingest: music arrives in the server's music folder
+from other tools or by hand, and the scanner reads it. **Connections** are the tools and services
+linked to Dulcet, plus storage. Each connection declares capabilities (artist images, album art,
+metadata, popularity, requests, import), and each capability keeps its own ordered list of
+connections that can be enabled one by one. Server-wide answers such as artwork are an
+administrator's to configure; a person's own data in another server is that person's connection.
+**Library** is everything on the server, and Dulcet Server becomes its manager: it reports
+problems and fixes them, including tag edits, album merges and file moves and deletes, behind an
+administrator's explicit opt-in to writing the music folder. Each write's safety and undo are
+designed before it ships. **My Library** is unchanged (§29.9). CORPUS §7 no longer says "Not a
+library manager. Not a tag editor."; §1.3's non-goal now covers only managing other servers. The
+apps still speak only Dulcet API or OpenSubsonic. Planned connections: artist images first, then a
+Wishlist item becoming a Lidarr request, import from Jellyfin and Plex, more image and metadata
+sources, and ListenBrainz popularity for top songs.
 
 **2026-11-25 — Discover shows real covers promptly and by tile (§16.14, §30, Discover).**
 Seen on an iPhone against the household server: every artist and song tile held the grey note
