@@ -343,6 +343,66 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         shoot("search-stack-return", app)
     }
 
+    /// An artist the listener has never played opens on Top Songs led by the artist's popular
+    /// songs, and Play starts the most popular one. The page is reached from an album, so the
+    /// artist's own row is not cached when Top Songs is first read. Needs a disposable Dulcet
+    /// Server whose ListenBrainz (a fake) ranks DULCET_ARTIST_TOP_EXPECTED first.
+    @MainActor
+    func testUnplayedArtistOpensOnPopularTopSongs() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_ARTIST_TOP_PROOF"] == "1" else { throw XCTSkip("Requires a disposable fixture") }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let album = try XCTUnwrap(environment["DULCET_ARTIST_TOP_ALBUM"])
+        let expected = try XCTUnwrap(environment["DULCET_ARTIST_TOP_EXPECTED"])
+        let artist = try XCTUnwrap(environment["DULCET_ARTIST_TOP_ARTIST"])
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))
+        let field = dulcetSearchField(in: app)
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText(album)
+        dismissKeyboard(in: app)
+        let albumResult = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'dulcet.search.result.' AND label CONTAINS %@", album)).firstMatch
+        XCTAssertTrue(albumResult.waitForExistence(timeout: 20), app.debugDescription)
+        _ = settle(app)
+        albumResult.tap()
+        // The reading album page's artist link is a button named for the artist.
+        let albumArtist = app.buttons[artist].firstMatch
+        XCTAssertTrue(albumArtist.waitForExistence(timeout: 20), app.debugDescription)
+        _ = settle(app)
+        albumArtist.tap()
+
+        let artistTitle = app.staticTexts["dulcet.artist.title"].firstMatch
+        XCTAssertTrue(artistTitle.waitForExistence(timeout: 20), app.debugDescription)
+        let topSongs = app.descendants(matching: .any)["dulcet.artist.topSongs"].firstMatch
+        XCTAssertTrue(waitFor(timeout: 20) { topSongs.exists && app.staticTexts[expected].exists },
+                      "Top Songs with \(expected): \(app.debugDescription)")
+        _ = settle(app)
+        print("DULCET ARTIST TOP topSongs=\(topSongs.exists) expected=\(app.staticTexts[expected].exists)")
+        shoot("artist-top-songs", app)
+
+        let play = app.buttons["dulcet.artist.play"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 10) && play.isHittable, app.debugDescription)
+        play.tap()
+        let mini = app.buttons["dulcet.mini-player.open"].firstMatch
+        XCTAssertTrue(waitFor(timeout: 20) { mini.exists && mini.label.contains(expected) },
+                      "Play starts \(expected): \(mini.exists ? mini.label : "no mini player")")
+        _ = settle(app)
+        print("DULCET ARTIST TOP mini=\(mini.label)")
+        shoot("artist-play", app)
+    }
+
     /// Search leads with a Top Result card, and using a result ends the typing. The card names the
     /// best match with artwork and a Play button; tapping a song row puts the keyboard away so the
     /// mini player that says playback started is not hidden under it, in one tap.

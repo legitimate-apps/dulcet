@@ -77,6 +77,19 @@ class DiscoverCache(private val db:Db,private val clock:DiscoverClock=SystemDisc
             }
         }
     }
+    /**
+     * The stored answer without taking the key's lock or touching the network, so a request never
+     * queues behind a refresh in flight. Older than [ttlMillis] is returned marked stale; past
+     * [MAX_AGE], not stored, not a 200, or unreadable, null.
+     */
+    fun <T> peek(key:CacheKey,ttlMillis:Long,decode:(ByteArray)->T):Cached<T>? {
+        val digest=key.digest(); val now=clock.wallMillis()
+        val entry=db.read { single("SELECT * FROM discover_cache WHERE key=?",digest) { Entry(it.int("status"),it.bytes("body")!!,it.long("fetched"),it.string("generation")) } } ?: return null
+        val age=(now-entry.fetched).coerceAtLeast(0)
+        if(entry.status!=200 || age>MAX_AGE) return null
+        val value=try { decode(entry.body) } catch(e:CancellationException) { throw e } catch(_:Exception) { return null }
+        return Cached(value,CacheAge(entry.fetched,age/1000,age>=ttlMillis),entry.generation,mapOf(digest to entry.generation))
+    }
     fun contains(dependencies:Map<String,String>):Boolean = db.read {
         dependencies.all { (key,generation) -> long("SELECT count(*) FROM discover_cache WHERE key=? AND generation=? AND fetched>=?",key,generation,clock.wallMillis()-MAX_AGE)==1L }
     }
