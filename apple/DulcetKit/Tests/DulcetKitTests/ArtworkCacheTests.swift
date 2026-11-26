@@ -105,6 +105,56 @@ func artworkDiskCacheEnforcesItsByteBound() async {
     #expect(await cache.statistics() == .init(entryCount: 1, byteCount: 4))
 }
 
+/// An artist's stand-in saved before a photo existed must not hide the photo for good (2026-11-26: Pavement's
+/// page kept an album cover the server had since replaced). The server's short lifetime travels with the image;
+/// past it the cache says "stale" (ask again) but still has the bytes, so offline the picture still shows.
+@Test
+func artworkDiskCacheMarksAShortLivedImageStaleOnlyAfterItsLifetimeAndKeepsItsBytes() async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let clock = SettableDate()
+    let cache = DulcetArtworkDiskCache(rootDirectory: root, now: clock.read)
+    let standIn = DulcetArtworkCacheKey(serverID: "server:opaque", artworkKey: "ar-1", sizeBucket: .pixels1024)
+    let lasting = DulcetArtworkCacheKey(serverID: "server:opaque", artworkKey: "al-1", sizeBucket: .pixels1024)
+
+    await cache.insert(Data([1, 2, 3]), for: standIn, freshFor: 300)
+    await cache.insert(Data([4, 5, 6]), for: lasting)
+    #expect(await cache.saved(for: standIn) == .init(data: Data([1, 2, 3]), isStale: false))
+
+    clock.now = clock.now.addingTimeInterval(299)
+    #expect(await cache.saved(for: standIn)?.isStale == false)
+    clock.now = clock.now.addingTimeInterval(1)
+    #expect(await cache.saved(for: standIn) == .init(data: Data([1, 2, 3]), isStale: true))
+    #expect(await cache.data(for: standIn) == Data([1, 2, 3]), "a stale image is still there to show offline")
+
+    clock.now = clock.now.addingTimeInterval(10 * 365 * 86_400)
+    #expect(await cache.saved(for: lasting) == .init(data: Data([4, 5, 6]), isStale: false), "no lifetime, kept as long as its id")
+
+    // The photo that replaces the stand-in carries no short lifetime: the old one must not linger on it.
+    await cache.insert(Data([7, 8, 9]), for: standIn)
+    #expect(await cache.saved(for: standIn) == .init(data: Data([7, 8, 9]), isStale: false))
+    clock.now = clock.now.addingTimeInterval(86_400)
+    #expect(await cache.saved(for: standIn)?.isStale == false)
+
+    // A fresh cache instance (the next launch) reads the same lifetime from disk.
+    await cache.insert(Data([1]), for: standIn, freshFor: 60)
+    clock.now = clock.now.addingTimeInterval(61)
+    let relaunched = DulcetArtworkDiskCache(rootDirectory: root, now: clock.read)
+    #expect(await relaunched.saved(for: standIn)?.isStale == true)
+    #expect(await relaunched.statistics().entryCount == 2, "the lifetime adds no file to the cache's inventory")
+}
+
+private final class SettableDate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = Date(timeIntervalSinceReferenceDate: 800_000_000)
+    var now: Date {
+        get { lock.lock(); defer { lock.unlock() }; return value }
+        set { lock.lock(); value = newValue; lock.unlock() }
+    }
+    func read() -> Date { now }
+}
+
 private final class TestDateSource: @unchecked Sendable {
     private let lock = NSLock()
     private var tick: TimeInterval = 0

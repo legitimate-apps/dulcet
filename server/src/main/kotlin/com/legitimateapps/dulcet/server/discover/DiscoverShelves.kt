@@ -11,15 +11,22 @@ class DiscoverShelves(private val db:Db,private val access:AccountAccess,private
     }
     suspend fun playlistShelf()=client.searchPlaylists("",100)
     suspend fun shelf(userId:String,shelfId:String):Cached<List<DiscoverItem>> = when(shelfId) {
-        "trendingArtists"->client.trending(DiscoverKind.Artist)
-        "trendingAlbums"->client.trending(DiscoverKind.Album)
-        "trendingSongs"->client.trending(DiscoverKind.Song)
+        "trendingArtists"->client.trending(DiscoverKind.Artist).map(::once)
+        "trendingAlbums"->client.trending(DiscoverKind.Album).map(::once)
+        "trendingSongs"->client.trending(DiscoverKind.Song).map(::once)
         "newReleases"->client.freshReleases().map { rows ->
             val preferred=myArtists(userId)
             rows.sortedWith(compareByDescending<DiscoverItem> { it.externalIds[DiscoverKind.Artist.registryKey] in preferred || it.artistMbids.any { id -> id in preferred } }.thenByDescending { it.releaseDate ?: "" }.thenBy { it.externalIds[DiscoverKind.Album.registryKey] })
         }
         "similarArtists"->similar(userId)
         else->throw IllegalArgumentException("Unknown discover shelf")
+    }
+    /** Each item once. ListenBrainz's weekly stats can list one release group twice, once per release it counted
+     * (BTS's ARIRANG appeared side by side, 2026-11-26); the first, most-listened row stays. An item without an id
+     * cannot be matched to another and is kept. */
+    internal fun once(items:List<DiscoverItem>):List<DiscoverItem> {
+        val seen=HashSet<String>()
+        return items.filter { item -> item.externalIds[item.kind.registryKey]?.let(seen::add) ?: true }
     }
     private fun myArtists(userId:String):Set<String> = db.read {
         query("""SELECT DISTINCT a.mbz_artist_id FROM artist a JOIN track_artist ta ON ta.artist_id=a.id JOIN track t ON t.id=ta.track_id

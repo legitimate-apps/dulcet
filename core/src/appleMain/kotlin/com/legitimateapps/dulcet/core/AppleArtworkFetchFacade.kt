@@ -38,6 +38,8 @@ public class AppleArtworkFetchErrorDto internal constructor(public val kind: Str
 public class AppleArtworkFetchOutcome internal constructor(
     public val data: NSData?,
     public val error: AppleArtworkFetchErrorDto?,
+    /** Seconds the server says [data] stays current, or -1 to keep it as long as its id (see ArtworkFetchResult.Loaded). */
+    public val freshForSeconds: Long = -1,
 )
 
 /** Objective-C-compatible completion-handler facade for one cover-art request. */
@@ -120,6 +122,7 @@ private fun ArtworkFetchResult.toAppleOutcome(): AppleArtworkFetchOutcome = when
     is ArtworkFetchResult.Loaded -> AppleArtworkFetchOutcome(
         data = bytes.toNSData(),
         error = null,
+        freshForSeconds = freshForSeconds ?: -1,
     )
     ArtworkFetchResult.Unavailable -> AppleArtworkFetchOutcome(data = null, error = null)
     is ArtworkFetchResult.Failed -> AppleArtworkFetchOutcome(

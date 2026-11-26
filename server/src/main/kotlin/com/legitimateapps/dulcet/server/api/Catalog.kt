@@ -9,6 +9,14 @@ import java.time.Instant
  * spec; the extra `dulcetInLibrary` flag is the `dulcetLibrary` extension's membership marker.
  */
 class Catalog(private val db: Db, private val access: com.legitimateapps.dulcet.server.auth.AccountAccess) {
+    /** The version of an artist's Connections photo by MusicBrainz id (see [com.legitimateapps.dulcet.server.integrations.Integrations.artistImageVersion]); null when there is none. */
+    @Volatile var artistImageVersion: (String) -> String? = { null }
+
+    /** An artist's `coverArt` id: `ar-<id>`, plus `_<version>` once a Connections photo is known, so the id changes
+     * when the picture behind it does (as Navidrome's `ar-<id>_<updated>` does). [Artwork] accepts both forms. */
+    fun artistCoverArt(id: String, musicBrainzId: String?): String =
+        "ar-$id" + (musicBrainzId?.takeIf(String::isNotBlank)?.let(artistImageVersion)?.let { "_$it" } ?: "")
+
 
     // ---- songs -------------------------------------------------------------------------------
 
@@ -252,7 +260,7 @@ class Catalog(private val db: Db, private val access: com.legitimateapps.dulcet.
             Node(elementName).apply {
                 this["id"] = row.string("id")
                 this["name"] = row.string("name")
-                this["coverArt"] = "ar-${row.string("id")}"
+                this["coverArt"] = artistCoverArt(row.string("id"), row.stringOrNull("mbz_artist_id"))
                 this["albumCount"] = row.int("visible_album_count")
                 row.longOrNull("u_starred")?.let { this["starred"] = iso(it) }
                 row.intOrNull("u_rating")?.takeIf { it > 0 }?.let { this["userRating"] = it }

@@ -43,6 +43,8 @@ internal data class AuthenticatedEndpointResponseHeaders(
     val contentRange: String?,
     /** `X-Total-Count`, which `getAlbumList2` carries as a header and never in the body (spec §16.9). */
     val totalCount: String? = null,
+    /** `Cache-Control`, read only by cover art to learn how long the server says an image stays current. */
+    val cacheControl: String? = null,
 )
 
 private data class AuthenticatedEndpointHttpSnapshot(
@@ -342,6 +344,7 @@ internal class AuthenticatedEndpointClient(
             acceptRanges = headers[HttpHeaders.AcceptRanges],
             contentRange = headers[HttpHeaders.ContentRange],
             totalCount = headers["X-Total-Count"],
+            cacheControl = headers[HttpHeaders.CacheControl],
         ),
         location = headers[HttpHeaders.Location],
     )
