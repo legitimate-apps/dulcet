@@ -53,6 +53,13 @@ internal data class PlaybackQueueEntrySnapshot(
     val queueEntryId: QueueEntryId,
     val itemId: ProviderItemId,
     val sourceDisplayName: String,
+    /**
+     * Where this entry was played from (`album`, `playlist`, `artist`, `search`, `library`) and the
+     * source's own id, null for the kinds that have none. A shell compares them with the page a
+     * Play button is on, so that page shows Pause while its own music plays.
+     */
+    val sourceKind: QueueSourceKind,
+    val sourceRawId: String?,
     /** AutoPlay added this entry when the person's own queue ran low; Up Next lists it apart. */
     val isAutoplay: Boolean = false,
 )
@@ -1311,6 +1318,8 @@ internal class PlaybackQueueController(
                 it.queueEntryId,
                 it.providerItemId,
                 it.sourceContext.displayName,
+                it.sourceContext.kind,
+                it.sourceContext.sourceId?.rawId,
                 isAutoplay = it.addedBy == QueueAddedBy.Autoplay,
             )
         },

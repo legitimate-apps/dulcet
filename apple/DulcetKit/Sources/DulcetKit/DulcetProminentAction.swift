@@ -1,6 +1,16 @@
 #if os(macOS) || os(iOS) || os(tvOS)
 import SwiftUI
 
+/// The label of a Play button on tvOS and where a plain `Label` is drawn: Pause while the button's own
+/// music plays.
+struct DulcetPlayLabel: View {
+    var isPlaying = false
+
+    var body: some View {
+        Label(isPlaying ? DulcetStrings.pause : DulcetStrings.play, systemImage: isPlaying ? "pause.fill" : "play.fill")
+    }
+}
+
 /// The one prominent (accent-filled) action. Every filled button in the app is this component:
 /// `tools/verify_design_tokens.py` rejects `.buttonStyle(.borderedProminent)` anywhere else, so the
 /// label colour, size and keyboard default are decided once.
@@ -123,12 +133,17 @@ struct DulcetHeaderPlayAction: View {
     var isEnabled = true
     var isDefaultAction = false
     var fillsWidth = false
+    /// Its own music is playing: the button reads Pause, and pressing it pauses.
+    var isPlaying = false
     let action: () -> Void
+
+    private var shownTitle: String { isPlaying ? DulcetStrings.pause : title }
+    private var shownSymbol: String { isPlaying ? "pause.fill" : "play.fill" }
 
     var body: some View {
 #if os(iOS) || os(macOS)
         Button(action: action) {
-            Label(title, systemImage: "play.fill")
+            Label(shownTitle, systemImage: shownSymbol)
                 .lineLimit(1)
                 .frame(maxWidth: fillsWidth ? .infinity : nil)
         }
@@ -137,8 +152,8 @@ struct DulcetHeaderPlayAction: View {
         .dulcetDefaultActionShortcut(isDefaultAction)
 #else
         DulcetProminentAction(
-            title,
-            systemImage: "play.fill",
+            shownTitle,
+            systemImage: shownSymbol,
             isEnabled: isEnabled,
             isDefaultAction: isDefaultAction,
             fillsWidth: fillsWidth,

@@ -8073,6 +8073,26 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-26 — A page's Play shows Pause while its own music plays; Play and Shuffle intents pinned (§14.1, §14.2, Queue and Search).**
+OBSERVED on the iPhone 18 Pro simulator against a disposable Dulcet Server fixture, 2026-11-26: the
+reported "Shuffle stays on and applies to later Play presses" does not reproduce. The core's
+`replaceAndStart` replaces the queue with Shuffle Disabled and enables it only when the request says
+`shuffle`, so a page's Play always plays in order from its first track and leaves Shuffle off, a page's
+Shuffle plays shuffled and turns it on, and Now Playing's toggle is the only setting that persists
+(a playlist's Shuffle then an album's Play showed Shuffle Off; an album's Shuffle then an artist's Play
+showed Off). That rule is unchanged and now has tests (`PlaybackQueueControllerTest`). What was wrong:
+an album's, playlist's or artist's Play and the Top Result's play button kept saying Play while their
+own music played, and pressing them restarted it. Each queue entry now carries the kind and id of the
+source it was played from (`PlaybackQueueEntrySnapshot.sourceKind` and `sourceRawId`, and the same on
+the Apple entry DTO), which reach the shells as `DulcetNowPlaying.source`. A Play button stands for a
+target, a collection (album, playlist, artist) or one song (a Top Result that is a song), and when the
+current entry was played from that collection, or is that song, and playback is running, the button
+reads Pause and a press pauses; paused, it reads Play and starts the collection over. Shuffle never
+enters the test: a collection played shuffled is still that collection. Not covered, by design: a local
+playlist and the whole library are played as source kind `library` with no id, so they cannot be told
+from each other and their Play keeps its label; Library Songs and Downloaded have a Shuffle button
+only. Android is not changed.
+
 **2026-11-26 — An artist's photo replaces its stand-in on devices that saved it (§16.14, §29, Discover).**
 OBSERVED on the household server and a DEV build, 2026-11-26: Pavement's and Peach Pit's artist pages
 showed an album cover while search showed the photo. Devices cache artwork by id with no expiry

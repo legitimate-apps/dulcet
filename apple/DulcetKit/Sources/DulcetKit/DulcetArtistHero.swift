@@ -299,6 +299,8 @@ struct DulcetArtistHero<Actions: View>: View {
 /// the larger and prominent, Shuffle beside it on glass.
 struct DulcetArtistHeroActions: View {
     let isEnabled: Bool
+    /// Music played from this artist is sounding: Play reads Pause and pauses.
+    var isPlaying = false
     let play: () -> Void
     let shuffle: () -> Void
 
@@ -314,12 +316,12 @@ struct DulcetArtistHeroActions: View {
             .accessibilityIdentifier("dulcet.artist.shuffle")
             .accessibilitySortPriority(0)
             Button(action: play) {
-                Image(systemName: "play.fill")
+                Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                     .font(.title2.weight(.semibold))
                     .frame(width: DulcetMetrics.heroPlayGlyphFrame, height: DulcetMetrics.heroPlayGlyphFrame)
             }
             .modifier(DulcetHeroButtonStyle(prominent: true))
-            .accessibilityLabel(DulcetStrings.play)
+            .accessibilityLabel(isPlaying ? DulcetStrings.pause : DulcetStrings.play)
             .accessibilityIdentifier("dulcet.artist.play")
             // VoiceOver reaches Play before Shuffle, as it reads every other page's pair.
             .accessibilitySortPriority(1)

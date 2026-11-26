@@ -128,6 +128,123 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         print("ARTIST-ART phase=\(phase) artist=\(artist)")
     }
 
+    /// Play plays in order and turns Shuffle off; Shuffle shuffles and turns it on; a Play button whose
+    /// context is the one playing shows Pause and pauses. Drives the real pages against a disposable server
+    /// that has a playlist "Road Mix" and the albums "First Light" and "Tide Lines". Skipped unless
+    /// `DULCET_PLAY_PROOF` names a shot prefix.
+    @MainActor
+    func testPlayShuffleAndPauseFollowTheContextPlaying() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phase = environment["DULCET_PLAY_PROOF"] else { throw XCTSkip("Requires the disposable play-intent fixture") }
+        continueAfterFailure = true
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        let bar = app.buttons["dulcet.mini-player.open"].firstMatch
+        let barToggle = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        func check(_ ok: Bool, _ what: String) {
+            print("DULCET PLAY PROOF \(ok ? "pass" : "FAIL") \(what)")
+            XCTAssertTrue(ok, what)
+        }
+        /// Opens Now Playing, reads the Shuffle control's value, shoots it and closes the player.
+        func shuffleValueInPlayer(_ screen: String) -> String? {
+            guard bar.waitForExistence(timeout: 20) else { return nil }
+            bar.tap()
+            guard app.staticTexts["dulcet.now-playing.title"].firstMatch.waitForExistence(timeout: 10) else { return nil }
+            _ = self.settle(app, seconds: 1.5)
+            let control = app.buttons.matching(NSPredicate(format: "label == 'Shuffle' AND (value == 'On' OR value == 'Off')")).firstMatch
+            let value = control.waitForExistence(timeout: 5) ? control.value as? String : nil
+            self.shoot("\(phase)-\(screen)-player", app)
+            self.closePlayer(in: app)
+            _ = self.settle(app, seconds: 0.8)
+            return value
+        }
+        func playing() -> Bool { self.waitFor(timeout: 15) { barToggle.exists && barToggle.label == "Pause" } }
+        func paused() -> Bool { self.waitFor(timeout: 15) { barToggle.exists && barToggle.label == "Play" } }
+
+        // 1. Shuffle a playlist: Shuffle is on. Then Play an album: in order, Shuffle off.
+        XCTAssertTrue(openPlaylist("Road Mix", in: app, compact: compact), app.debugDescription)
+        app.buttons["dulcet.playlist.shuffle"].firstMatch.tap()
+        check(playing(), "playlist Shuffle starts playback")
+        check(shuffleValueInPlayer("1-playlist-shuffled") == "On", "Shuffle is On after the playlist's Shuffle")
+        XCTAssertTrue(openAlbum("First Light", in: app, compact: compact), app.debugDescription)
+        let albumPlay = app.buttons["dulcet.album.play"].firstMatch
+        XCTAssertTrue(albumPlay.waitForExistence(timeout: 10))
+        check(albumPlay.label == "Play", "the album's Play reads Play while another context plays (was \(albumPlay.label))")
+        albumPlay.tap()
+        check(playing(), "album Play starts playback")
+        _ = settle(app, seconds: 1.5)
+        shoot("\(phase)-2-album-playing", app)
+        check(albumPlay.label == "Pause", "the album's Play shows Pause while its songs play (was \(albumPlay.label))")
+        check(shuffleValueInPlayer("3-album-after-play") == "Off", "Play turns Shuffle off")
+        // Pressing Pause pauses; Play comes back.
+        if albumPlay.label == "Pause" {
+            albumPlay.tap()
+            check(paused(), "pressing the album's Pause pauses")
+            _ = settle(app, seconds: 1)
+            check(albumPlay.label == "Play", "the album's button returns to Play when paused (was \(albumPlay.label))")
+            shoot("\(phase)-4-album-paused", app)
+        }
+        // The album's Shuffle shuffles and turns it on; a later Play turns it off again.
+        app.buttons["dulcet.album.shuffle"].firstMatch.tap()
+        check(playing(), "album Shuffle starts playback")
+        check(shuffleValueInPlayer("5-album-shuffled") == "On", "Shuffle is On after the album's Shuffle")
+        // 2. An artist's Play: order, Shuffle off, Pause while playing.
+        XCTAssertTrue(openArtist("Velvet Harbor", in: app, compact: compact), app.debugDescription)
+        let artistPlay = app.buttons["dulcet.artist.play"].firstMatch
+        XCTAssertTrue(artistPlay.waitForExistence(timeout: 10))
+        artistPlay.tap()
+        check(playing(), "artist Play starts playback")
+        _ = settle(app, seconds: 1.5)
+        shoot("\(phase)-6-artist-playing", app)
+        check(artistPlay.label == "Pause", "the artist's Play shows Pause while its songs play (was \(artistPlay.label))")
+        check(shuffleValueInPlayer("7-artist-after-play") == "Off", "the artist's Play turns Shuffle off")
+        if artistPlay.label == "Pause" {
+            artistPlay.tap()
+            check(paused(), "pressing the artist's Pause pauses")
+        }
+        // 3. The search Top Result: an album, then a song.
+        for query in ["Tide Lines", "Song 3"] {
+            guard openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact) else {
+                check(false, "open Search"); continue
+            }
+            let field = dulcetSearchField(in: app)
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            field.tap()
+            if let current = field.value as? String, !current.isEmpty, current != "Search" {
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: current.count))
+            }
+            field.typeText(query)
+            let top = app.buttons["dulcet.search.topResult"].firstMatch
+            XCTAssertTrue(top.waitForExistence(timeout: 20), app.debugDescription)
+            let topPlay = app.buttons["dulcet.search.topResult.play"].firstMatch
+            guard topPlay.waitForExistence(timeout: 5) else { check(false, "Top Result for \(query) has Play: \(top.label)"); continue }
+            print("DULCET PLAY PROOF top result for \(query): \(top.label)")
+            if barToggle.exists, barToggle.label == "Pause" { barToggle.tap(); _ = paused() }
+            // The card is rebuilt as the typed query settles; press the button that is there now.
+            _ = settle(app, seconds: 1.5)
+            guard topPlay.waitForExistence(timeout: 10) else { check(false, "Top Result Play stays for \(query)"); continue }
+            topPlay.tap()
+            check(playing(), "Top Result Play starts playback (\(query))")
+            _ = settle(app, seconds: 1.5)
+            shoot("\(phase)-8-top-\(query.replacingOccurrences(of: " ", with: "-").lowercased())-playing", app)
+            check(topPlay.label == "Pause", "the Top Result's button shows Pause while it plays (\(query), was \(topPlay.label))")
+            if topPlay.label == "Pause" {
+                topPlay.tap()
+                check(paused(), "pressing the Top Result's Pause pauses (\(query))")
+            }
+        }
+    }
+
     /// Downloads one playlist with Automatic Downloads off, browses Downloaded, then (in the
     /// `offline` phase, run after the disposable server is stopped) reads the page status line,
     /// Downloaded and Search with no server. Skipped unless `DULCET_PLAYLIST_DOWNLOAD_PROOF` names a phase.

@@ -10,6 +10,8 @@ struct DulcetSearchTopResultCard: View {
     let accessibilityLabel: String
     let onOpen: () -> Void
     let onPlay: () -> Void
+    /// The card's own music is sounding: its button reads Pause and pauses.
+    var isPlaying = false
 
     private var result: DulcetSearchResult { row.result }
     private var unavailableOffline: Bool { row.isUnavailableOffline }
@@ -53,12 +55,12 @@ struct DulcetSearchTopResultCard: View {
                 .accessibilityIdentifier("dulcet.search.topResult")
                 if hasPlay {
                     Button(action: onPlay) {
-                        Image(systemName: "play.fill")
+                        Image(systemName: isPlaying ? "pause.fill" : "play.fill")
                             .font(.title2.weight(.semibold))
                             .frame(width: DulcetMetrics.heroPlayGlyphFrame, height: DulcetMetrics.heroPlayGlyphFrame)
                     }
                     .modifier(DulcetTopResultPlayStyle())
-                    .accessibilityLabel(DulcetStrings.play)
+                    .accessibilityLabel(isPlaying ? DulcetStrings.pause : DulcetStrings.play)
                     .accessibilityIdentifier("dulcet.search.topResult.play")
                 }
             }

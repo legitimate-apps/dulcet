@@ -67,6 +67,10 @@ public class ApplePlaybackQueueEntryDto internal constructor(
     public val providerInstanceId: String,
     public val rawId: String,
     public val sourceDisplayName: String,
+    /** `library`, `album`, `playlist`, `search` or `artist`: where the entry was played from. */
+    public val sourceKind: String,
+    /** The source's own id (an album's, a playlist's, an artist's), null for `library` and `search`. */
+    public val sourceRawId: String?,
     public val isAutoplay: Boolean = false,
 )
 
@@ -1291,6 +1295,8 @@ private fun PlaybackQueueSnapshot.toAppleDto() = ApplePlaybackQueueSnapshotDto(
             providerInstanceId = entry.itemId.providerInstanceId,
             rawId = entry.itemId.rawId,
             sourceDisplayName = entry.sourceDisplayName,
+            sourceKind = entry.sourceKind.storageValue,
+            sourceRawId = entry.sourceRawId,
             isAutoplay = entry.isAutoplay,
         )
     },
