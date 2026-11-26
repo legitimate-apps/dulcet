@@ -315,8 +315,8 @@ internal fun launchBackground(block: () -> Unit) {
 
 /**
  * The artist's song ids in play order (see [TopSongs]). Candidates are the songs the caller may
- * read, ranked on the artist's popularity ([ServerContext.artistPopularity], asked with the
- * artist's MusicBrainz id and nothing else) and the caller's own annotations: no other account's
+ * read, ranked on the artist's stored popularity ([ServerContext.artistPopularity]; never fetched
+ * while the request waits) and the caller's own annotations: no other account's
  * listening is used. Without a popularity answer the order is the caller's listening, then the
  * spread across records.
  */
@@ -349,6 +349,7 @@ private suspend fun topSongIds(ctx: ServerContext, userId: String, foldedArtist:
     val mbid = ctx.db.read {
         query("SELECT DISTINCT lower(mbz_artist_id) AS mbid FROM artist WHERE search = ? AND mbz_artist_id IS NOT NULL AND mbz_artist_id != ''", foldedArtist) { it.string("mbid") }
     }.singleOrNull()
-    val popular = mbid?.let { ctx.artistPopularity.topRecordings(it) }
+    // Stored popularity only, never a wait on ListenBrainz; a miss queues a background fetch.
+    val popular = mbid?.let { ctx.artistPopularity.cachedTopRecordings(it) }
     return TopSongs.rank(TopSongs.withPopularity(candidates, popular))
 }

@@ -8084,10 +8084,15 @@ popular recordings from ListenBrainz (`/1/popularity/top-recordings-for-artist/{
 to library tracks by recording MBID, then by title and version (a live take does not match the studio
 song); recordings the library lacks are skipped. The most popular song held scores 40, two less per
 place down, at least 1, and adds to the caller's own listening score (3 per play, 20 for a star, 4 or
-8 for a 4- or 5-star rating), so heavy personal listening can still lift a song past the hits. Without
-popularity (no ListenBrainz token, Discover off, upstream failing or slower than 3 seconds) the order is
-the 2026-11-24 one; a slow lookup keeps running and fills the week-long cache for the next request. The
-popularity source sits behind `ArtistPopularity`, one call, so it can move to the Connections layer.
+8 for a 4- or 5-star rating), so heavy personal listening can still lift a song past the hits.
+A request reads only popularity already stored (a lock-free read of the Discover cache) and never waits
+on ListenBrainz: a cold lookup's latency would tell one account whether another had opened the artist,
+and a page load must not wait on an outside service. Every scan queues each MBID-tagged artist for one
+background worker on the shared polite queue (a fresh week-long cache entry costs no request), and a
+request that misses or finds a stale answer queues its artist too. A miss, no token, Discover off or a
+failing upstream serves the 2026-11-24 order. Residual: a miss on an artist the scan has not reached yet
+still serves the fallback first, so the order (not the latency) can change once the background fetch
+lands. The source sits behind `ArtistPopularity` so it can move to the Connections layer.
 ListenBrainz refuses this endpoint without a user token, so the server operator's
 `DULCET_LISTENBRAINZ_TOKEN` (previously reserved and unused) is sent as an `Authorization` header to the
 configured ListenBrainz base only; only the artist's MusicBrainz id goes upstream, never a Dulcet user,
@@ -8095,7 +8100,7 @@ credential or play. The `getTopSongs` response shape is unchanged; the Dulcet AP
 operation, so there is nothing there to disagree. **OBSERVED**: 2026-11-26, anonymous calls to the
 popularity endpoint return 401; `TopSongsPopularityTest` (fake ListenBrainz: popularity order, skipped
 and live recordings, token in header only, no listener identity, upstream down, no token, Discover off,
-heavy own plays) and `LibraryDepthTest.topSongsReadsTheArtistWhenItsRowIsNotCachedYet` (fails without
+heavy own plays, and a cold request answering under 1.5 s with the fallback while ListenBrainz is held) and `LibraryDepthTest.topSongsReadsTheArtistWhenItsRowIsNotCachedYet` (fails without
 the client fix). **ASSUMED**: that ListenBrainz's all-time listen counts track what a listener knows as
 an artist's hits. Album years still come from the `date` tag before `originaldate`, so the no-popularity
 spread can still put a reissue first; storing an original year needs a schema change and was left.

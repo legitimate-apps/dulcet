@@ -136,7 +136,7 @@ Server settings (environment variables, or the corresponding lowercase hyphenate
 | `DULCET_LISTENBRAINZ_URL` | `https://api.listenbrainz.org` | Public ListenBrainz base |
 | `DULCET_LISTENBRAINZ_LABS_URL` | `https://labs.api.listenbrainz.org` | Similar-artists base |
 | `DULCET_MUSICBRAINZ_MIN_GAP_MS` | `1000` | Mirrors may lower the gap; public MusicBrainz cannot go below 1000 ms |
-| `DULCET_LISTENBRAINZ_TOKEN` | absent | The operator's own ListenBrainz user token. Used only for artist popularity (`/1/popularity/top-recordings-for-artist/{artist_mbid}`, which ListenBrainz refuses without one), sent only as `Authorization: Token …` to `DULCET_LISTENBRAINZ_URL`, never to Labs, never on a redirect, never logged. Absent, `getTopSongs` ranks without popularity. |
+| `DULCET_LISTENBRAINZ_TOKEN` | absent | The operator's own ListenBrainz user token. Used only for artist popularity (`/1/popularity/top-recordings-for-artist/{artist_mbid}`, which ListenBrainz refuses without one), sent only as `Authorization: Token …` to `DULCET_LISTENBRAINZ_URL`, never to Labs, never on a redirect, never logged. Fetched in the background after each scan and on a request's cache miss; requests read only the stored answer. Absent, `getTopSongs` ranks without popularity. |
 
 Artwork checks every resolved address before connecting, including the configured source and each
 redirect hop, and pins the checked socket address. Private-network artwork mirrors are unsupported.
