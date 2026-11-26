@@ -543,6 +543,9 @@ extension DulcetPresentationStore {
     /// A search row: a track plays with the search's other playable tracks; an album or an
     /// artist opens its page.
     func activateReaderSearchRow(_ row: DulcetReaderSearchRow, in publication: DulcetReaderSearchPublication?) {
+        // Using a result ends the typing: the keyboard would sit over the mini player that shows
+        // the song has started, or over the page an album or artist opens.
+        dismissSearchKeyboard()
         switch row.result.kind {
         case .track:
             guard !row.isUnavailableOffline, let track = row.result.playableTrack else {
@@ -563,6 +566,31 @@ extension DulcetPresentationStore {
             showReaderPage(.album(row.id))
         case .artist:
             showReaderPage(.artist(row.id))
+        }
+    }
+
+    /// The Top Result card's Play: a song plays as a tap on its row does, and an album plays from
+    /// its first track. An artist has no Play on the card; its tap opens the page.
+    func playSearchTopResult(_ row: DulcetReaderSearchRow, in publication: DulcetReaderSearchPublication?) {
+        switch row.result.kind {
+        case .track, .artist:
+            activateReaderSearchRow(row, in: publication)
+        case .album:
+            dismissSearchKeyboard()
+            if row.isUnavailableOffline {
+                librarySession?.post(DulcetStrings.readerPlaysOnReconnect)
+                return
+            }
+            resolveAndPlayAlbumRow(row)
+        }
+    }
+
+    private func resolveAndPlayAlbumRow(_ row: DulcetReaderSearchRow) {
+        librarySession?.resolveTracks(of: .album(rawID: row.id.rawID)) { [weak self] tracks, window in
+            self?.playReaderTracks(
+                tracks, sourceKind: .album, sourceID: row.id,
+                sourceName: window.header?.displayTitle ?? row.result.displayTitle
+            )
         }
     }
 }

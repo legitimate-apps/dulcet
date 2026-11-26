@@ -190,6 +190,11 @@ public final class DulcetPresentationStore {
     /// Set by the search command and cleared by the search field once it has taken focus. A
     /// request, not a focus state: the field may not exist yet when the command arrives.
     public private(set) var searchFocusRequested = false
+    /// Counts the times a search result was used and the keyboard should give way to the screen
+    /// the result opened: the mini player for a song, the page for an album or artist. A count,
+    /// not a flag, so each use is seen by whatever holds the field's focus, however many times
+    /// the keyboard has come back between them.
+    public private(set) var searchKeyboardDismissals = 0
     /// The library pages open on top of the grid, outermost first: the Library destination's own
     /// navigation stack.
     ///
@@ -889,6 +894,11 @@ public final class DulcetPresentationStore {
             popReader(to: [])
         }
         searchFocusRequested = true
+    }
+
+    /// Ask the search field to give up the keyboard: a result was used.
+    func dismissSearchKeyboard() {
+        searchKeyboardDismissals += 1
     }
 
     /// The search field took the focus a search command asked for.
