@@ -8089,6 +8089,24 @@ apps still speak only Dulcet API or OpenSubsonic. Planned connections: artist im
 Wishlist item becoming a Lidarr request, import from Jellyfin and Plex, more image and metadata
 sources, and ListenBrainz popularity for top songs.
 
+**2026-11-25 — Search leads with a Top Result, and using a result puts the keyboard away (§18.1, Search).**
+Seen on an iPhone against the household server: results were grouped but nothing led, covers on
+some rows were grey, and after a tap on a song the keyboard stayed up over the mini player, so the
+only sign of playback was a small speaker mark on the row. OBSERVED causes: the grey covers are
+the server's own answer, not a missing id or a slow load (rows carry `coverArt`, and `getCoverArt`
+returns a 200 placeholder image for an album with no art; a song from an album that has art returns
+a real picture). The keyboard stayed because nothing released the search field's focus on use.
+Changes: the core now names the row that leads each publication (`LibrarySearchPublication.topResultIndex`,
+carried through `AppleLibrarySearchPublication`): the best `matchRank` (the ranker above, so an exact
+name before a prefix before a word start; a substring-only match leads nothing), then artist before
+album before song, then a favourite, then the most played, then list order. The index is into the
+same ordered rows, so it changes when the server answer re-ranks and never reorders them. iPhone
+and iPad show it as a card above the groups (artwork, kind and credit, a Play button on a song or
+an album; an artist's card opens its page). Activating any result, or the card's Play, now releases
+the search field's focus, keeping the query and the results. Mac and tvOS do not show the card yet.
+Why this is not decided in Swift: the ranker and the favourite and play-count state are the
+core's, and the choice must not differ per platform.
+
 **2026-11-25 — Discover shows real covers promptly and by tile (§16.14, §30, Discover).**
 Seen on an iPhone against the household server: every artist and song tile held the grey note
 placeholder, and the album covers arrived minutes after the page. OBSERVED causes, by reading the

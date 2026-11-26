@@ -1156,6 +1156,7 @@ public class AppleLibrarySearchSubscription internal constructor(
         val numbered = AppleLibrarySearchPublication(
             publication.query, sequence, publication.scope, publication.errorKind,
             publication.seenArtistCount, publication.seenAlbumCount, publication.seenTrackCount, publication.rows,
+            publication.topResultIndex,
         )
         memory.shown(numbered.query, numbered.rows)
         client.onMain { deliver(numbered) }
@@ -1180,6 +1181,7 @@ public class AppleLibrarySearchSubscription internal constructor(
         seenAlbumCount = null,
         seenTrackCount = null,
         rows = memory.failureRows,
+        topResultIndex = null,
     )
 
     /** Made on a closed client: one statement of fact, never silence. */
@@ -1192,7 +1194,7 @@ public class AppleLibrarySearchSubscription internal constructor(
     /** `closed`, for the query last typed. */
     private fun emitClosed() {
         val publication = AppleLibrarySearchPublication(
-            lastTyped.load() ?: "", 1, "deviceServerFailed", "closed", null, null, null, emptyList(),
+            lastTyped.load() ?: "", 1, "deviceServerFailed", "closed", null, null, null, emptyList(), null,
         )
         client.onMain { listener.load()?.onSearchPublication(publication) }
     }

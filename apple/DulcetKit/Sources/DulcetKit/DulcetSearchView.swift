@@ -93,6 +93,9 @@ struct DulcetSearchView: View {
             reader.onActivate(row)
         } else {
             onActivateResult(id)
+#if os(iOS)
+            store.dismissSearchKeyboard()
+#endif
         }
     }
 
@@ -148,6 +151,11 @@ struct DulcetSearchView: View {
         .dulcetNavigationTitle(DulcetStrings.search)
 #endif
         .onChange(of: searchQuery) { _, _ in selectedGroup = nil }
+#if os(iOS)
+        // A result was used: this page's own field (compact accessibility layouts) lets go of the
+        // keyboard too. The system field is released by the shell, which owns its focus.
+        .onChange(of: store.searchKeyboardDismissals) { _, _ in searchFieldFocused = false }
+#endif
 #if os(macOS)
         .searchable(text: $searchQuery, isPresented: $searchPresented, placement: .toolbar,
                     prompt: Text(DulcetStrings.searchPrompt))
@@ -605,6 +613,10 @@ struct DulcetSearchView: View {
             // an album or artist) through onActivateResult. A plain List hosts the rows on iOS so
             // song rows carry their leading Favorite and trailing queue swipe actions.
             List {
+                topResultCard
+                    .listRowInsets(EdgeInsets())
+                    .listRowSeparator(.hidden)
+                    .listRowBackground(Color.clear)
                 resultRows
                     .listRowInsets(EdgeInsets())
                     .listRowSeparator(.hidden)
@@ -629,6 +641,23 @@ struct DulcetSearchView: View {
                         .background(Color.dulcetWindow)
                 }
             }
+        }
+    }
+
+    /// The core's best match leads the page, over the groups. Not drawn inside one kind's list, and
+    /// not when the core named no row that leads.
+    @ViewBuilder
+    private var topResultCard: some View {
+        if selectedGroup == nil, let reader, let publication = reader.publication, let row = publication.topResult {
+            DulcetSearchTopResultCard(
+                row: row,
+                accessibilityLabel: resultAccessibilityLabel(row.result),
+                onOpen: { activate(row.id) },
+                onPlay: {
+                    onRememberSearch(searchQuery)
+                    store.playSearchTopResult(row, in: publication)
+                }
+            )
         }
     }
 

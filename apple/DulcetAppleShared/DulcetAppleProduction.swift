@@ -1305,7 +1305,35 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
     }
 
     nonisolated static func copy(_ publication: AppleLibrarySearchPublication) -> DulcetReaderSearchPublication {
-        DulcetReaderSearchPublication(
+        // A row the app cannot draw is dropped, so the core's index is carried to the row's place
+        // among those kept.
+        let coreTop = publication.topResultIndex?.intValue
+        var rows: [DulcetReaderSearchRow] = []
+        var top: Int?
+        for (index, row) in publication.rows.enumerated() {
+            guard let copy = DulcetReaderSearchRow(
+                kind: row.kind,
+                providerInstanceID: row.providerInstanceId,
+                rawID: row.rawId,
+                title: row.title,
+                credits: row.credits.map { (role: $0.role, name: $0.name, rawID: $0.rawId) },
+                albumTitle: row.albumTitle,
+                year: row.year?.intValue,
+                durationMilliseconds: row.durationMilliseconds?.int64Value,
+                discNumber: row.discNumber?.intValue,
+                trackNumber: row.trackNumber?.intValue,
+                sourceContainer: row.sourceContainer,
+                mediaSourceID: row.mediaSourceId,
+                artworkKey: row.artworkKey,
+                source: row.source,
+                favourite: row.favourite?.boolValue,
+                rating: row.rating?.intValue,
+                playability: row.playability
+            ) else { continue }
+            if index == coreTop { top = rows.count }
+            rows.append(copy)
+        }
+        return DulcetReaderSearchPublication(
             query: publication.query,
             sequence: Int(publication.sequence),
             scope: DulcetReaderSearchScope(
@@ -1317,27 +1345,8 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
                     tracks: publication.seenTrackCount?.int64Value
                 )
             ),
-            rows: publication.rows.compactMap { row in
-                DulcetReaderSearchRow(
-                    kind: row.kind,
-                    providerInstanceID: row.providerInstanceId,
-                    rawID: row.rawId,
-                    title: row.title,
-                    credits: row.credits.map { (role: $0.role, name: $0.name, rawID: $0.rawId) },
-                    albumTitle: row.albumTitle,
-                    year: row.year?.intValue,
-                    durationMilliseconds: row.durationMilliseconds?.int64Value,
-                    discNumber: row.discNumber?.intValue,
-                    trackNumber: row.trackNumber?.intValue,
-                    sourceContainer: row.sourceContainer,
-                    mediaSourceID: row.mediaSourceId,
-                    artworkKey: row.artworkKey,
-                    source: row.source,
-                    favourite: row.favourite?.boolValue,
-                    rating: row.rating?.intValue,
-                    playability: row.playability
-                )
-            }
+            rows: rows,
+            topResultIndex: top
         )
     }
 }

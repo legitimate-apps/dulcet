@@ -177,6 +177,7 @@ public class AppleLibrarySearchPublication internal constructor(
     public val seenAlbumCount: Long?,
     public val seenTrackCount: Long?,
     public val rows: List<AppleLibrarySearchRow>,
+    public val topResultIndex: Int?,
 )
 
 /**
@@ -438,6 +439,7 @@ internal fun LibrarySearchPublication.toApple(): AppleLibrarySearchPublication {
         seenAlbumCount = seen?.albums,
         seenTrackCount = seen?.tracks,
         rows = rows.map(LibrarySearchRow::toApple),
+        topResultIndex = topResultIndex,
     )
 }
 

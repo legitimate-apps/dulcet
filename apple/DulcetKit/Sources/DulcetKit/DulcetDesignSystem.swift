@@ -99,6 +99,8 @@ extension DulcetMetrics {
     /// The artist hero's Play glyph frame inside its glass circle, and Shuffle's beside it.
     static let heroPlayGlyphFrame: CGFloat = 40
     static let heroSecondaryGlyphFrame: CGFloat = 30
+    /// The artwork on Search's Top Result card, about twice a row's, so the best match leads the page.
+    static let topResultArtworkSize: CGFloat = 96
     /// The smallest tappable area on iPhone and iPad (HIG).
     static let minimumTouchTarget: CGFloat = 44
     /// A list's leading icon column (settings rows, menus), before Dynamic Type scaling.

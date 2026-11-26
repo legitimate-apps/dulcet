@@ -47,6 +47,24 @@ class LibrarySearchSessionTest {
     }
 
     @Test
+    fun everyPublicationNamesTheRowThatLeadsTheSearch() = sessionTest { env ->
+        val session = primed(env)
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val search = session.openSearch(listener = pubs)
+        search.updateQuery("Album 0042")
+        val local = pubs.last
+        val localTop = local.topResultIndex
+        assertTrue(localTop != null, "the device's rows lead from the first publication")
+        assertEquals(albumId(42), local.rows[localTop].item.id.rawId, "an exact title leads")
+        advanceUntilIdle()
+        val merged = pubs.last
+        assertEquals(SearchScope.ServerAndDevice, merged.scope)
+        assertEquals(albumId(42), merged.rows[merged.topResultIndex!!].item.id.rawId, "the server's answer keeps it")
+        search.updateQuery("zzzz no such")
+        assertEquals(null, pubs.last.topResultIndex, "no rows, nothing leads")
+    }
+
+    @Test
     fun conf79ServerAndDeviceMarksEachRowsSourceAndKeepsLocalOnlyRows() = sessionTest { env ->
         val session = primed(env)
         env.server.searchExcludes += albumId(5) // the server's matcher does not return it
