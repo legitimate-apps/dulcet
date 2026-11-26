@@ -71,4 +71,23 @@ class ListenBrainzClientTest {
             assertNull(f.requests.single().headers["authorization"])
         } } }
     }
+
+    /** ListenBrainz's weekly stats listed BTS's ARIRANG twice, once per release counted (household server, 2026-11-26);
+     * the trending shelf shows each release group once, the most-listened row first, and keeps id-less rows. */
+    @Test fun trendingShelvesShowEachReleaseGroupOnce() = runBlocking {
+        FixtureDiscoverUpstream().use { f -> Db.inMemory().use { db -> PoliteHttp().use { h ->
+            h.configureOrigin(f.baseUrl,0)
+            val c=ListenBrainzClient(h,DiscoverCache(db),DiscoverSettings(listenBrainzUrl=f.baseUrl,listenBrainzLabsUrl=f.baseUrl))
+            val group="21159e3f-172e-43f6-aa7d-8e06a81fea49"; val other="ddbf733c-1182-42a2-9bae-059afcbc3b93"
+            fun row(group:String?,release:String,count:Int,name:String="ARIRANG")="""{${if(group==null)"" else "\"release_group_mbid\":\"$group\","}"release_group_name":"$name","artist_name":"BTS","caa_release_mbid":"$release","listen_count":$count}"""
+            f.json("/1/stats/sitewide/release-groups","""{"payload":{"release_groups":[${listOf(
+                row(group,"909d000d-56e9-4b38-aa3f-008d38436ea2",90),row(group,"20af35dd-dda2-47de-8ea5-78211c0dfe9c",80),
+                row(other,"cc613cb1-be50-4627-9ca5-68b09f58a8e4",70,"WINGS"),row(null,"183b9a00-3169-402a-835a-dca1918906de",60,"Indigo"),
+                row(null,"183b9a00-3169-402a-835a-dca1918906de",50,"Indigo")).joinToString(",")}]}}""")
+            assertEquals(5,c.trending(DiscoverKind.Album).value.size,"the source really lists the group twice")
+            val shelf=com.legitimateapps.dulcet.server.discover.DiscoverShelves(db,com.legitimateapps.dulcet.server.auth.AccountAccess(db),c).shelf("nobody","trendingAlbums").value
+            assertEquals(listOf("ARIRANG" to 90L,"WINGS" to 70L,"Indigo" to 60L,"Indigo" to 50L),shelf.map { it.title to it.listenCount })
+            assertEquals("909d000d-56e9-4b38-aa3f-008d38436ea2",shelf.first().externalIds[ListenBrainzClient.COVER_ART_RELEASE])
+        } } }
+    }
 }

@@ -42,6 +42,31 @@ class ArtworkFetchTest {
         assertEquals(3_294, RecordedArtworkResponses.VALID_JPEG_BODY_BYTE_COUNT)
     }
 
+    /** Dulcet Server answers an artist's stand-in with `private, max-age=300` and every lasting image with ten
+     * years (`MediaApi.getCoverArt`); only the short lifetime may reach the device cache's expiry. */
+    @Test
+    fun aShortCacheLifetimeTravelsWithTheImageAndALastingOneDoesNot() = runTest {
+        val jpeg = RecordedArtworkResponses.VALID_JPEG_PREFIX_HEX.recordedHexBytes()
+        fun fetched(cacheControl: String?) = ArtworkFetcher(ArtworkEndpointTransport {
+            ArtworkEndpointResponse(200, jpeg, REDACTED_URL, cacheControl)
+        })
+        val cases = mapOf(
+            "private, max-age=300" to 300L,
+            "max-age=0" to 0L,
+            "private, no-cache" to 0L,
+            "private, max-age=86400" to null,
+            "private, max-age=315360000" to null,
+            "private" to null,
+            "max-age=soon" to null,
+            null to null,
+        )
+        cases.forEach { (header, expected) ->
+            val loaded = assertIs<ArtworkFetchResult.Loaded>(fetched(header).fetch(request("ar-1", ArtworkSizeBucket.Px256)))
+            assertEquals(expected, loaded.freshForSeconds, "Cache-Control: $header")
+            assertContentEquals(jpeg, loaded.bytes)
+        }
+    }
+
     @Test
     fun mapsRecordedJsonAndXmlCode70EnvelopesToUnavailableAtHttp200() = runTest {
         val recordedBodies = listOf(

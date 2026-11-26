@@ -21,6 +21,14 @@ class Image(val bytes: ByteArray, val contentType: String, val cacheSeconds: Lon
 }
 
 /**
+ * The artist an `ar-` cover art id names, without its prefix: the id itself when an artist has it, otherwise the id
+ * before a trailing `_<version>` (see Catalog.artistCoverArt). Any version is accepted, old or current, so an id a
+ * client saved earlier keeps answering with the current picture. Artist ids stay opaque: this never parses them.
+ */
+fun artistArtworkTarget(id: String, exists: (String) -> Boolean): String =
+    if (exists(id) || !id.contains('_')) id else id.substringBeforeLast('_').takeIf(exists) ?: id
+
+/**
  * Resolves a cover art id (`al-`, `mf-`, `ar-`, `pl-` or a bare catalog id) to image bytes: a
  * folder image (cover.jpg and friends) or the picture embedded in a file. Resized copies are
  * written once to a disk cache keyed by the source and the size. Successful original embedded
@@ -49,7 +57,8 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
         val source = when {
             id.startsWith("al-") -> albumSource(id.removePrefix("al-"), user) ?: if (exists("album", id.removePrefix("al-"))) null else return null
             id.startsWith("mf-") -> trackSource(id.removePrefix("mf-"), user) ?: if (exists("track", id.removePrefix("mf-"))) null else return null
-            id.startsWith("ar-") -> artistSource(id.removePrefix("ar-"), user).also { cacheSeconds = it.second }.first ?: if (exists("artist", id.removePrefix("ar-"))) null else return null
+            id.startsWith("ar-") -> artistArtworkTarget(id.removePrefix("ar-")) { exists("artist", it) }.let { artist ->
+                artistSource(artist, user).also { cacheSeconds = it.second }.first ?: if (exists("artist", artist)) null else return null }
             id.startsWith("pl-") -> playlistSource(id.removePrefix("pl-"), user!!) ?: if (exists("playlist", id.removePrefix("pl-"))) null else return null
             exists("album", id) -> albumSource(id, user)
             exists("track", id) -> trackSource(id, user)

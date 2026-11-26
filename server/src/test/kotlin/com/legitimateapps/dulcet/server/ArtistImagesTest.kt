@@ -4,6 +4,7 @@ import com.legitimateapps.dulcet.server.db.Db
 import com.legitimateapps.dulcet.server.discover.*
 import com.legitimateapps.dulcet.server.integrations.*
 import com.legitimateapps.dulcet.server.v1.ApiProblem
+import io.ktor.client.call.body
 import io.ktor.client.request.get
 import kotlinx.coroutines.runBlocking
 import java.io.ByteArrayInputStream
@@ -391,5 +392,51 @@ class ArtistImagesTest {
                 assertEquals(404, assertFailsWith<ApiProblem> { ctx.discover.artwork(user.id, missing) }.status)
             } finally { ctx.close(); ctx.db.close() }
         }
+    }
+
+    /** A client that keeps an image under its id for good (Dulcet's apps, other OpenSubsonic clients) must see a new
+     * id once a photo replaces the album cover that stood in, or it shows the stand-in for ever (2026-11-26). */
+    @Test fun anArtistsCoverArtIdChangesWhenAPhotoArrivesAndTheOldIdStillAnswers() = io.ktor.server.testing.testApplication {
+        FixtureDiscoverUpstream().use { l ->
+            l.json("/api/v1/artist", libraryArtist(7)); l.respond("/MediaCover/7/poster.jpg", body = png)
+            val root = Files.createTempDirectory("artist-images-version")
+            val ctx = scannedContext(root, IntegrationSettings(lidarr = lidarr(l)))
+            try {
+                ctx.users.create("reader", "reader-password", false)
+                val artist = ctx.artistId("Artist")
+                application { dulcetModule(ctx) }
+                val auth = "u=reader&p=reader-password&v=1.16.1&c=test&f=json"
+                fun coverArt() = runBlocking {
+                    val body = client.get("/rest/getArtist?$auth&id=$artist").body<String>()
+                    kotlinx.serialization.json.Json.parseToJsonElement(body).let { it as kotlinx.serialization.json.JsonObject }["subsonic-response"]!!
+                        .let { it as kotlinx.serialization.json.JsonObject }["artist"]!!.let { it as kotlinx.serialization.json.JsonObject }["coverArt"]!!
+                        .let { (it as kotlinx.serialization.json.JsonPrimitive).content }
+                }
+                fun image(id: String) = runBlocking { client.get("/rest/getCoverArt?$auth&id=$id").let { it.status.value to it.body<ByteArray>() } }
+                val before = coverArt()
+                assertEquals("ar-$artist", before, "no photo is known yet, so the plain id")
+                // A client that read this id before the tool had the photo (or before Connections were configured)
+                // holds the album cover under it. Rendering the artist queued a background ask of the configured tools.
+                ctx.integrations.awaitRefreshes()
+                assertEquals(listOf("/api/v1/artist", "/MediaCover/7/poster.jpg"), l.requests.map { it.path }, "the render alone asked")
+                val after = coverArt()
+                assertNotEquals(before, after, "the id changes once the photo is known")
+                assertTrue(after.startsWith("ar-${artist}_"), after)
+                assertEquals(after, coverArt(), "and stays put while the photo does")
+                assertContentEquals(png, image(after).second, "the new id answers with the photo")
+                assertContentEquals(png, image(before).second, "an id saved earlier still answers, with the current picture")
+                assertContentEquals(png, image("ar-${artist}_0000000000").second, "so does any other version")
+                assertFalse(image("ar-nobody_${after.substringAfterLast('_')}").second.contentEquals(png), "a version never names another artist")
+            } finally { ctx.close(); ctx.db.close() }
+        }
+    }
+
+    @Test fun aVersionedArtistIdNeverReachesAnotherArtistAndIdsStayOpaque() {
+        val ids = setOf("plain", "has_underscore", "has")
+        assertEquals("plain", com.legitimateapps.dulcet.server.media.artistArtworkTarget("plain_1a2b3c4d5e") { it in ids })
+        assertEquals("has_underscore", com.legitimateapps.dulcet.server.media.artistArtworkTarget("has_underscore") { it in ids },
+            "an artist whose own id holds an underscore is that artist, not a versioned \"has\"")
+        assertEquals("has_underscore", com.legitimateapps.dulcet.server.media.artistArtworkTarget("has_underscore_ff00ff00ff") { it in ids })
+        assertEquals("nobody_ff", com.legitimateapps.dulcet.server.media.artistArtworkTarget("nobody_ff") { it in ids }, "an unknown id stays as given")
     }
 }
