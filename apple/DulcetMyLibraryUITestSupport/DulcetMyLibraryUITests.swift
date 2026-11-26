@@ -1040,7 +1040,10 @@ final class DulcetMyLibraryUITests: XCTestCase {
         try select("library")
         XCTAssertFalse(app.staticTexts["Your Library Starts Here"].firstMatch.exists, "Offline with downloads, Library is never the empty poster")
         XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
-        let offlineLine = app.descendants(matching: .any)["dulcet.myLibrary.offline"].firstMatch
+        // A relaunch that has not reconnected states it once in the account banner; a session that
+        // drops offline states it in My Library's own status line.
+        let offlineLine = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@",
+            ["dulcet.reader.deviceOnly", "dulcet.myLibrary.offline"])).firstMatch
         XCTAssertTrue(offlineLine.waitForExistence(timeout: 60), "Library must say it is offline: " + app.debugDescription)
         try capture("Downloads-Library-Offline")
         activate(app.buttons["dulcet.myLibrary.section.albums"].firstMatch)
