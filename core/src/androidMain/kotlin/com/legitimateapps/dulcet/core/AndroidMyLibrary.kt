@@ -235,7 +235,7 @@ internal fun MyLibrarySnapshot.toAndroid(
             )
         },
         artists = if (!offered) emptyList() else artists.map {
-            AndroidMyLibraryArtist(it.record.rawId, it.record.name, it.record.artworkKey, it.record.albumCount, it.explicitlyAdded, it.pending)
+            AndroidMyLibraryArtist(it.record.rawId, it.record.name, it.record.artworkKey, albumCountFor(it), it.explicitlyAdded, it.pending)
         },
         songs = if (!offered) emptyList() else songs.map { song ->
             AndroidMyLibrarySong(

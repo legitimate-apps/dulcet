@@ -1,6 +1,9 @@
 import CoreGraphics
 import Foundation
 import Observation
+#if os(iOS)
+import UIKit
+#endif
 
 public enum DulcetPresentationAction: Sendable, Hashable {
     case selectDestination(DulcetSidebarDestination)
@@ -899,6 +902,13 @@ public final class DulcetPresentationStore {
     /// Ask the search field to give up the keyboard: a result was used.
     func dismissSearchKeyboard() {
         searchKeyboardDismissals += 1
+#if os(iOS)
+        // The focus state the shell and the page hold is the first way down. It reaches a field
+        // only while the view that owns it is the one SwiftUI updates; the use test found the
+        // keyboard still up over the mini player after a search result played offline (ASSUMED
+        // cause: that update was skipped), so the responder chain is asked as well.
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+#endif
     }
 
     /// The search field took the focus a search command asked for.

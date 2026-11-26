@@ -36,6 +36,51 @@ enum DulcetReaderCopy {
         }
     }
 
+    /// What a screen's status area draws over its content, decided in one place so no screen can
+    /// stack two statements of the same fact (the connection says "offline" once, as the
+    /// indicator; a freshness line never repeats it).
+    struct StatusPlan: Equatable {
+        /// The connection indicator, when this screen's reader is offline and one applies.
+        var indicator: DulcetConnectionIndicator?
+        /// Other lines: a refresh that failed, a window that cannot be extended.
+        var lines: [String] = []
+        /// Try Again for those other lines.
+        var offersRetry = false
+        var isEmpty: Bool { indicator == nil && lines.isEmpty && !offersRetry }
+    }
+
+    /// - `indicator`: the session's chosen connection indicator, if any.
+    /// - `accountMessageShown`: a banner above this screen already owns the connection message.
+    /// - `localCollection`: a list of this device's own music, which no server state describes.
+    /// - `reconnectAvailable`: false while the network is down, when retrying changes nothing.
+    static func statusPlan(
+        window: DulcetLibraryWindow,
+        indicator: DulcetConnectionIndicator?,
+        accountMessageShown: Bool,
+        localCollection: Bool,
+        reconnectAvailable: Bool
+    ) -> StatusPlan {
+        // Downloaded is what is on this device: the server library's freshness says nothing
+        // about it, and the account banner already says when the device is offline.
+        if localCollection || accountMessageShown { return StatusPlan() }
+        if case .cached(.offline, _) = window.freshness {
+            // The reader is offline. The indicator is the one statement of that; with none
+            // (a reconnect is just starting) the screen says nothing rather than a guess.
+            return StatusPlan(indicator: indicator)
+        }
+        // A screen with nothing to show says why in its own body, with its own Try Again.
+        if case .unavailable = window.freshness { return StatusPlan() }
+        let coverage: String? = switch window.coverage {
+        case .unverifiedScanning, .unverifiedChanging: coverageLine(window)
+        default: nil
+        }
+        let line = visibleFreshnessLine(window.freshness) ?? coverage
+        return StatusPlan(
+            indicator: nil,
+            lines: [line].compactMap { $0 },
+            offersRetry: window.freshness.offersRetry && reconnectAvailable)
+    }
+
     /// The statement shown instead of content when there is none -- never a spinner.
     static func unavailableLine(_ reason: DulcetReaderUnavailableReason, subject: Subject) -> String {
         switch reason {

@@ -309,6 +309,16 @@ internal data class MyLibrarySnapshot(
     /** True when the device has a complete read, so absence means "not a member". */
     val complete: Boolean,
 ) {
+    /**
+     * The albums to say an artist has. The server's count is of its whole discography; offline, or
+     * for an artist shown only for downloaded music, "N albums" is what this device holds under that
+     * artist (round 5: an artist with one album on the device said 8).
+     */
+    fun albumCountFor(artist: MyLibraryArtist): Int? =
+        if (syncState == MyLibrarySyncState.Offline || artist.deviceOnly) {
+            albums.count { album -> album.record.credits.any { it.artistRawId == artist.record.rawId } }
+        } else artist.record.albumCount
+
     fun membership(kind: CacheItemKind, rawId: String): MyLibraryMembership = when {
         availability != MyLibraryAvailability.Available -> MyLibraryMembership.Unknown
         rawId in memberIds[kind].orEmpty() -> MyLibraryMembership.Added

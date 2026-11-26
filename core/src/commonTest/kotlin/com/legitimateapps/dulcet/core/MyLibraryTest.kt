@@ -634,6 +634,32 @@ class MyLibraryTest {
         assertNull(offline.lastError)
     }
 
+    /**
+     * The server's artist record counts its whole discography; offline, or for an artist shown only
+     * for a download, an artist says what this device holds (use test 2026-11-26: "8 albums" for an
+     * artist with one album downloaded).
+     */
+    @Test
+    fun anArtistsAlbumCountIsWhatTheDeviceHoldsOfflineAndTheServersOnline() {
+        fun album(id: String, artist: String) = MyLibraryAlbum(
+            CacheAlbumRecord(id, "Title $id", credits = listOf(CacheCredit(CreditRole.AlbumArtist, artist, artist))),
+            explicitlyAdded = false, memberSongCount = 0, pending = false, rank = 0, deviceOnly = true)
+        fun artist(id: String, deviceOnly: Boolean = false) =
+            MyLibraryArtist(CacheArtistRecord(id, id, albumCount = 8), explicitlyAdded = false, pending = false, rank = 0, deviceOnly = deviceOnly)
+        val albums = listOf(album("a1", "peach"), album("a2", "other"), album("a3", "other"))
+        fun snapshot(state: MyLibrarySyncState) = MyLibrarySnapshot(
+            availability = MyLibraryAvailability.Available, syncState = state, lastError = null, lastReadAtWall = null,
+            albums = albums, artists = emptyList(), songs = emptyList(), memberIds = emptyMap(),
+            albumsWithMemberSongs = emptySet(), complete = true)
+        val peach = artist("peach")
+        assertEquals(8, snapshot(MyLibrarySyncState.Current).albumCountFor(peach), "online a member artist: the server's count")
+        assertEquals(1, snapshot(MyLibrarySyncState.Offline).albumCountFor(peach), "offline: the one album on this device")
+        assertEquals(2, snapshot(MyLibrarySyncState.Offline).albumCountFor(artist("other")))
+        assertEquals(1, snapshot(MyLibrarySyncState.Current).albumCountFor(artist("peach", deviceOnly = true)),
+            "an artist shown only for a download: what is downloaded, online too")
+        assertEquals(0, snapshot(MyLibrarySyncState.Offline).albumCountFor(artist("nobody")))
+    }
+
     /** A member song that is also downloaded is listed once, as a member. */
     @Test
     fun aDownloadedMemberSongIsListedOnceAsAMember() = sessionTest { env ->

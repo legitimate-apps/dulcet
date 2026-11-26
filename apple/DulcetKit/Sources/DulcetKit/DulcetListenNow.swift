@@ -66,13 +66,24 @@ struct DulcetListenNowView: View {
 
     /// Offline, or kept offline by a failed reconnect, with no shelf drawing anything.
     private var isOfflineWithNothingShown: Bool {
-        let offline = store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil
+        let offline = store.librarySession?.ownsConnectionMessage == true
         return offline && shownShelves.isEmpty
     }
 
-    /// The page's one message in place of shelves, with the status bar's own retry.
+    /// The page's one message in place of shelves, with the status bar's own retry. With no
+    /// network path the message says the device is offline and offers no retry: the network's
+    /// return brings Dulcet back by itself.
     private var unreachableMessage: some View {
         let deviceOnly = store.librarySession?.mode == .deviceOnly
+        if store.librarySession?.isDeviceOffline == true {
+            return DulcetStateMessage(
+                symbol: "wifi.slash",
+                title: DulcetStrings.readerOfflineDeviceTitle,
+                message: DulcetStrings.readerOfflineDeviceMessage,
+                accessibilityIdentifier: "dulcet.listenNow.unreachable",
+                action: nil
+            )
+        }
         let serverName: String? = switch store.snapshot.accountConnection {
         case let .saved(serverName): serverName
         default: nil
@@ -284,7 +295,7 @@ private struct DulcetListenNowShelfView: View {
         }
     }
     private func shows(_ window: DulcetLibraryWindow) -> Bool {
-        let offline = store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil
+        let offline = store.librarySession?.ownsConnectionMessage == true
         if offline && [.newest, .random, .rediscover].contains(shelf) { return false }
         return window.hasContent && !(shelf == .frequent && window.items.map(\.id) == recentItems)
     }

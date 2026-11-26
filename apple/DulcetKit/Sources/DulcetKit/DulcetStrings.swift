@@ -567,6 +567,9 @@ enum DulcetStrings {
     static func readerRefreshFailed(_ reason: String) -> String {
         formatted("reader.page.refreshFailed", "Couldn\u{2019}t refresh \u{00B7} %@", reason)
     }
+    static let readerPageServerUnreachable = text("reader.page.serverUnreachable", "Can\u{2019}t reach your server")
+    static let readerOfflineDeviceTitle = text("reader.offline.device.title", "You\u{2019}re Offline")
+    static let readerOfflineDeviceMessage = text("reader.offline.device.message", "Dulcet comes back as soon as your device is online again. Your downloaded music plays meanwhile.")
     static let readerOfflineNotice = text("reader.offlineNotice", "You're offline. Showing music on this device.")
     static let readerOfflineConnectingNotice = text("reader.offlineConnectingNotice", "Showing what's on this device while Dulcet reconnects…")
     static let connectionsUnreachableNotice = text("connections.unreachableNotice", "Can't reach your server. Showing music on this device.")
