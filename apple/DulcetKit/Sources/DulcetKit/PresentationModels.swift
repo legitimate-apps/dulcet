@@ -713,6 +713,8 @@ public struct DulcetNowPlaying: Sendable, Hashable {
     public let queue: [DulcetTrack]
     public let currentIndex: Int
     public let sourceDisplayName: String?
+    /// Where the current entry was played from, kind and id, when the player knows.
+    public let source: DulcetPlaybackSource?
     public let elapsed: Duration
     /// The current decoder's duration, falling back to positive server metadata until Ready.
     public let duration: Duration?
@@ -748,6 +750,7 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         queue: [DulcetTrack],
         currentIndex: Int = 0,
         sourceDisplayName: String? = nil,
+        source: DulcetPlaybackSource? = nil,
         elapsed: Duration,
         decodedDuration: Duration? = nil,
         isPlaying: Bool,
@@ -771,6 +774,7 @@ public struct DulcetNowPlaying: Sendable, Hashable {
         self.queue = queue
         self.currentIndex = currentIndex
         self.sourceDisplayName = sourceDisplayName
+        self.source = source
         self.elapsed = max(.zero, elapsed)
         self.duration = decodedDuration.flatMap { $0 > .zero ? $0 : nil } ?? current.duration
         self.isPlaying = isPlaying

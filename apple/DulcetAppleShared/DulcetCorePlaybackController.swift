@@ -1961,6 +1961,18 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         emitPresentation()
     }
 
+    /// Where an entry was played from, as the core recorded it. The source lives on the account
+    /// that owns the entry, so its id borrows the entry's provider instance.
+    static func source(of entry: ApplePlaybackQueueEntryDto) -> DulcetPlaybackSource? {
+        guard let kind = DulcetPlaybackQueueSourceKind(rawValue: entry.sourceKind) else { return nil }
+        return DulcetPlaybackSource(
+            kind: kind,
+            id: entry.sourceRawId.map {
+                DulcetProviderItemID(providerInstanceID: entry.providerInstanceId, rawID: $0)
+            }
+        )
+    }
+
     /// The session's entry as the queue knows it: title, artwork, position in the queue. Shared
     /// by a session that is playing and one whose media is still opening, so a skip names the
     /// next entry the moment the queue moves rather than when the engine is ready.
@@ -1989,6 +2001,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             sourceDisplayName: snapshot.entries.indices.contains(index)
                 ? snapshot.entries[index].sourceDisplayName
                 : nil,
+            source: snapshot.entries.indices.contains(index) ? Self.source(of: snapshot.entries[index]) : nil,
             elapsed: .milliseconds(max(0, session.positionMilliseconds)),
             decodedDuration: session.durationMilliseconds > 0 ? .milliseconds(session.durationMilliseconds) : nil,
             isPlaying: isPlaying,
@@ -2087,6 +2100,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 queue: queueEntries.map(\.track),
                 currentIndex: currentEntryIndex ?? index,
                 sourceDisplayName: snapshot.entries[index].sourceDisplayName,
+                source: Self.source(of: snapshot.entries[index]),
                 elapsed: Self.restartPosition(of: snapshot.currentSession),
                 isPlaying: false,
                 outputName: DulcetPlaybackStrings.thisDevice,
@@ -2516,7 +2530,7 @@ private extension DulcetPlaybackObservationStatus {
 private extension DulcetNowPlaying {
     func withPreviousAvailability(_ available: Bool) -> Self {
         .init(sessionID: sessionID, current: current, queue: queue, currentIndex: currentIndex,
-              sourceDisplayName: sourceDisplayName, elapsed: elapsed, isPlaying: isPlaying,
+              sourceDisplayName: sourceDisplayName, source: source, elapsed: elapsed, isPlaying: isPlaying,
               outputName: outputName, volume: volume, audioFormat: audioFormat, phase: phase,
               seekability: seekability, progressBegan: progressBegan, repeatMode: repeatMode,
               shuffleEnabled: shuffleEnabled, canGoNext: canGoNext, canGoPrevious: available,

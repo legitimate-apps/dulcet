@@ -170,8 +170,10 @@ private struct DulcetPlaylistPageContent: View {
             }
         } actions: {
             Button {
-                store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
-            } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
+                store.pressPlay(playTarget(window)) {
+                    store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
+                }
+            } label: { DulcetPlayLabel(isPlaying: store.playsTarget(playTarget(window))) }
                 .disabled(playable.isEmpty)
                 .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
                 .accessibilityIdentifier("dulcet.playlist.play")
@@ -269,8 +271,10 @@ private struct DulcetPlaylistPageContent: View {
             DulcetPlaylistDownloadStatus(id: id)
         } actions: {
             DulcetEqualWidthActions {
-                DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: true) {
-                    store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
+                DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: true, isPlaying: store.playsTarget(playTarget(window))) {
+                    store.pressPlay(playTarget(window)) {
+                        store.playReaderTracks(playable, sourceKind: playlistSourceKind(window), sourceID: playlistSourceID(window), sourceName: item?.displayTitle ?? "")
+                    }
                 }
                 .accessibilityIdentifier("dulcet.playlist.play")
             } secondary: {
@@ -402,6 +406,12 @@ private struct DulcetPlaylistPageContent: View {
 
     private func playlistSourceKind(_ window: DulcetLibraryWindow) -> DulcetPlaybackQueueSourceKind {
         window.header?.isLocalPlaylist == true ? .library : .playlist
+    }
+
+    /// A server playlist's Play shows Pause while it plays. A local playlist is played as the library
+    /// (it has no source id of its own), so it cannot tell its music from other library plays.
+    private func playTarget(_ window: DulcetLibraryWindow) -> DulcetPlayTarget? {
+        window.header?.isLocalPlaylist == true ? nil : .collection(.playlist, id)
     }
 
     private func playlistSourceID(_ window: DulcetLibraryWindow) -> DulcetProviderItemID? {

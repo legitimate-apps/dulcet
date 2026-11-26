@@ -654,9 +654,10 @@ struct DulcetSearchView: View {
                 accessibilityLabel: resultAccessibilityLabel(row.result),
                 onOpen: { activate(row.id) },
                 onPlay: {
-                    onRememberSearch(searchQuery)
+                    if !store.playsTopResult(row) { onRememberSearch(searchQuery) }
                     store.playSearchTopResult(row, in: publication)
-                }
+                },
+                isPlaying: store.playsTopResult(row)
             )
         }
     }

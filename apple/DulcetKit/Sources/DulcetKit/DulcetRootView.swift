@@ -1220,7 +1220,7 @@ private struct DulcetLibraryRouteView: View {
                         tracksFailure: currentAlbum(id) == nil
                             ? nil
                             : store.snapshot.selectedAlbumTracksFailure,
-                        onPlay: { store.playAlbum(album.id, shuffle: false) },
+                        onPlay: { store.pressPlay(.collection(.album, album.id)) { store.playAlbum(album.id, shuffle: false) } },
                         onShuffle: { store.playAlbum(album.id, shuffle: true) },
                         onActivateTrack: { track in
                             store.activateTrack(albumID: album.id, trackID: track.id)
@@ -1609,7 +1609,7 @@ private struct DulcetStateSurface: View {
                 DulcetAlbumDetailView(
                     album: album,
                     tracksFailure: snapshot.selectedAlbumTracksFailure,
-                    onPlay: { store.playAlbum(album.id, shuffle: false) },
+                    onPlay: { store.pressPlay(.collection(.album, album.id)) { store.playAlbum(album.id, shuffle: false) } },
                     onShuffle: { store.playAlbum(album.id, shuffle: true) },
                     onActivateTrack: { track in
                         store.activateTrack(albumID: album.id, trackID: track.id)
