@@ -251,6 +251,8 @@ internal data class LibrarySearchRow(
     val favourite: Boolean?,
     val rating: Int?,
     val playability: LibraryPlayability? = null,
+    /** How often this person has played it, from the seen-cache; breaks ties for the Top Result. */
+    val playCount: Long? = null,
 )
 
 internal data class LibrarySearchPublication(
@@ -260,6 +262,11 @@ internal data class LibrarySearchPublication(
     val sequence: Int,
     val scope: SearchScope,
     val rows: List<LibrarySearchRow>,
+    /**
+     * The place in [rows] of the best match for [query], or null when no row matches well enough
+     * to lead (see [topResultIndex]). The rows themselves never move for it.
+     */
+    val topResultIndex: Int? = null,
 )
 
 /**
@@ -597,6 +604,7 @@ internal class LibrarySearchSession(
                 source = if (item.id in serverIds) SearchResultSource.Server else SearchResultSource.Device,
                 favourite = overlay?.starred ?: state?.starred,
                 rating = overlay?.userRating ?: state?.userRating,
+                playCount = state?.playCount,
                 playability = when {
                     item.type == SearchResultType.Track -> reader.trackPlayability(item.id.rawId, downloaded)
                     local == null -> null
@@ -607,7 +615,7 @@ internal class LibrarySearchSession(
             )
         }
         sequence += 1
-        listener(LibrarySearchPublication(text, sequence, scope, rows))
+        listener(LibrarySearchPublication(text, sequence, scope, rows, topResultIndex(text, rows)))
     }
 
     private fun SearchResultItem.member(): CacheListMember = CacheListMember(
@@ -812,6 +820,38 @@ private fun matchRank(query: String, result: SearchResultItem): Int {
         addAll(result.credits.map(Credit::name))
     }.minOfOrNull { matchTier(query, it) } ?: NO_MATCH_TIER
     return if (ownTier <= carriedTier) ownTier * 2 else carriedTier * 2 + 1
+}
+
+/**
+ * The row that should lead a search, as a place in [rows], or null when none is a good enough
+ * answer to lead. The best match wins: [matchRank] first, so a row named by the query beats rows
+ * that merely carry the name. Among equal matches an artist leads an album and an album leads a
+ * song (the opposite of the list's own order, which is for scanning, not for leading), then what
+ * the person has favourited, then what they have played most -- so "gold soundz" leads with the
+ * version they listen to, not whichever shares its title. A tie after that keeps the list's order.
+ * A match that only starts a later word or sits inside one (`matchRank` above 5) leads nothing.
+ */
+internal fun topResultIndex(query: String, rows: List<LibrarySearchRow>): Int? {
+    val normalizedQuery = normalizeSearchText(query)
+    if (normalizedQuery.isEmpty()) return null
+    val best = rows.withIndex().minWithOrNull(
+        compareBy<IndexedValue<LibrarySearchRow>>(
+            { matchRank(normalizedQuery, it.value.item) },
+            { leadRank(it.value.item.type) },
+            { if (it.value.favourite == true) 0 else 1 },
+            { -(it.value.playCount ?: 0L) },
+            { it.index },
+        ),
+    ) ?: return null
+    return if (matchRank(normalizedQuery, best.value.item) <= TOP_RESULT_WORST_RANK) best.index else null
+}
+
+private const val TOP_RESULT_WORST_RANK = 5
+
+private fun leadRank(type: SearchResultType): Int = when (type) {
+    SearchResultType.Artist -> 0
+    SearchResultType.Album -> 1
+    SearchResultType.Track -> 2
 }
 
 private fun matchTier(query: String, candidate: String): Int {

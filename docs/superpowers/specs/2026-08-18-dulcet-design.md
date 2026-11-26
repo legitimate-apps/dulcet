@@ -220,7 +220,8 @@ Navidrome's private `/api` surface. §2.4 forbids it.
 ### 1.3 Non-goals for v1
 
 - No Jellyfin adapter (§9.5 explains why the seam still exists).
-- No server-side management: no library administration, no user administration, no tag editing.
+- No management of other servers: no library administration, no user administration, no tag editing
+  through OpenSubsonic. Dulcet Server manages its own library (CORPUS §5c, §28 2026-11-26).
 - No video.
 - **Podcasts and audiobooks receive ordinary-song behavior in v1** and nothing more — no chapters, no
   long-form completion rules, no podcast endpoints (§18.7). We do not claim to support them.
@@ -8095,6 +8096,40 @@ rank (ASSUMED good enough until a download carries a time). Offline, My Library'
 device's lists. Album items in My Library carry playability by search's rule (§16.14, 2026-11-24);
 offline, an album with no song on this device offers no Play, Shuffle, queue or Download in its
 menu, and its page's Play and Shuffle are disabled because none of its tracks can play.
+
+**2026-11-26 — Connections, Library and My Library; Dulcet Server manages its library (CORPUS §5c, §1.3, §29).**
+The maintainer set three layers. Dulcet has no ingest: music arrives in the server's music folder
+from other tools or by hand, and the scanner reads it. **Connections** are the tools and services
+linked to Dulcet, plus storage. Each connection declares capabilities (artist images, album art,
+metadata, popularity, requests, import), and each capability keeps its own ordered list of
+connections that can be enabled one by one. Server-wide answers such as artwork are an
+administrator's to configure; a person's own data in another server is that person's connection.
+**Library** is everything on the server, and Dulcet Server becomes its manager: it reports
+problems and fixes them, including tag edits, album merges and file moves and deletes, behind an
+administrator's explicit opt-in to writing the music folder. Each write's safety and undo are
+designed before it ships. **My Library** is unchanged (§29.9). CORPUS §7 no longer says "Not a
+library manager. Not a tag editor."; §1.3's non-goal now covers only managing other servers. The
+apps still speak only Dulcet API or OpenSubsonic. Planned connections: artist images first, then a
+Wishlist item becoming a Lidarr request, import from Jellyfin and Plex, more image and metadata
+sources, and ListenBrainz popularity for top songs.
+
+**2026-11-25 — Search leads with a Top Result, and using a result puts the keyboard away (§18.1, Search).**
+Seen on an iPhone against the household server: results were grouped but nothing led, covers on
+some rows were grey, and after a tap on a song the keyboard stayed up over the mini player, so the
+only sign of playback was a small speaker mark on the row. OBSERVED causes: the grey covers are
+the server's own answer, not a missing id or a slow load (rows carry `coverArt`, and `getCoverArt`
+returns a 200 placeholder image for an album with no art; a song from an album that has art returns
+a real picture). The keyboard stayed because nothing released the search field's focus on use.
+Changes: the core now names the row that leads each publication (`LibrarySearchPublication.topResultIndex`,
+carried through `AppleLibrarySearchPublication`): the best `matchRank` (the ranker above, so an exact
+name before a prefix before a word start; a substring-only match leads nothing), then artist before
+album before song, then a favourite, then the most played, then list order. The index is into the
+same ordered rows, so it changes when the server answer re-ranks and never reorders them. iPhone
+and iPad show it as a card above the groups (artwork, kind and credit, a Play button on a song or
+an album; an artist's card opens its page). Activating any result, or the card's Play, now releases
+the search field's focus, keeping the query and the results. Mac and tvOS do not show the card yet.
+Why this is not decided in Swift: the ranker and the favourite and play-count state are the
+core's, and the choice must not differ per platform.
 
 **2026-11-25 — Discover shows real covers promptly and by tile (§16.14, §30, Discover).**
 Seen on an iPhone against the household server: every artist and song tile held the grey note

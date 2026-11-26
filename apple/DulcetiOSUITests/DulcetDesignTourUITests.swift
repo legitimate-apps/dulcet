@@ -343,6 +343,52 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         shoot("search-stack-return", app)
     }
 
+    /// Search leads with a Top Result card, and using a result ends the typing. The card names the
+    /// best match with artwork and a Play button; tapping a song row puts the keyboard away so the
+    /// mini player that says playback started is not hidden under it, in one tap.
+    @MainActor
+    func testSearchTopResultAndKeyboardGivesWayToMiniPlayer() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_SEARCH_TOP_RESULT_PROOF"] == "1" else { throw XCTSkip("Requires a disposable fixture") }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))
+        let field = dulcetSearchField(in: app)
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText(environment["DULCET_SEARCH_TOP_RESULT_QUERY"] ?? "Paging Atlas")
+
+        let topResult = app.buttons["dulcet.search.topResult"].firstMatch
+        XCTAssertTrue(topResult.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.buttons["dulcet.search.topResult.play"].firstMatch.exists, "an album's card has Play")
+        let songs = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'dulcet.search.result.' AND label ENDSWITH ', Song'"))
+        XCTAssertTrue(songs.firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.exists, "control: the keyboard is up while typing")
+        XCTAssertFalse(app.buttons["dulcet.mini-player.open"].firstMatch.exists, "control: nothing is playing yet")
+        _ = settle(app)
+        shoot("search-top-result-typing", app)
+
+        songs.firstMatch.tap()
+        XCTAssertTrue(app.buttons["dulcet.mini-player.open"].firstMatch.waitForExistence(timeout: 15),
+                      "the mini player shows after one tap on a song: " + app.debugDescription)
+        XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5), "the keyboard went down with the tap")
+        _ = settle(app)
+        shoot("search-top-result-playing", app)
+    }
+
     /// Chooses the Search tab even while a page covers its field.
     @MainActor
     private func openSearchTab(in app: XCUIApplication) -> Bool {

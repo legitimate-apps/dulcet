@@ -629,12 +629,25 @@ public struct DulcetReaderSearchPublication: Sendable, Hashable {
     public let sequence: Int
     public let scope: DulcetReaderSearchScope
     public let rows: [DulcetReaderSearchRow]
+    /// The place in `rows` of the core's best match for the query, or nil when none leads. The
+    /// core chooses it (`topResultIndex`); the rows keep their order.
+    public let topResultIndex: Int?
 
-    public init(query: String, sequence: Int, scope: DulcetReaderSearchScope, rows: [DulcetReaderSearchRow]) {
+    public init(
+        query: String, sequence: Int, scope: DulcetReaderSearchScope, rows: [DulcetReaderSearchRow],
+        topResultIndex: Int? = nil
+    ) {
         self.query = query
         self.sequence = sequence
         self.scope = scope
         self.rows = rows
+        self.topResultIndex = topResultIndex
+    }
+
+    /// The row that leads the results, when the core named one that is in `rows`.
+    public var topResult: DulcetReaderSearchRow? {
+        guard let topResultIndex, rows.indices.contains(topResultIndex) else { return nil }
+        return rows[topResultIndex]
     }
 }
 
