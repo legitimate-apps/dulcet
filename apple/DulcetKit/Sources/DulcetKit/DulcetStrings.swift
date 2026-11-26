@@ -185,6 +185,7 @@ enum DulcetStrings {
     static let loadMoreArtists = text("search.more.artists", "More Artists")
     static let loadingMore = text("search.more.loading", "Loading more…")
     static let bestMatches = text("search.bestMatches", "Best Matches")
+    static let searchTopResult = text("search.topResult", "Top Result")
     static let resultColumn = text("search.column.result", "Result")
     static let typeColumn = text("search.column.type", "Type")
     static let album = text("search.kind.album", "Album")
