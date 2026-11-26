@@ -41,6 +41,10 @@ data class TrackInfo(
     val mbzAlbumId: String?,
     val mbzArtistId: String?,
     val mbzAlbumArtistId: String?,
+    /** Every MusicBrainz artist id in tag order (`;`-joined), paired with [artists] by position at scan. */
+    val mbzArtistIds: String? = null,
+    /** The album-artist ids likewise, paired with [albumArtists]. */
+    val mbzAlbumArtistIds: String? = null,
     val hasEmbeddedArt: Boolean,
     val lyricsSidecar: String?,
     val embeddedLyrics: Map<String, String>,
@@ -115,6 +119,8 @@ data class TrackInfo(
                 mbzReleaseGroupId = tags.tag("musicbrainzreleasegroupid"),
                 mbzArtistId = tags.tag("musicbrainzartistid")?.substringBefore(';'),
                 mbzAlbumArtistId = tags.tag("musicbrainzalbumartistid")?.substringBefore(';'),
+                mbzArtistIds = mbids(tags.tag("musicbrainzartistid")),
+                mbzAlbumArtistIds = mbids(tags.tag("musicbrainzalbumartistid")),
                 hasEmbeddedArt = tags.hasEmbeddedArt,
                 lyricsSidecar = lyricsSidecar,
                 embeddedLyrics = tags.lyrics,
@@ -139,6 +145,21 @@ data class TrackInfo(
             var parts = value.split(';', '\u0000').map(String::trim).filter(String::isNotEmpty)
             if (artistSeparators) parts = parts.flatMap { it.split(FEATURING) }.map(String::trim).filter(String::isNotEmpty)
             return parts.distinctBy(::fold)
+        }
+
+        /** The ids of a multi-valued MusicBrainz artist tag, `;`-joined, or null when it holds none. */
+        fun mbids(value: String?): String? = value?.split(';', '/', '\u0000')?.map(String::trim)?.filter(String::isNotEmpty)?.takeIf { it.isNotEmpty() }?.joinToString(";")
+
+        /**
+         * The id belonging to the credit at [position] of [credits]: only when the tag lists exactly one id per
+         * credit, so "A feat. B" with a single id gives B none rather than A's. [legacyFirst] is a row written before
+         * the full list was stored; it stays with the lead credit (position 0), as before, and no other.
+         */
+        fun creditMbid(ids: String?, legacyFirst: String?, position: Int, credits: Int): String? {
+            // A row from before the id lists kept only the first id; it stays with the lead credit, as before, and no other.
+            if (ids == null) return legacyFirst?.takeIf { position == 0 }
+            val list = ids.split(';')
+            return if (list.size == credits) list.getOrNull(position) else null
         }
 
         private fun leadingInt(value: String?): Int? = value?.trim()?.let { Regex("^\\d+").find(it)?.value?.toIntOrNull() }

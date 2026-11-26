@@ -43,6 +43,52 @@ Each setting can be given as `--name=value` or in the environment as `DULCET_NAM
 | `webhook-allow-other-ports` | `false` | Allow HTTPS webhook target ports other than 443. |
 | `test-mode` | `false` | Enable the Testing profile on a disposable data directory. Data previously served without test mode refuse this setting. |
 
+### Connections: artist images from tools you already run
+
+Dulcet Server can take artist photos from media tools a self-hoster often runs beside it. Each
+connection is optional and off until its URL and API key are both set. Connections are configured by
+the server's administrator and serve every user, because their answers are shared and cached.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `integration-lidarr-url`, `integration-lidarr-api-key` | absent | A Lidarr instance (v1 API), including any URL base, e.g. `http://lidarr.lan:8686`. |
+| `integration-jellyfin-url`, `integration-jellyfin-api-key` | absent | A Jellyfin server. |
+| `integration-emby-url`, `integration-emby-api-key` | absent | An Emby server (the same API shape as Jellyfin). |
+| `integration-artist-images` | `lidarr,jellyfin,emby,lidarr-feed` | The artist-image sources in the order they are asked; `off` asks none. A configured connection left out of the list is not asked for images. Naming a source no configured connection offers stops the server at startup. |
+| `integration-lidarr-image-hosts` | `images.lidarr.audio` | Comma-separated exact host names from which a poster that Lidarr's lookup names may be fetched directly. |
+
+An artist's image is chosen in this order: `artist.jpg`, `artist.jpeg` or `artist.png` in the
+artist's folder (the parent of its album folders), in any letter case, which needs no setting (at
+the library root itself only `artist.jpg` and `artist.png`, as before); then the configured sources in
+the order above; then, on library pages, the artist's first album cover. Other names (`folder`,
+`poster`, `thumb`) are not used: in a multi-disc layout (`Artist/Album/CD1/`) the folder above the
+tracks is the album, and those are its pictures. Discover artists that no source can picture keep the
+client's monogram. Remote sources are matched by MusicBrainz artist id only, never by name. A library
+artist has an id only when the file's MusicBrainz artist tag gives one id per credited artist, in
+credit order, so a featured or collaborating artist never takes another artist's id or photo.
+
+What each source receives:
+
+- **Lidarr** (`lidarr`): the MusicBrainz id of an artist being shown (`/api/v1/artist?mbId=`), then
+  the poster Lidarr already stores (`/MediaCover/{id}/poster.jpg`).
+- **Lidarr's lookup** (`lidarr-feed`, Discover artists only): `/api/v1/artist/lookup` with that id,
+  which Lidarr answers from its own metadata service. The poster is fetched through Lidarr's image
+  proxy first; only when that fails is the poster's own URL fetched, over HTTPS, from an allowed image
+  host and a public address, carrying no key. Library pages never ask the lookup.
+- **Jellyfin / Emby**: one request an hour for the album-artist list with provider ids
+  (`/Artists/AlbumArtists`), then `/Items/{id}/Images/Primary` for an artist being shown.
+
+API keys travel only in a request header (`X-Api-Key` for Lidarr, `X-Emby-Token` for Jellyfin and
+Emby), only to the configured origin, and never appear in a URL, log line, error or diagnostic. An
+`http://` URL sends the key unencrypted across the network; use it only where that network is trusted.
+Redirects from a connection are not followed. Images must pass the same signature, structure and
+5 MiB checks as Discover covers. They are cached for 30 days, a missing image for a day, Lidarr's
+library answers for an hour and lookups for a day. A connection that times out or refuses the key
+is skipped for a minute. Catalog pages never wait on a connection: they show the last known photo, or
+the album cover while a background fetch runs, and the artist is then marked changed so Dulcet API
+clients re-read it. While connections are configured, `getCoverArt` lets Subsonic clients keep an
+artist's stand-in for five minutes and a connection's photo for a day, rather than indefinitely.
+
 ### Commands
 
 ```

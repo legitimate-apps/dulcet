@@ -37,6 +37,8 @@ class DiscoverScanTagsTest {
                 execute("INSERT INTO annotation(user_id,item_type,item_id,starred) VALUES('user','album','album',1)")
                 execute("INSERT INTO library_item(user_id,item_type,item_id,added) VALUES('user','album','album',1)")
                 execute("ALTER TABLE track DROP COLUMN mbz_release_group_id")
+                execute("ALTER TABLE track DROP COLUMN mbz_artist_ids")
+                execute("ALTER TABLE track DROP COLUMN mbz_album_artist_ids")
                 execute("PRAGMA user_version=2")
             }
         }

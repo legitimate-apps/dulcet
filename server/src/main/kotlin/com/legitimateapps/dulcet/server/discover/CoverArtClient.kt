@@ -111,9 +111,9 @@ class CoverArtClient(private val http:PoliteHttp,private val cache:DiscoverCache
 }
 
 /** Durable opaque ids; devices cannot turn the artwork endpoint into an arbitrary URL proxy. */
-class DiscoverIdentity(private val db:com.legitimateapps.dulcet.server.db.Db) {
-    /** What an artwork id resolves to: a release whose front image is known, and/or an album's release group. */
-    data class ArtworkSource(val releaseMbid:String?,val groupMbid:String?)
+class DiscoverIdentity(private val db:com.legitimateapps.dulcet.server.db.Db,private val artistImages:Boolean=false) {
+    /** What an artwork id resolves to: a release whose front image is known, an album's release group, or an artist. */
+    data class ArtworkSource(val releaseMbid:String?,val groupMbid:String?,val artistMbid:String?=null)
     init { db.write {
         execute("CREATE TABLE IF NOT EXISTS discover_identity(kind TEXT NOT NULL,mbid TEXT NOT NULL,id TEXT NOT NULL UNIQUE,artwork_id TEXT UNIQUE,art_release TEXT,PRIMARY KEY(kind,mbid))")
         if(query("PRAGMA table_info(discover_identity)") { it.string("name") }.none { it=="art_release" }) execute("ALTER TABLE discover_identity ADD COLUMN art_release TEXT")
@@ -122,8 +122,8 @@ class DiscoverIdentity(private val db:com.legitimateapps.dulcet.server.db.Db) {
         val mbid=item.externalIds[item.kind.registryKey] ?: return item.copy(wishable=false)
         val release=item.externalIds[ListenBrainzClient.COVER_ART_RELEASE]?.let { runCatching { canonicalMbid(it) }.getOrNull() }
         // Albums always carry an artwork id (their release group has a cover). A song carries one only when
-        // its source names a release with a front image; an artist never does.
-        val hasArt=item.kind==DiscoverKind.Album || (item.kind==DiscoverKind.Song && release!=null)
+        // its source names a release with a front image; an artist only when an artist image source is configured.
+        val hasArt=item.kind==DiscoverKind.Album || (item.kind==DiscoverKind.Song && release!=null) || (item.kind==DiscoverKind.Artist && artistImages)
         return db.write {
             execute("INSERT OR IGNORE INTO discover_identity(kind,mbid,id,artwork_id,art_release) VALUES(?,?,?,?,?)",item.kind.wire,canonicalMbid(mbid),"di_"+java.util.UUID.randomUUID(),if(hasArt) "da_"+java.util.UUID.randomUUID() else null,release)
             // A row first seen without a cover (a search hit, a playlist entry) gains one when a later source names it.
@@ -136,6 +136,6 @@ class DiscoverIdentity(private val db:com.legitimateapps.dulcet.server.db.Db) {
     }
     fun item(id:String):Pair<DiscoverKind,String>?=db.read { single("SELECT kind,mbid FROM discover_identity WHERE id=?",id) { DiscoverKind.parse(it.string("kind")) to it.string("mbid") } }
     fun artwork(id:String):ArtworkSource?=db.read { single("SELECT kind,mbid,art_release FROM discover_identity WHERE artwork_id=?",id) {
-        ArtworkSource(it.stringOrNull("art_release"),if(it.string("kind")=="album") it.string("mbid") else null)
+        ArtworkSource(it.stringOrNull("art_release"),if(it.string("kind")=="album") it.string("mbid") else null,if(it.string("kind")=="artist") it.string("mbid") else null)
     } }
 }

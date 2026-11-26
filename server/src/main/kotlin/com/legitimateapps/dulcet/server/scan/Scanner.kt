@@ -454,14 +454,15 @@ class Scanner(
                album_artist, album_artist_id, track_no, disc_no, disc_subtitle, year, release_date, genre, duration, bitrate,
                sample_rate, channels, bit_depth, codec, suffix, content_type, compilation, mbz_track_id, mbz_recording_id,
                mbz_album_id, mbz_artist_id, mbz_album_artist_id, has_embedded_art, lyrics_sidecar, embedded_lyrics, comment, bpm,
-               rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak, created, updated, search, mbz_release_group_id)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+               rg_track_gain, rg_track_peak, rg_album_gain, rg_album_peak, created, updated, search, mbz_release_group_id, mbz_artist_ids, mbz_album_artist_ids)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             id, t.path, 1, t.parentDir, t.mtime, t.size, t.title, t.sortTitle, t.album, t.albumId, t.artistDisplay, t.artists.first().id,
             t.albumArtistDisplay, t.albumArtists.first().id, t.trackNo, t.discNo, t.discSubtitle, t.year, t.releaseDate, t.genres.firstOrNull(),
             t.duration, t.bitRate, t.sampleRate, t.channels, t.bitDepth, t.codec, t.suffix, t.contentType, t.compilation, t.mbzTrackId,
             t.mbzRecordingId, t.mbzAlbumId, t.mbzArtistId, t.mbzAlbumArtistId, t.hasEmbeddedArt, t.lyricsSidecar,
             t.embeddedLyrics.takeIf { it.isNotEmpty() }?.let { map -> JsonObject(map.mapValues { JsonPrimitive(it.value) }).toString() },
             t.comment, t.bpm, t.rgTrackGain, t.rgTrackPeak, t.rgAlbumGain, t.rgAlbumPeak, created, updated, t.searchText(), t.mbzReleaseGroupId,
+            t.mbzArtistIds, t.mbzAlbumArtistIds,
         )
         t.artists.forEachIndexed { index, credit -> execute("INSERT OR IGNORE INTO track_artist VALUES (?,?,?,?,?)", id, "artist", credit.id, credit.name, index) }
         t.albumArtists.forEachIndexed { index, credit -> execute("INSERT OR IGNORE INTO track_artist VALUES (?,?,?,?,?)", id, "albumartist", credit.id, credit.name, index) }
@@ -557,14 +558,18 @@ class Scanner(
         // Artists are everyone credited as an album artist or a track artist.
         data class ArtistAcc(val id: String, var name: String, var mbz: String?, val albums: MutableSet<String>, var songs: Int)
         val artists = LinkedHashMap<String, ArtistAcc>()
-        query("SELECT ta.artist_id, ta.name, ta.role, t.album_id, t.id AS track_id, t.mbz_artist_id, t.mbz_album_artist_id FROM track_artist ta JOIN track t ON t.id = ta.track_id WHERE ta.role IN ('artist', 'albumartist')") { row ->
+        // An artist takes a MusicBrainz id only from a tag that pairs ids with credits one to one (TrackInfo.creditMbid).
+        query("""SELECT ta.artist_id, ta.name, ta.role, ta.position, t.album_id, t.id AS track_id, t.mbz_artist_id, t.mbz_album_artist_id,
+            t.mbz_artist_ids, t.mbz_album_artist_ids, (SELECT COUNT(*) FROM track_artist c WHERE c.track_id = ta.track_id AND c.role = ta.role) AS credits
+            FROM track_artist ta JOIN track t ON t.id = ta.track_id WHERE ta.role IN ('artist', 'albumartist')""") { row ->
             val acc = artists.getOrPut(row.string("artist_id")) { ArtistAcc(row.string("artist_id"), row.string("name"), null, HashSet(), 0) }
+            val position = row.int("position"); val credits = row.int("credits")
             if (row.string("role") == "albumartist") {
                 acc.albums.add(row.string("album_id"))
-                acc.mbz = acc.mbz ?: row.stringOrNull("mbz_album_artist_id")
+                acc.mbz = acc.mbz ?: TrackInfo.creditMbid(row.stringOrNull("mbz_album_artist_ids"), row.stringOrNull("mbz_album_artist_id"), position, credits)
             } else {
                 acc.songs++
-                acc.mbz = acc.mbz ?: row.stringOrNull("mbz_artist_id")
+                acc.mbz = acc.mbz ?: TrackInfo.creditMbid(row.stringOrNull("mbz_artist_ids"), row.stringOrNull("mbz_artist_id"), position, credits)
             }
         }
         for (artist in artists.values) {
@@ -614,7 +619,7 @@ class Scanner(
 
     /** Artwork.artistSource selects the first track by id among the user's visible sources.
      * The first track per source covers every permission subset without invalidating other artists.
-     * jpg takes precedence over png, just as it does when serving the selected image.
+     * The picture is chosen by Artwork.artistFolderImage, the same choice that serves it.
      */
     private fun Db.Session.artistArtSources(root: Path, identity: (String) -> String): Map<String, String> {
         data class Candidate(val artist: String, val source: String, val directory: String)
@@ -625,9 +630,7 @@ class Scanner(
         return candidates.groupBy { it.artist }.mapValues { (_,tracks) ->
             tracks.sortedBy { it.source }.joinToString("\n") { track ->
                 val parent = track.directory.takeIf(String::isNotEmpty)?.let { root.resolve(it).parent }
-                val file = parent?.let { dir -> listOf("artist.jpg","artist.png").firstNotNullOfOrNull { name ->
-                    com.legitimateapps.dulcet.server.musicFile(root,dir.resolve(name))
-                } }
+                val file = com.legitimateapps.dulcet.server.media.Artwork.artistFolderImage(root, parent)
                 "${track.source}:${file?.let { identity(root.relativize(it).toString()) } ?: "none"}"
             }
         }
