@@ -162,6 +162,27 @@ class LibraryDepthTest {
         assertIs<LibraryFreshness.Cached>(fallback.last.freshness)
     }
 
+    /**
+     * An artist page opened from an album or search starts Top Songs before the artist's own read
+     * has put the artist's row in the cache. Top Songs must still ask the server, not settle on
+     * the device's own-plays fallback (empty for an artist never played) for the life of the page.
+     */
+    @Test fun topSongsReadsTheArtistWhenItsRowIsNotCachedYet() = readerTest { env ->
+        env.server.responseOverride = { request ->
+            when (request.endpoint) {
+                "getArtist" -> body(""""artist":{"id":"artist-1","name":"Artist One","albumCount":1,"album":[]}""")
+                "getTopSongs" -> body(""""topSongs":{"song":[{"id":"server-top","title":"Top","artist":"Artist One","artistId":"artist-1"}]}""")
+                else -> null
+            }
+        }
+        val reader = env.reader()
+        val top = Publications(env.server)
+        reader.open(LibraryQuery.ArtistTopSongs("artist-1"), top)
+        advanceUntilIdle()
+        assertEquals(listOf("server-top"), top.ids(), env.server.log.toString())
+        assertEquals("Artist One", env.server.log.single { it.endpoint == "getTopSongs" }.parameters["artist"])
+    }
+
     @Test fun songsPagesUseSongOffsetAndRetainGuardedWindowCoverage() = readerTest { env ->
         env.server.responseOverride = { request -> if (request.endpoint == "search3") {
             val offset = request.parameters.getValue("songOffset").toInt()

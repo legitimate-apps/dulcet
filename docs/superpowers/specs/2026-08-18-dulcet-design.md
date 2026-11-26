@@ -8073,6 +8073,39 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-26 — An artist's Play leads with the artist's popular songs (§29, Discover).**
+Seen on an iPhone against the household server: an artist the listener had never played (Pavement)
+showed no Top Songs, and Play ran one EP in album order. Two causes. (1) Client: the artist page opens
+Top Songs alongside the artist's own read, and Top Songs needs the artist's name for `getTopSongs`;
+when the artist's row was not cached yet (a page reached from an album, a song or search) it gave up
+for the life of the page, so the server's answer was never asked for. It now reads `getArtist` first.
+(2) Server: with no plays, the ranking was each record's opener, newest first, and a reissue tagged
+with its reissue year (an EP from 1991 tagged 2026) led. `getTopSongs` now also ranks by the artist's
+popular recordings from ListenBrainz (`/1/popularity/top-recordings-for-artist/{artist_mbid}`), matched
+to library tracks by recording MBID, then by title and version (a live take does not match the studio
+song); recordings the library lacks are skipped. The most popular song held scores 40, two less per
+place down, at least 1, and adds to the caller's own listening score (3 per play, 20 for a star, 4 or
+8 for a 4- or 5-star rating), so heavy personal listening can still lift a song past the hits.
+A request reads only popularity already stored (a lock-free read of the Discover cache) and never waits
+on ListenBrainz: a cold lookup's latency would tell one account whether another had opened the artist,
+and a page load must not wait on an outside service. Every scan queues each MBID-tagged artist for one
+background worker on the shared polite queue (a fresh week-long cache entry costs no request), and a
+request that misses or finds a stale answer queues its artist too. A miss, no token, Discover off or a
+failing upstream serves the 2026-11-24 order. Residual: a miss on an artist the scan has not reached yet
+still serves the fallback first, so the order (not the latency) can change once the background fetch
+lands. The source sits behind `ArtistPopularity` so it can move to the Connections layer.
+ListenBrainz refuses this endpoint without a user token, so the server operator's
+`DULCET_LISTENBRAINZ_TOKEN` (previously reserved and unused) is sent as an `Authorization` header to the
+configured ListenBrainz base only; only the artist's MusicBrainz id goes upstream, never a Dulcet user,
+credential or play. The `getTopSongs` response shape is unchanged; the Dulcet API has no top-songs
+operation, so there is nothing there to disagree. **OBSERVED**: 2026-11-26, anonymous calls to the
+popularity endpoint return 401; `TopSongsPopularityTest` (fake ListenBrainz: popularity order, skipped
+and live recordings, token in header only, no listener identity, upstream down, no token, Discover off,
+heavy own plays, and a cold request answering under 1.5 s with the fallback while ListenBrainz is held) and `LibraryDepthTest.topSongsReadsTheArtistWhenItsRowIsNotCachedYet` (fails without
+the client fix). **ASSUMED**: that ListenBrainz's all-time listen counts track what a listener knows as
+an artist's hits. Album years still come from the `date` tag before `originaldate`, so the no-popularity
+spread can still put a reissue first; storing an original year needs a schema change and was left.
+
 **2026-11-26 — Connections, Library and My Library; Dulcet Server manages its library (CORPUS §5c, §1.3, §29).**
 The maintainer set three layers. Dulcet has no ingest: music arrives in the server's music folder
 from other tools or by hand, and the scanner reads it. **Connections** are the tools and services
