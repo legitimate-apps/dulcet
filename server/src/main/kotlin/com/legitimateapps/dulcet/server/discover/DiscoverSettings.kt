@@ -19,6 +19,13 @@ data class DiscoverSettings(
         if (URI(musicBrainzUrl).host.equals("musicbrainz.org", true) || URI(musicBrainzUrl).host.endsWith(".musicbrainz.org", true))
             require(musicBrainzMinGapMillis >= 1000) { "Public MusicBrainz requires at least 1000 ms between requests" }
     }
+    /**
+     * The server operator's own ListenBrainz user token, for the endpoints that refuse anonymous
+     * callers (artist popularity). Sent only as an `Authorization` header to [listenBrainzUrl], never
+     * to Labs, never on a redirect, never logged; no Dulcet account's identity rides with it. Absent,
+     * those endpoints are simply not used.
+     */
+    internal val listenBrainzAuthorization: String? get() = listenBrainzToken?.trim()?.takeIf { it.isNotEmpty() }?.let { "Token $it" }
     override fun toString() = "DiscoverSettings(enabled=$enabled,wishlistEnabled=$wishlistEnabled)"
     companion object {
         fun validateBase(value: String) {

@@ -315,14 +315,17 @@ internal fun launchBackground(block: () -> Unit) {
 
 /**
  * The artist's song ids in play order (see [TopSongs]). Candidates are the songs the caller may
- * read, ranked on the caller's own annotations only: no other account's listening is used.
+ * read, ranked on the artist's popularity ([ServerContext.artistPopularity], asked with the
+ * artist's MusicBrainz id and nothing else) and the caller's own annotations: no other account's
+ * listening is used. Without a popularity answer the order is the caller's listening, then the
+ * spread across records.
  */
-private fun topSongIds(ctx: ServerContext, userId: String, foldedArtist: String): List<String> {
+private suspend fun topSongIds(ctx: ServerContext, userId: String, foldedArtist: String): List<String> {
     val ofArtist = "t.id IN (SELECT track_id FROM track_artist WHERE role = 'artist' AND artist_id IN (SELECT id FROM artist WHERE search = ?))"
     val visible = ctx.access.catalogPredicate(userId, "track", "t")
-    return ctx.db.read {
-        val candidates = query(
-            """SELECT t.id, t.title, t.album_id, al.name AS album_name, al.year AS album_year, al.song_count, t.disc_no, t.track_no, t.duration,
+    val candidates = ctx.db.read {
+        query(
+            """SELECT t.id, t.title, t.mbz_recording_id, t.album_id, al.name AS album_name, al.year AS album_year, al.song_count, t.disc_no, t.track_no, t.duration,
                       t.album_id IN (SELECT aa.album_id FROM album_artist aa WHERE aa.artist_id IN (SELECT id FROM artist WHERE search = ?)) AS own_album,
                       COALESCE(a.play_count, 0) AS plays, a.starred AS starred, COALESCE(a.rating, 0) AS rating
                FROM track t
@@ -336,8 +339,16 @@ private fun topSongIds(ctx: ServerContext, userId: String, foldedArtist: String)
                 albumYear = it.intOrNull("album_year"), albumSongCount = it.int("song_count"), ownAlbum = it.bool("own_album"),
                 disc = it.intOrNull("disc_no") ?: 1, track = it.intOrNull("track_no") ?: Int.MAX_VALUE, seconds = it.double("duration"),
                 ownPlays = it.int("plays"), ownStarred = it.longOrNull("starred") != null, ownRating = it.int("rating"),
+                recordingMbid = it.stringOrNull("mbz_recording_id"),
             )
         }
-        TopSongs.rank(candidates)
     }
+    if (candidates.isEmpty()) return emptyList()
+    // The artist's MusicBrainz id, when exactly one is tagged for the name: two artists sharing a
+    // name are not guessed between.
+    val mbid = ctx.db.read {
+        query("SELECT DISTINCT lower(mbz_artist_id) AS mbid FROM artist WHERE search = ? AND mbz_artist_id IS NOT NULL AND mbz_artist_id != ''", foldedArtist) { it.string("mbid") }
+    }.singleOrNull()
+    val popular = mbid?.let { ctx.artistPopularity.topRecordings(it) }
+    return TopSongs.rank(TopSongs.withPopularity(candidates, popular))
 }

@@ -35,7 +35,8 @@ Shelf ids are `trendingArtists`, `trendingAlbums`, `trendingSongs`, `newReleases
 general chart. Discover carries **Data from MusicBrainz and ListenBrainz**. The similar shelf
 uses at most five visible artists from My Library, ranked by plays then favourites; without a
 signal it is empty and makes no similarity request. Public responses are cached per seed, then
-assembled for the requesting user; upstreams receive no Dulcet user id or token.
+assembled for the requesting user; upstreams receive no Dulcet user id or token. `getTopSongs` asks for an
+artist's popular recordings with the artist's MusicBrainz id only (see `DULCET_LISTENBRAINZ_TOKEN`).
 
 ## Data model
 
@@ -135,7 +136,7 @@ Server settings (environment variables, or the corresponding lowercase hyphenate
 | `DULCET_LISTENBRAINZ_URL` | `https://api.listenbrainz.org` | Public ListenBrainz base |
 | `DULCET_LISTENBRAINZ_LABS_URL` | `https://labs.api.listenbrainz.org` | Similar-artists base |
 | `DULCET_MUSICBRAINZ_MIN_GAP_MS` | `1000` | Mirrors may lower the gap; public MusicBrainz cannot go below 1000 ms |
-| `DULCET_LISTENBRAINZ_TOKEN` | absent | Optional secret reserved for later, currently unused; never sent |
+| `DULCET_LISTENBRAINZ_TOKEN` | absent | The operator's own ListenBrainz user token. Used only for artist popularity (`/1/popularity/top-recordings-for-artist/{artist_mbid}`, which ListenBrainz refuses without one), sent only as `Authorization: Token …` to `DULCET_LISTENBRAINZ_URL`, never to Labs, never on a redirect, never logged. Absent, `getTopSongs` ranks without popularity. |
 
 Artwork checks every resolved address before connecting, including the configured source and each
 redirect hop, and pins the checked socket address. Private-network artwork mirrors are unsupported.

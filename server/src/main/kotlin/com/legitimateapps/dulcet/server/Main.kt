@@ -132,6 +132,8 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val discoverCache = com.legitimateapps.dulcet.server.discover.DiscoverCache(db)
     val musicBrainz = com.legitimateapps.dulcet.server.discover.MusicBrainzClient(discoverHttp,discoverCache,config.discover)
     val listenBrainz = com.legitimateapps.dulcet.server.discover.ListenBrainzClient(discoverHttp,discoverCache,config.discover)
+    /** An artist's popular songs for getTopSongs; behind one small interface so it can move to Connections. */
+    val artistPopularity: com.legitimateapps.dulcet.server.discover.ArtistPopularity = com.legitimateapps.dulcet.server.discover.ListenBrainzArtistPopularity(listenBrainz)
     val discoverArtwork = com.legitimateapps.dulcet.server.discover.CoverArtClient(discoverHttp,discoverCache,config.discover,testingOverride={config.testMode && testing.discoverArtworkAllowLoopback})
     val wishlist = com.legitimateapps.dulcet.server.wishlist.WishlistService(this)
     val discoverMatcher = com.legitimateapps.dulcet.server.discover.DiscoverMatcher(db,access,rejectedForUser=wishlist::rejectionLookup)

@@ -38,6 +38,24 @@ class ListenBrainzClient(private val http:PoliteHttp,private val cache:DiscoverC
             }.distinctBy { it.externalIds[DiscoverKind.Album.registryKey] }
         }
     }
+    /**
+     * An artist's recordings by all-time listen count, most listened first. ListenBrainz refuses this
+     * endpoint without a user token, so it is used only when the operator configured one; the token
+     * rides in the header and is not part of the cache key. Popularity moves slowly: a week's cache.
+     */
+    suspend fun topRecordingsForArtist(artistMbid:String):Cached<List<PopularRecording>>? {
+        val authorization=settings.listenBrainzAuthorization ?: return null
+        val id=canonicalMbid(artistMbid)
+        val base=settings.listenBrainzUrl; val path="/1/popularity/top-recordings-for-artist/$id"
+        return cache.read(CacheKey(base,path,emptyMap()),7*DiscoverCache.DAY,{ bytes ->
+            val rows=Json.parseToJsonElement(bytes.decodeToString()) as? JsonArray ?: throw UpstreamUnavailable()
+            rows.mapNotNull { source ->
+                val row=source as? JsonObject ?: return@mapNotNull null
+                val title=row.text("recording_name") ?: return@mapNotNull null
+                PopularRecording(mbidOrNull(row.text("recording_mbid")),title,row.text("total_listen_count")?.toLongOrNull() ?: 0)
+            }
+        }) { if(!settings.enabled)throw UpstreamUnavailable(reason=UpstreamFailure.CacheOnly); http.get(base,path,emptyMap(),authorization=authorization) }
+    }
     suspend fun similarArtists(seedMbid:String):Cached<List<DiscoverItem>> = load("/similar-artists/json",mapOf("artist_mbids" to canonicalMbid(seedMbid),"algorithm" to SIMILAR_ALGORITHM),7*DiscoverCache.DAY,settings.listenBrainzLabsUrl) { element ->
         val rows=element as? JsonArray ?: throw UpstreamUnavailable()
         rows.mapNotNull { source ->

@@ -7,13 +7,9 @@ import java.util.Locale
 
 /** Pure local matching. Edition metadata is supplied by the service, outside any DB transaction. */
 class DiscoverMatcher(private val db:Db,private val access:AccountAccess,private val rejectedForUser:((String)->(DiscoverItem,LibraryRef)->Boolean)?=null,private val rejected:(String,DiscoverItem,LibraryRef)->Boolean={_,_,_->false}) {
-    fun normalizeName(value:String)=Normalizer.normalize(value,Normalizer.Form.NFKC).lowercase(Locale.ROOT).replace(Regex("[^\\p{L}\\p{N}\\p{M}]+")," ").trim().replace(Regex("\\s+")," ")
+    fun normalizeName(value:String)=SongTitles.normalizeName(value)
     private fun same(a:String?,b:String?)= !a.isNullOrBlank() && !b.isNullOrBlank() && normalizeName(a)==normalizeName(b)
-    private val versionWords=setOf("live","remix","demo","acoustic","instrumental")
-    private fun sameVersion(a:String,b:String):Boolean {
-        fun versions(title:String)=normalizeName(title).split(' ').filter { it in versionWords }.toSet()
-        return versions(a)==versions(b)
-    }
+    private fun sameVersion(a:String,b:String)=SongTitles.sameVersion(a,b)
     private fun identifier(value:String?)=mbidOrNull(value)
     private data class Track(val id:String,val albumId:String,val title:String,val artist:String,val album:String,val albumArtist:String,val recording:String?,val release:String?,val group:String?,val disc:Int?,val position:Int?)
     /** One request owns one lazy visible-catalog snapshot, never shared across users or requests. */
