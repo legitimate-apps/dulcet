@@ -8112,8 +8112,8 @@ album's own pictures; the scanner invalidates by the same choice); the configure
 on library pages the first album's cover. Sources match by MusicBrainz artist id only, never by
 name, and an artist takes an id only from a tag listing one id per credit in credit order (stored per
 track as `mbz_artist_ids`/`mbz_album_artist_ids`): before this, "A feat. B" gave B A's id, which
-Discover's shelves and matcher also read. Rows scanned earlier keep only their first id, trusted for a
-single credit alone until the file is rescanned. Catalog resources render inside a database read
+Discover's shelves and matcher also read. Rows scanned earlier keep only their first id, which stays with
+the lead credit (as before) and no other until the file is rescanned. Catalog resources render inside a database read
 transaction, so there a library artist's photo is answered from the shared cache only (a pointer per
 artist and reach to the cached bytes, never the network or a refresh lock) and a missing or hour-old
 answer is refreshed in the background, which journals the artist when its photo changes; a request

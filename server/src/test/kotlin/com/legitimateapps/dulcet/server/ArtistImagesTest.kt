@@ -218,6 +218,45 @@ class ArtistImagesTest {
         }
         assertNull(com.legitimateapps.dulcet.server.scan.TrackInfo.creditMbid(null, alpha, 1, 2), "a row from an earlier scan is trusted for a single credit only")
         assertEquals(alpha, com.legitimateapps.dulcet.server.scan.TrackInfo.creditMbid(null, alpha, 0, 1))
+        assertEquals(alpha, com.legitimateapps.dulcet.server.scan.TrackInfo.creditMbid(null, alpha, 0, 2), "an earlier row's id stays with the lead credit")
+    }
+
+    @Test fun anUpgradedLibraryKeepsTheLeadArtistsIdAndStillDeniesTheFeaturedOne() {
+        val alpha = "11111111-1111-4111-8111-111111111111"
+        val root = Files.createTempDirectory("artist-images-legacy")
+        val ctx = scannedContext(root, IntegrationSettings(), mapOf(
+            "Alpha/Album/01.flac" to mapOf("title" to "One", "album" to "Album", "artist" to "Alpha feat. Beta", "album_artist" to "Alpha feat. Beta",
+                "MUSICBRAINZ_ARTISTID" to alpha, "MUSICBRAINZ_ALBUMARTISTID" to alpha)))
+        try {
+            // The shape of a row scanned before the id lists existed: the first id only, the lists NULL.
+            ctx.db.write {
+                execute("UPDATE track SET mbz_artist_ids=NULL, mbz_album_artist_ids=NULL")
+                execute("UPDATE artist SET mbz_artist_id=NULL")
+            }
+            assertEquals(alpha, ctx.db.read { string("SELECT mbz_artist_id FROM track") })
+            ctx.scanner.scan()
+            assertNull(ctx.db.read { string("SELECT mbz_artist_ids FROM track") }, "the unchanged file was not re-read, so this is the legacy path")
+            assertEquals(alpha, ctx.artistMbid("Alpha"), "the lead credit keeps the id it had before the upgrade")
+            assertNull(ctx.artistMbid("Beta"))
+        } finally { ctx.close(); ctx.db.close() }
+    }
+
+    @Test fun closingStopsBackgroundRefreshesFromWriting() {
+        java.net.ServerSocket(0, 50, java.net.InetAddress.getLoopbackAddress()).use { blackHole ->
+            val root = Files.createTempDirectory("artist-images-close")
+            val ctx = scannedContext(root, IntegrationSettings(lidarr = ServiceEndpoint("http://127.0.0.1:${blackHole.localPort}", lidarrKey)))
+            try {
+                val artist = ctx.artistId("Artist"); val head = ctx.journal.head()
+                val cached = ctx.db.read { long("SELECT COUNT(*) FROM discover_cache") }
+                ctx.db.read { ctx.artwork.image("ar-$artist", null) }
+                val started = System.nanoTime(); ctx.integrations.close()
+                assertTrue((System.nanoTime() - started) / 1_000_000 < Integrations.CLOSE_WAIT_MILLIS + 1_000, "close waits only briefly")
+                ctx.db.read { ctx.artwork.image("ar-$artist", null) }
+                runBlocking { ctx.integrations.awaitRefreshes() }
+                assertEquals(cached, ctx.db.read { long("SELECT COUNT(*) FROM discover_cache") }, "nothing is cached after close")
+                assertEquals(0, ctx.db.read { long("SELECT COUNT(*) FROM api_journal WHERE seq>? AND type='artist'", head) })
+            } finally { ctx.close(); ctx.db.close() }
+        }
     }
 
     @Test fun aSlowConnectionNeverHoldsTheDatabaseLock() {

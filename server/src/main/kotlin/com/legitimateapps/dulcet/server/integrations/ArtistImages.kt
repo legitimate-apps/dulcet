@@ -122,8 +122,12 @@ class Integrations(
         return RemoteImage(stored.body, type, key, digest)
     }
 
+    @Volatile private var closed = false
+
     private fun refresh(artist: ArtistRef, reach: Reach) {
         val id = artist.musicBrainzId!! to reach
+        // A bounded queue: past it a stale answer waits for a later render rather than piling up fetches.
+        if (closed || (refreshing.size >= MAX_PENDING_REFRESHES && !refreshing.containsKey(id))) return
         refreshing.computeIfAbsent(id) {
             scope.launch(start = CoroutineStart.LAZY) {
                 try { refreshPermits.withPermit { runCatching { artistImage(artist, reach) } } } finally { refreshing.remove(id) }
@@ -136,6 +140,7 @@ class Integrations(
 
     private fun remember(mbid: String, reach: Reach, image: RemoteImage?) {
         val cache = cache ?: return
+        if (closed) return
         val key = pointerKey(mbid, reach)
         val previous = cache.peek(key)
         val digest = image?.cacheDigest
@@ -143,16 +148,24 @@ class Integrations(
         val body = if (image == null) ByteArray(0) else "$digest\n${image.key}".toByteArray()
         cache.put(key, if (image == null) 404 else 200, body)
         val before = previous?.takeIf { it.status == 200 }?.body?.decodeToString()?.substringBefore('\n')
-        if (reach == Reach.Library && before != digest && !(previous == null && image == null)) runCatching { onArtistImageChanged(mbid) }
+        if (!closed && reach == Reach.Library && before != digest && !(previous == null && image == null)) runCatching { onArtistImageChanged(mbid) }
     }
 
     private fun canonical(artist: ArtistRef): String? =
         artist.musicBrainzId?.let { runCatching { com.legitimateapps.dulcet.server.discover.canonicalMbid(it.trim().lowercase()) }.getOrNull() }
     private fun pointerKey(mbid: String, reach: Reach) = CacheKey("dulcet:integrations", "/artist-image", mapOf("mbid" to mbid, "reach" to reach.name))
 
-    override fun close() { scope.cancel() }
+    /** Stops refreshing; waits briefly for one already writing, so nothing writes after the database closes. */
+    override fun close() {
+        closed = true
+        val jobs = refreshing.values.toList()
+        scope.cancel()
+        runBlocking { withTimeoutOrNull(CLOSE_WAIT_MILLIS) { jobs.joinAll() } }
+    }
 
     companion object {
+        const val MAX_PENDING_REFRESHES = 256
+        const val CLOSE_WAIT_MILLIS = 2_000L
         const val OUTAGE_SKIP_NANOS = 60_000_000_000L
         const val POINTER_REFRESH_MILLIS = DiscoverCache.HOUR
         private val OUTAGES = setOf(UpstreamFailure.Timeout, UpstreamFailure.Transport, UpstreamFailure.DnsTimeout, UpstreamFailure.DnsTransport,

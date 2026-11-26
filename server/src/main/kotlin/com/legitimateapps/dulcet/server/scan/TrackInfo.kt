@@ -156,7 +156,8 @@ data class TrackInfo(
          * the full list was stored; it is trusted only for a single credit.
          */
         fun creditMbid(ids: String?, legacyFirst: String?, position: Int, credits: Int): String? {
-            if (ids == null) return legacyFirst?.takeIf { credits == 1 }
+            // A row from before the id lists kept only the first id; it stays with the lead credit, as before, and no other.
+            if (ids == null) return legacyFirst?.takeIf { position == 0 }
             val list = ids.split(';')
             return if (list.size == credits) list.getOrNull(position) else null
         }

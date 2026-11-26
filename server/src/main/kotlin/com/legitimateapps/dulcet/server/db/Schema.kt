@@ -192,7 +192,7 @@ object Schema {
         """.trimIndent(),
         "ALTER TABLE track ADD COLUMN mbz_release_group_id TEXT;",
         // Every artist id of a multi-artist tag, so each credit is paired with its own id; rows from earlier scans
-        // stay NULL and keep only their first id, which is trusted for a single credit alone.
+        // stay NULL and keep only their first id, which stays with the lead credit alone.
         "ALTER TABLE track ADD COLUMN mbz_artist_ids TEXT; ALTER TABLE track ADD COLUMN mbz_album_artist_ids TEXT;",
     )
 
