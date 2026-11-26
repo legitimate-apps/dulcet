@@ -663,6 +663,23 @@ public final class DulcetPresentationStore {
         return snapshot.nowPlaying != nil || snapshot.playbackStatus == .preparing
     }
 
+    /// Whether `target`'s music is what is sounding now, so its Play button shows Pause. Nil names no
+    /// page (a source with no id), and nothing matches it.
+    func playsTarget(_ target: DulcetPlayTarget?) -> Bool {
+        guard let target else { return false }
+        return snapshot.nowPlaying?.isPlayingTarget(target) == true
+    }
+
+    /// A Play button's press: pause when its own music is playing, and otherwise `start` -- which
+    /// plays it from the top, in order, and leaves Shuffle off (the core's replacement does both).
+    func pressPlay(_ target: DulcetPlayTarget?, start: () -> Void) {
+        if playsTarget(target) {
+            sendPlaybackControl(.pause)
+        } else {
+            start()
+        }
+    }
+
     /// Whether this is the queue's current track, playing or paused. A listing marks its row by it.
     func isNowPlaying(_ track: DulcetTrack) -> Bool {
         snapshot.nowPlaying?.current.id == track.id

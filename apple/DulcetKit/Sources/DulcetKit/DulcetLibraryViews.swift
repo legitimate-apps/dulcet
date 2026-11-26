@@ -1544,7 +1544,8 @@ struct DulcetAlbumDetailView: View {
                             accessibilitySize: dynamicTypeSize.isAccessibilitySize
                         ),
                         onPlay: onPlay,
-                        onShuffle: onShuffle
+                        onShuffle: onShuffle,
+                        isPlaying: store.playsTarget(.collection(.album, album.id))
                     )
                     .padding(.bottom, DulcetSpacing.lg)
 
@@ -1585,7 +1586,8 @@ struct DulcetAlbumDetailView: View {
                             accessibilitySize: dynamicTypeSize.isAccessibilitySize
                         ),
                         onPlay: onPlay,
-                        onShuffle: onShuffle
+                        onShuffle: onShuffle,
+                        isPlaying: store.playsTarget(.collection(.album, album.id))
                     )
 
                     if let tracksFailure {
@@ -1743,6 +1745,7 @@ struct DulcetAlbumHeader: View {
     let artworkSize: CGFloat
     let onPlay: () -> Void
     let onShuffle: () -> Void
+    var isPlaying = false
 
     var body: some View {
         DulcetDetailHeader(
@@ -1776,9 +1779,10 @@ struct DulcetAlbumHeader: View {
             isEnabled: !album.tracks.isEmpty,
             isDefaultAction: true,
             fillsWidth: true,
+            isPlaying: isPlaying,
             action: onPlay
         )
-        .accessibilityLabel(DulcetStrings.play)
+        .accessibilityLabel(isPlaying ? DulcetStrings.pause : DulcetStrings.play)
         .accessibilityIdentifier("dulcet.album.play")
     }
 

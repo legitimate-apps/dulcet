@@ -568,8 +568,16 @@ extension DulcetPresentationStore {
     func playSearchTopResult(_ row: DulcetReaderSearchRow, in publication: DulcetReaderSearchPublication?) {
         switch row.result.kind {
         case .track, .artist:
-            activateReaderSearchRow(row, in: publication)
+            if playsTopResult(row) {
+                sendPlaybackControl(.pause)
+            } else {
+                activateReaderSearchRow(row, in: publication)
+            }
         case .album:
+            if playsTopResult(row) {
+                sendPlaybackControl(.pause)
+                return
+            }
             dismissSearchKeyboard()
             if row.isUnavailableOffline {
                 librarySession?.post(DulcetStrings.readerPlaysOnReconnect)
@@ -577,6 +585,21 @@ extension DulcetPresentationStore {
             }
             resolveAndPlayAlbumRow(row)
         }
+    }
+
+    /// What a Top Result's Play stands for: the song itself, or the album played from its first track.
+    /// An artist has no Play on the card.
+    func topResultTarget(_ row: DulcetReaderSearchRow) -> DulcetPlayTarget? {
+        switch row.result.kind {
+        case .track: .song(row.id)
+        case .album: .collection(.album, row.id)
+        case .artist: nil
+        }
+    }
+
+    /// Its own music is sounding, so the card's Play reads Pause and a press pauses.
+    func playsTopResult(_ row: DulcetReaderSearchRow) -> Bool {
+        playsTarget(topResultTarget(row))
     }
 
     private func resolveAndPlayAlbumRow(_ row: DulcetReaderSearchRow) {
@@ -2273,8 +2296,10 @@ struct DulcetReaderTrackListPage: View {
             }
         } actions: {
             Button {
-                store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
-            } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
+                store.pressPlay(playTarget) {
+                    store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
+                }
+            } label: { DulcetPlayLabel(isPlaying: store.playsTarget(playTarget)) }
                 .fixedSize()
                 .disabled(playable.isEmpty)
                 .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
@@ -2325,6 +2350,12 @@ struct DulcetReaderTrackListPage: View {
         case .playlist: .playlist
         default: .library
         }
+    }
+
+    /// What this page's Play stands for, so it shows Pause while the page's own music plays.
+    private var playTarget: DulcetPlayTarget? {
+        guard sourceKind != .library, let id else { return nil }
+        return .collection(sourceKind, id)
     }
 
     @ViewBuilder
@@ -2390,8 +2421,10 @@ struct DulcetReaderTrackListPage: View {
 
     private func playButton(_ window: DulcetLibraryWindow, fills: Bool) -> some View {
         let playable = window.playableTracks
-        return DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: fills) {
-            store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
+        return DulcetHeaderPlayAction(isEnabled: !playable.isEmpty, fillsWidth: fills, isPlaying: store.playsTarget(playTarget)) {
+            store.pressPlay(playTarget) {
+                store.playReaderTracks(playable, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
+            }
         }
         .dulcetTakesFocusOnArrival(isEnabled: !playable.isEmpty)
         .accessibilityIdentifier("dulcet.\(kind.rawValue).play")
@@ -2475,6 +2508,9 @@ struct DulcetReaderArtistPage: View {
 #endif
     let id: DulcetProviderItemID
 
+    /// The artist's Play shows Pause while music played from this artist is sounding.
+    private var artistTarget: DulcetPlayTarget { .collection(.artist, id) }
+
     var body: some View {
 #if os(tvOS)
         if dynamicTypeSize.isAccessibilitySize {
@@ -2520,8 +2556,10 @@ struct DulcetReaderArtistPage: View {
                     height: height,
                     barBottom: barBottom
                 ) {
-                    DulcetArtistHeroActions(isEnabled: hasMusic) {
-                        store.playArtist(id: id, name: header.displayTitle, topSongs: playable, albums: albums, shuffle: false)
+                    DulcetArtistHeroActions(isEnabled: hasMusic, isPlaying: store.playsTarget(artistTarget)) {
+                        store.pressPlay(artistTarget) {
+                            store.playArtist(id: id, name: header.displayTitle, topSongs: playable, albums: albums, shuffle: false)
+                        }
                     } shuffle: {
                         store.playArtist(id: id, name: header.displayTitle, topSongs: playable, albums: albums, shuffle: true)
                     }
@@ -2624,8 +2662,10 @@ struct DulcetReaderArtistPage: View {
         _ header: DulcetReaderItem, playable: [DulcetTrack], albums: [DulcetReaderItem], hasMusic: Bool
     ) -> some View {
         DulcetEqualWidthActions {
-            DulcetHeaderPlayAction(isEnabled: hasMusic, fillsWidth: true) {
-                store.playArtist(id: id, name: header.displayTitle, topSongs: playable, albums: albums, shuffle: false)
+            DulcetHeaderPlayAction(isEnabled: hasMusic, fillsWidth: true, isPlaying: store.playsTarget(artistTarget)) {
+                store.pressPlay(artistTarget) {
+                    store.playArtist(id: id, name: header.displayTitle, topSongs: playable, albums: albums, shuffle: false)
+                }
             }
             .dulcetTakesFocusOnArrival(isEnabled: hasMusic)
             .accessibilityIdentifier("dulcet.artist.play")
@@ -2669,6 +2709,8 @@ struct DulcetReaderArtistPage: View {
 private struct DulcetTVArtistDetail: View {
     @Environment(DulcetPresentationStore.self) private var store
     let id: DulcetProviderItemID
+
+    private var artistTarget: DulcetPlayTarget { .collection(.artist, id) }
 
     var body: some View {
         DulcetReaderScreen(query: .artist(rawID: id.rawID), showsDestinationStatus: true) { model in
@@ -2721,8 +2763,10 @@ private struct DulcetTVArtistDetail: View {
             }
         } actions: {
             Button {
-                play(header, playable: playable, albums: albums, shuffle: false)
-            } label: { Label(DulcetStrings.play, systemImage: "play.fill") }
+                store.pressPlay(artistTarget) {
+                    play(header, playable: playable, albums: albums, shuffle: false)
+                }
+            } label: { DulcetPlayLabel(isPlaying: store.playsTarget(artistTarget)) }
                 .disabled(!hasMusic)
                 .dulcetTakesFocusOnArrival(isEnabled: hasMusic)
                 .accessibilityIdentifier("dulcet.artist.play")

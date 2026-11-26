@@ -40,6 +40,43 @@ public enum DulcetPlaybackQueueSourceKind: String, Sendable, Hashable {
     case artist
 }
 
+/// Where the current queue entry was played from, as the core records it: a page's Play compares
+/// this with the page's own context to show Pause while its music plays.
+public struct DulcetPlaybackSource: Sendable, Hashable {
+    public let kind: DulcetPlaybackQueueSourceKind
+    /// The source's own id; nil for `library` and `search`, which have none.
+    public let id: DulcetProviderItemID?
+
+    public init(kind: DulcetPlaybackQueueSourceKind, id: DulcetProviderItemID?) {
+        self.kind = kind
+        self.id = id
+    }
+}
+
+/// What a page's Play button stands for: a collection played from its start (an album, a playlist,
+/// an artist), or one song (a search's Top Result).
+public enum DulcetPlayTarget: Sendable, Hashable {
+    case collection(DulcetPlaybackQueueSourceKind, DulcetProviderItemID)
+    case song(DulcetProviderItemID)
+}
+
+extension DulcetNowPlaying {
+    /// Whether this target's music is what is sounding now: the current entry was played from that
+    /// collection, or is that song, and playback is running (or asked for). It decides a Play
+    /// button's face -- Pause and a pause on press, or Play and a restart from the top -- and it
+    /// never looks at Shuffle: a collection played shuffled is still that collection.
+    public func isPlayingTarget(_ target: DulcetPlayTarget) -> Bool {
+        guard isPlaying else { return false }
+        switch target {
+        case let .collection(kind, id):
+            // A source with no id (the whole library, a search) names no page, so nothing matches it.
+            return source?.kind == kind && source?.id == id
+        case let .song(id):
+            return current.id == id
+        }
+    }
+}
+
 public struct DulcetPlaybackQueueIntent: Sendable, Hashable {
     public let tracks: [DulcetTrack]
     public let sourceKind: DulcetPlaybackQueueSourceKind

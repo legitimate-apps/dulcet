@@ -47,6 +47,52 @@ class PlaybackQueueControllerTest {
         fixture.driver.close()
     }
 
+    /**
+     * A page's Play plays in order and leaves Shuffle off, whatever the last Shuffle press left on:
+     * a replacement never inherits the previous queue's shuffle state, and a Shuffle after it turns it
+     * on again. Every shell's Play and Shuffle buttons rest on this (spec §14.2, §28 2026-11-26).
+     */
+    @Test
+    fun playAfterShuffleReplacesTheQueueInOrderWithShuffleOffAndShuffleTurnsItBackOn() {
+        val fixture = fixture(shuffleSeed = 71)
+        val ids = listOf("a", "b", "c", "d", "e", "f")
+
+        val shuffled = fixture.controller.replaceAndStart(request(ids, shuffle = true))
+        assertEquals(QueueShuffleState.Enabled, shuffled.snapshot.shuffleState)
+
+        val played = fixture.controller.replaceAndStart(request(ids, startIndex = 0))
+        assertEquals(QueueShuffleState.Disabled, played.snapshot.shuffleState)
+        assertEquals(ids, played.snapshot.rawIds())
+        assertEquals(0, played.snapshot.currentIndex)
+        assertEquals("a", played.startDirective?.itemId?.rawId)
+        val reopened = PersistentQueueStore(DulcetDatabaseStore.open(fixture.driver).database)
+        assertEquals(QueueShuffleState.Disabled, reopened.load(SERVER).shuffleState, "the saved queue agrees")
+
+        val again = fixture.controller.replaceAndStart(request(ids, shuffle = true))
+        assertEquals(QueueShuffleState.Enabled, again.snapshot.shuffleState)
+        fixture.driver.close()
+    }
+
+    @Test
+    fun everyEntryNamesWhereItWasPlayedFromSoAPageCanTellItsMusicIsPlaying() {
+        val fixture = fixture()
+        val played = fixture.controller.replaceAndStart(request(listOf("a", "b")))
+        assertEquals(listOf(QueueSourceKind.Album, QueueSourceKind.Album), played.snapshot.entries.map { it.sourceKind })
+        assertEquals(listOf("album", "album"), played.snapshot.entries.map { it.sourceRawId })
+        // Items added from another place keep their own source; the current entry's is what a page compares.
+        val added = fixture.controller.enqueue(
+            PlaybackQueueInsertion(
+                items = listOf(PlaybackQueueItem(ProviderItemId(SERVER.value, "z"), 180.seconds)),
+                sourceContext = QueueSourceContext(QueueSourceKind.Search, null, "Search"),
+                mode = QueueInsertionMode.Append,
+            ),
+        )
+        assertEquals(QueueSourceKind.Search, added.snapshot.entries.last().sourceKind)
+        assertNull(added.snapshot.entries.last().sourceRawId)
+        assertEquals(QueueSourceKind.Album, added.snapshot.entries.first().sourceKind)
+        fixture.driver.close()
+    }
+
     @Test
     fun wholeLibraryQueueUsesANullSourceIdentity() {
         val fixture = fixture()
