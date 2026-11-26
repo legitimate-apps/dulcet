@@ -24,11 +24,14 @@ class Image(val bytes: ByteArray, val contentType: String)
  * pictures are cached by validated source metadata identity as well. An item with no picture gets a
  * generated placeholder, as other OpenSubsonic servers do, so a client never shows a broken image.
  */
-class Artwork(private val db: Db, private val musicFolder: Path, private val cacheFolder: Path, private val ffmpeg: String, private val access: com.legitimateapps.dulcet.server.auth.AccountAccess) {
+class Artwork(private val db: Db, private val musicFolder: Path, private val cacheFolder: Path, private val ffmpeg: String, private val access: com.legitimateapps.dulcet.server.auth.AccountAccess,
+              /** An artist photo from the integrations layer, asked only after the library's own files. */
+              private val artistImages: com.legitimateapps.dulcet.server.integrations.ArtistImageSource? = null) {
 
     private sealed interface Source {
         data class FolderFile(val path: Path) : Source
         data class Embedded(val path: Path) : Source
+        class Remote(val key: String, val image: Image) : Source
     }
 
     /** null means the id names nothing at all (error 70); a known item without art gets a placeholder. */
@@ -81,10 +84,25 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
         val albums = db.read { query("SELECT album_id FROM album_artist WHERE artist_id = ?", artistId) { it.string("album_id") } }.filter { user == null || access.canReadCatalog(user.id,"album",it) }
         val artistImage = db.read {
             single("SELECT t.parent_dir FROM track t JOIN album_artist aa ON aa.album_id = t.album_id WHERE aa.artist_id = ? AND ${if(user==null) "1" else access.catalogPredicate(user.id,"track","t")} ORDER BY t.id LIMIT 1", artistId) { it.string("parent_dir") }
-        }?.takeIf(String::isNotEmpty)?.let { dir -> listOf("artist.jpg", "artist.png").mapNotNull { com.legitimateapps.dulcet.server.musicFile(musicFolder, musicFolder.resolve(dir).parent.resolve(it)) }.firstOrNull() }
+        }?.takeIf(String::isNotEmpty)?.let { dir -> artistFolderImage(musicFolder.resolve(dir).parent) }
         if (artistImage != null) return Source.FolderFile(artistImage)
+        remoteArtistImage(artistId)?.let { return it }
         return albums.firstNotNullOfOrNull { albumSource(it,user) }
     }
+
+    private fun artistFolderImage(folder: Path?): Path? = artistFolderImage(musicFolder, folder)
+
+    private fun remoteArtistImage(artistId: String): Source? {
+        val source = artistImages ?: return null
+        val row = db.read { single("SELECT name, mbz_artist_id FROM artist WHERE id = ?", artistId) { it.string("name") to it.stringOrNull("mbz_artist_id") } } ?: return null
+        if (row.second.isNullOrBlank()) return null
+        // Library pages ask only the operator's own tools; a failure falls back to the album cover.
+        val image = runCatching { kotlinx.coroutines.runBlocking { source.artistImage(com.legitimateapps.dulcet.server.integrations.ArtistRef(row.second, row.first), com.legitimateapps.dulcet.server.integrations.Reach.Library) } }.getOrNull() ?: return null
+        return Source.Remote(image.key, Image(image.bytes, image.contentType))
+    }
+
+    /** A sized copy of an image from outside the library, through the same resize cache as library art. */
+    fun sized(key: String, image: Image, size: Int): Image = resized(Source.Remote(key, image), image, size)
 
     private fun playlistSource(playlistId: String, user: com.legitimateapps.dulcet.server.auth.User): Source? {
         val tracks = db.read { query("SELECT track_id FROM playlist_track WHERE playlist_id = ? ORDER BY position LIMIT 20", playlistId) { it.string("track_id") } }
@@ -96,6 +114,7 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
     private fun load(source: Source): Image? = when (source) {
         is Source.FolderFile -> com.legitimateapps.dulcet.server.musicFile(musicFolder, source.path)?.let(Files::readAllBytes)?.let { Image(it, sniff(it)) }
         is Source.Embedded -> com.legitimateapps.dulcet.server.musicFile(musicFolder, source.path)?.let(::embeddedImage)
+        is Source.Remote -> source.image
     }
 
     // Fixed stripes avoid an unbounded path-to-lock map and duplicate concurrent extraction.
@@ -132,6 +151,7 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
         val stamp = when (source) {
             is Source.FolderFile -> "${source.path}|${runCatching { Files.getLastModifiedTime(source.path).toMillis() }.getOrDefault(0)}"
             is Source.Embedded -> "${source.path}|${runCatching { Files.getLastModifiedTime(source.path).toMillis() }.getOrDefault(0)}|embedded"
+            is Source.Remote -> "remote|${source.key}"
         }
         val key = MessageDigest.getInstance("SHA-256").run { update(stamp.toByteArray()); digest(original.bytes) }.take(16).joinToString("") { "%02x".format(it) }
         val cached = cacheFolder.resolve("art").resolve(key.take(2)).resolve("${key}_$clamped.jpg")
@@ -171,6 +191,25 @@ class Artwork(private val db: Db, private val musicFolder: Path, private val cac
     }
 
     companion object {
+        /** Artist pictures in an artist folder, in preference order, matched in any letter case. `folder` and
+         * `cover` are left out: they are album-art names, and in a multi-disc layout the album folder is the
+         * disc folder's parent. */
+        val ARTIST_FILE_NAMES = listOf("artist", "poster", "thumb").flatMap { base -> listOf("jpg", "jpeg", "png").map { "$base.$it" } }
+        /** The library root is shared by every artist of a flat layout, so it keeps only the original names. */
+        val ROOT_ARTIST_FILE_NAMES = listOf("artist.jpg", "artist.png")
+
+        /** The picture in [folder] (the parent of an album folder) that stands for its artist, if any. The scanner
+         * uses the same choice to invalidate artists when that picture changes. */
+        fun artistFolderImage(root: Path, folder: Path?): Path? {
+            val dir = folder?.normalize() ?: return null
+            val top = root.normalize()
+            if (!dir.startsWith(top)) return null
+            if (dir == top) return ROOT_ARTIST_FILE_NAMES.firstNotNullOfOrNull { com.legitimateapps.dulcet.server.musicFile(root, dir.resolve(it)) }
+            val names = runCatching { Files.list(dir).use { files -> files.map { it.fileName.toString() }.toList() } }.getOrNull() ?: return null
+            val byName = names.groupBy { it.lowercase() }.mapValues { (_, same) -> same.min() }
+            return ARTIST_FILE_NAMES.firstNotNullOfOrNull { name -> byName[name]?.let { com.legitimateapps.dulcet.server.musicFile(root, dir.resolve(it)) } }
+        }
+
         fun sniff(bytes: ByteArray): String = when {
             bytes.size >= 3 && bytes[0] == 0xFF.toByte() && bytes[1] == 0xD8.toByte() -> "image/jpeg"
             bytes.size >= 8 && bytes[0] == 0x89.toByte() && bytes[1] == 'P'.code.toByte() -> "image/png"

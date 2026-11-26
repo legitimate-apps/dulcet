@@ -614,7 +614,7 @@ class Scanner(
 
     /** Artwork.artistSource selects the first track by id among the user's visible sources.
      * The first track per source covers every permission subset without invalidating other artists.
-     * jpg takes precedence over png, just as it does when serving the selected image.
+     * The picture is chosen by Artwork.artistFolderImage, the same choice that serves it.
      */
     private fun Db.Session.artistArtSources(root: Path, identity: (String) -> String): Map<String, String> {
         data class Candidate(val artist: String, val source: String, val directory: String)
@@ -625,9 +625,7 @@ class Scanner(
         return candidates.groupBy { it.artist }.mapValues { (_,tracks) ->
             tracks.sortedBy { it.source }.joinToString("\n") { track ->
                 val parent = track.directory.takeIf(String::isNotEmpty)?.let { root.resolve(it).parent }
-                val file = parent?.let { dir -> listOf("artist.jpg","artist.png").firstNotNullOfOrNull { name ->
-                    com.legitimateapps.dulcet.server.musicFile(root,dir.resolve(name))
-                } }
+                val file = com.legitimateapps.dulcet.server.media.Artwork.artistFolderImage(root, parent)
                 "${track.source}:${file?.let { identity(root.relativize(it).toString()) } ?: "none"}"
             }
         }

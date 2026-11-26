@@ -28,7 +28,9 @@ object SystemDiscoverClock : DiscoverClock {
 data class UpstreamResponse(val status: Int, val headers: Map<String,List<String>>, val body: ByteArray)
 class UpstreamUnavailable(val retryAfterMillis: Long? = null, val reason: UpstreamFailure = UpstreamFailure.Unavailable) : RuntimeException("Discovery source unavailable")
 
-/** A single shared instance owns every client's origin queue. No caller headers are accepted. */
+/** A single shared instance owns every client's origin queue. The only caller headers accepted are the
+ * credential headers of operator-configured integrations ([CREDENTIAL_HEADERS]); they never reach a URL,
+ * a diagnostic line or an error message. */
 class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private val userAgent: String = USER_AGENT, private val diagnostics: DiscoverDiagnostics = DiscoverDiagnostics.shared) : AutoCloseable {
     private class Gate {
         val mutex = Mutex(); val waiting = AtomicInteger()
@@ -46,15 +48,19 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
         require(!uri.host.lowercase().endsWith("musicbrainz.org") || gapMillis>=1000)
         gate(uri).gapMillis=gapMillis
     }
-    suspend fun get(baseUrl: String, path: String, query: Map<String,String>, maxBytes: Int = 8*1024*1024): UpstreamResponse {
+    companion object { val CREDENTIAL_HEADERS = setOf("X-Api-Key", "X-Emby-Token") }
+    suspend fun get(baseUrl: String, path: String, query: Map<String,String>, maxBytes: Int = 8*1024*1024, credentials: Map<String,String> = emptyMap()): UpstreamResponse {
         DiscoverSettings.validateBase(baseUrl)
         require(path.startsWith("/") && !path.startsWith("//") && '?' !in path && '#' !in path)
         require(maxBytes>0)
         val encoded=query.toSortedMap().entries.joinToString("&") { (k,v) -> "${URLEncoder.encode(k, Charsets.UTF_8)}=${URLEncoder.encode(v, Charsets.UTF_8)}" }
         val uri=URI(baseUrl.trimEnd('/')+path+if(encoded.isEmpty()) "" else "?$encoded")
-        return request(uri,maxBytes)
+        return request(uri,maxBytes,credentials=credentials)
     }
-    internal suspend fun request(uri: URI, maxBytes: Int, pinned: java.net.InetAddress? = null): UpstreamResponse {
+    internal suspend fun request(uri: URI, maxBytes: Int, pinned: java.net.InetAddress? = null, credentials: Map<String,String> = emptyMap()): UpstreamResponse {
+        require(credentials.keys.all { it in CREDENTIAL_HEADERS } && credentials.values.all { v -> v.isNotEmpty() && v.all { it.code in 0x21..0x7e } })
+        // Credentials go only to an operator origin over the ordinary client, never to a pinned image host.
+        require(credentials.isEmpty() || pinned==null)
         val started=clock.monotonicNanos()
         var status: Int?=null
         var outcome: UpstreamFailure?=null
@@ -82,7 +88,7 @@ class PoliteHttp(private val clock: DiscoverClock = SystemDiscoverClock, private
                 g.lastStart=clock.monotonicNanos(); sent=true; onRequest?.invoke()
                 try {
                     val response=if(pinned!=null) PinnedImageHttp.get(uri,pinned,maxBytes,userAgent) else withContext(Dispatchers.IO) {
-                        val req=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).header("User-Agent",userAgent).header("Accept","application/json, image/*").GET().build()
+                        val req=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(10)).header("User-Agent",userAgent).header("Accept","application/json, image/*").apply { credentials.forEach { (k,v) -> header(k,v) } }.GET().build()
                         val sending=client.sendAsync(req,HttpResponse.BodyHandler { info -> status=info.statusCode(); BoundedBody(maxBytes) })
                         val future=sending.copy().orTimeout(10,java.util.concurrent.TimeUnit.SECONDS)
                         val received=suspendCancellableCoroutine<HttpResponse<ByteArray>> { continuation ->

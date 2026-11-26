@@ -7,7 +7,8 @@ import java.util.UUID
 
 /** Cache public metadata first; visibility, rejected matches and availability are always local. */
 class DiscoverService(private val ctx:ServerContext) {
-    private val ids=DiscoverIdentity(ctx.db)
+    companion object { const val ARTIST_TILE_EDGE=500 }
+    private val ids=DiscoverIdentity(ctx.db,artistImages=ctx.integrations.configured)
     private val cursors=CursorCodec(ctx)
     private val shelves=DiscoverShelves(ctx.db,ctx.access,ctx.listenBrainz)
     private val cacheOnly=MusicBrainzClient(ctx.discoverHttp,ctx.discoverCache,ctx.config.discover.copy(enabled=false))
@@ -128,6 +129,12 @@ class DiscoverService(private val ctx:ServerContext) {
     suspend fun artwork(userId:String,id:String):DiscoverImage {
         // Artwork remains usable from existing references while discovery is disabled.
         val source=ids.artwork(id) ?: throw ApiProblem(404,"not-found")
+        // An artist resolves through the integrations layer; none found is not-found, so the client keeps its monogram.
+        source.artistMbid?.let { mbid ->
+            val image=ctx.integrations.artistImage(com.legitimateapps.dulcet.server.integrations.ArtistRef(mbid,""),com.legitimateapps.dulcet.server.integrations.Reach.Catalogue) ?: throw ApiProblem(404,"not-found")
+            val tile=kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { ctx.artwork.sized(image.key,com.legitimateapps.dulcet.server.media.Image(image.bytes,image.contentType),ARTIST_TILE_EDGE) }
+            return DiscoverImage(tile.bytes,tile.contentType,CacheAge(System.currentTimeMillis(),0,false),false)
+        }
         // The named release's own front image first; an album then falls back to its release group's.
         val release=source.releaseMbid?.let { ctx.discoverArtwork.releaseThumbnail(it) }
         if(release!=null && !release.placeholder) return release

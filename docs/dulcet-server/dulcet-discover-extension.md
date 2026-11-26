@@ -89,11 +89,14 @@ expires the cursor, requiring a new first page. Personal shelf order is frozen f
 Upstream search pages are pinned as consumed; an upstream does not offer a transactional snapshot.
 The server refuses a changed cached page generation rather than mixing it silently. No public offset.
 
-An `artworkId` is minted for albums and for songs whose source names a cover release; artists have
-none. The server resolves a song's release cover first and falls back to its release group's.
+An `artworkId` is minted for albums and for songs whose source names a cover release. Artists get
+one only when the server has an artist-image connection configured (see the server's
+[Connections settings](README.md#connections-artist-images-from-tools-you-already-run)); an artist
+no source can picture answers not-found, and the client keeps its monogram. The server resolves a
+song's release cover first and falls back to its release group's.
 
 `getDulcetDiscoverCoverArt` returns the already sized `front-250` thumbnail bytes without decoding
-or resizing. It requires JPEG, PNG, GIF or WebP magic and at most 5 MiB. Structural checks require
+or resizing; an artist image is scaled by the server to at most 500 pixels on its long side. It requires JPEG, PNG, GIF or WebP magic and at most 5 MiB. Structural checks require
 JPEG SOI/EOI boundaries, a PNG IHDR first and zero-length IEND last with complete chunks and image
 data, a GIF trailer last, and a WebP RIFF length matching the body with complete padded chunks and
 image data. A malformed body is a temporary upstream failure: a last good cached image can still

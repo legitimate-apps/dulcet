@@ -67,6 +67,7 @@ data class Config(
     val routes: List<ClientRoute> = emptyList(),
     val legacyOwnershipAnchors: List<String> = emptyList(),
     val discover: com.legitimateapps.dulcet.server.discover.DiscoverSettings = com.legitimateapps.dulcet.server.discover.DiscoverSettings(),
+    val integrations: com.legitimateapps.dulcet.server.integrations.IntegrationSettings = com.legitimateapps.dulcet.server.integrations.IntegrationSettings(),
 ) {
     internal val clientAddresses = com.legitimateapps.dulcet.server.auth.ClientAddresses(trustedProxies)
 
@@ -90,6 +91,7 @@ data class Config(
                 webhookAllowPrivateTargets = value("webhook-allow-private-targets", "false")=="true",
                 webhookAllowOtherPorts = value("webhook-allow-other-ports", "false")=="true",
                 discover = com.legitimateapps.dulcet.server.discover.DiscoverSettings.load { name, default -> value(name, default) },
+                integrations = com.legitimateapps.dulcet.server.integrations.IntegrationSettings.load { name, default -> value(name, default) },
                 routes = parseClientRoutes(value("routes")),
                 legacyOwnershipAnchors = parseLegacyAnchors(value("legacy-ownership-anchors")),
                 trustedProxies = value("trusted-proxies")?.trim()?.takeIf(String::isNotEmpty)?.split(',') ?: emptyList(),
@@ -132,6 +134,8 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val discoverCache = com.legitimateapps.dulcet.server.discover.DiscoverCache(db)
     val musicBrainz = com.legitimateapps.dulcet.server.discover.MusicBrainzClient(discoverHttp,discoverCache,config.discover)
     val listenBrainz = com.legitimateapps.dulcet.server.discover.ListenBrainzClient(discoverHttp,discoverCache,config.discover)
+    /** Tools beside Dulcet (Lidarr, Jellyfin, Emby); empty unless configured. */
+    val integrations = com.legitimateapps.dulcet.server.integrations.Integrations.from(config.integrations,discoverHttp,discoverCache,testingOverride={config.testMode && testing.discoverArtworkAllowLoopback})
     val discoverArtwork = com.legitimateapps.dulcet.server.discover.CoverArtClient(discoverHttp,discoverCache,config.discover,testingOverride={config.testMode && testing.discoverArtworkAllowLoopback})
     val wishlist = com.legitimateapps.dulcet.server.wishlist.WishlistService(this)
     val discoverMatcher = com.legitimateapps.dulcet.server.discover.DiscoverMatcher(db,access,rejectedForUser=wishlist::rejectionLookup)
@@ -141,7 +145,7 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val apiDiscover = com.legitimateapps.dulcet.server.v1.ApiDiscover(this)
     val scanner = Scanner(db, config.musicFolder, Probe(config.ffprobe),afterCatalogCommit=wishFulfilment::enqueue)
     override fun close() { wishFulfilment.close();discoverHttp.close() }
-    val artwork = Artwork(db, config.musicFolder, config.dataFolder.resolve("cache"), config.ffmpeg, access)
+    val artwork = Artwork(db, config.musicFolder, config.dataFolder.resolve("cache"), config.ffmpeg, access, integrations.takeIf { it.configured })
     val transcoder = Transcoder(config.ffmpeg)
     val transcodeParams = TranscodeParams(java.security.MessageDigest.getInstance("SHA-256").digest(key + "transcodeParams".toByteArray()))
     val lyrics = LyricsService(db, config.musicFolder, lyricsProvider ?: config.lrclibUrl?.let { LrcLibProvider(it, USER_AGENT) })
