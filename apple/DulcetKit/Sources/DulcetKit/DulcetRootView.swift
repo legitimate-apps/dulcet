@@ -772,6 +772,9 @@ private struct DulcetCompactShell: View {
         .onChange(of: searchPresented) { _, presented in
             if presented { retainsSubmittedSearch = false }
         }
+        // A result was used: the keyboard gives way to the mini player or the page it opened,
+        // while the query and the results stay.
+        .onChange(of: store.searchKeyboardDismissals) { _, _ in searchFieldFocused = false }
         .onChange(of: store.selectedDestination) { _, destination in
             // Native Search dismissal can restore a content tab before its field's
             // binding updates. Never carry active search into that restored page.
