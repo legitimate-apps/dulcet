@@ -150,11 +150,20 @@ internal class LibraryDepthWindow(reader: LibraryReader, query: LibraryQuery, li
     private var attempted = false
     override fun needsRevalidation(): Boolean = query is LibraryQuery.ArtistTopSongs && !attempted
     override suspend fun performRevalidate(requested: RevalidateCause) {
-        if (query !is LibraryQuery.ArtistTopSongs || !reader.online) { emitSnapshot(); return }
+        val current = query
+        if (current !is LibraryQuery.ArtistTopSongs || !reader.online) { emitSnapshot(); return }
         attempted = true
-        val name = cache.artist(query.rawId)?.record?.name
-        if (name == null) { emitSnapshot(); return }
         try {
+            // getTopSongs names the artist, so the name must be known. An artist page opened from an
+            // album, a song or search opens this window alongside the artist's own read, before the
+            // artist's row is in the cache; read it here rather than give up on Top Songs for good.
+            val name = cache.artist(current.rawId)?.record?.name ?: run {
+                val parameters = mapOf("id" to current.rawId)
+                val sent = reader.send("getArtist", parameters).requireOk("getArtist", parameters)
+                val (artist, _) = parseReaderArtist(sent.response.body, current.rawId)
+                cache.writeEntities(CacheWriteStamp(sent.issueSeq, cache.now(), reader.sessionEpoch?.key), CacheEntitySource.Detail, CacheEntities(artists = listOf(artist)))
+                artist.name
+            }
             val parameters = mapOf("artist" to name, "count" to "20")
             val sent = reader.send("getTopSongs", parameters).requireOk("getTopSongs", parameters)
             val tracks = parseReaderTopSongs(sent.response.body)
