@@ -41,7 +41,7 @@ class AccountAccess(private val db: Db) {
 
     fun canReadArtwork(user: User, id: String): Boolean = db.read {
         val typed = listOf("al-" to "album", "mf-" to "track", "ar-" to "artist", "pl-" to "playlist").firstOrNull { id.startsWith(it.first) }
-        val bare = typed?.let { id.removePrefix(it.first) } ?: id
+        val bare = typed?.let { id.removePrefix(it.first) }?.let { if (typed.second == "artist") com.legitimateapps.dulcet.server.media.artistArtworkTarget(it) { a -> long("SELECT COUNT(*) FROM artist WHERE id=?", a) > 0 } else it } ?: id
         val type = typed?.second ?: listOf("album", "track", "artist", "playlist").firstOrNull { long("SELECT COUNT(*) FROM $it WHERE id=?", bare)>0 } ?: return@read false
         if(type=="playlist") long("SELECT COUNT(*) FROM playlist WHERE id=? AND (owner_id=? OR public=1 OR ?=1)", bare,user.id,user.isAdmin)>0
         else canReadCatalog(user.id,type,bare)

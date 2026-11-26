@@ -92,6 +92,42 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         print("OFFLINE-SETTINGS idiom=\(UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "iphone") automatic=off-relaunch-on clear=invoked")
     }
 
+    /// An artist's picture saved before the server had a photo is replaced on the next visit, with no
+    /// reinstall. Phase `standin`: connect to a disposable Dulcet Server with no artist-image source and
+    /// photograph the artist page (the hero is the album cover stand-in) and Discover. Phase `photo`, run
+    /// after the same server restarts with a stub Lidarr that has the photos: relaunch with the saved
+    /// account and cache and photograph both again. Skipped unless `DULCET_ARTIST_ART_PROOF` names a phase.
+    @MainActor
+    func testArtistPhotoReplacesASavedStandIn() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phase = environment["DULCET_ARTIST_ART_PROOF"] else {
+            throw XCTSkip("Requires the disposable artist-photo fixture")
+        }
+        let artist = environment["DULCET_ARTIST_ART_ARTIST"] ?? "Velvet Harbor"
+        let app = XCUIApplication()
+        if phase == "standin" {
+            let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+            let host = URLComponents(string: url)?.host ?? ""
+            XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+            app.launchArguments += ["-dulcet-debug-connect-account",
+                "-dulcet-debug-account-server-url", url,
+                "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+                "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        }
+        launchInInteractionScope(app)
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
+        if phase == "standin" { XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription) }
+        XCTAssertTrue(openArtist(artist, in: app, compact: compact), app.debugDescription)
+        _ = settle(app, seconds: 4)
+        shoot("artist-art-\(phase)-hero", app)
+        XCTAssertTrue(openDestination("Discover", sidebar: "dulcet.sidebar.discover", in: app, compact: compact),
+            app.debugDescription)
+        _ = settle(app, seconds: 6)
+        shoot("artist-art-\(phase)-discover", app)
+        print("ARTIST-ART phase=\(phase) artist=\(artist)")
+    }
+
     /// Downloads one playlist with Automatic Downloads off, browses Downloaded, then (in the
     /// `offline` phase, run after the disposable server is stopped) reads the page status line,
     /// Downloaded and Search with no server. Skipped unless `DULCET_PLAYLIST_DOWNLOAD_PROOF` names a phase.

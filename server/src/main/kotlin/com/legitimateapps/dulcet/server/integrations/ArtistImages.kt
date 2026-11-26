@@ -122,6 +122,23 @@ class Integrations(
         return RemoteImage(stored.body, type, key, digest)
     }
 
+    /**
+     * A short token naming the Library-reach photo [cachedArtistImage] would answer for [artist], or null when none is
+     * known yet. It goes into the artist's `coverArt` id, so a client that keeps an image under its id for good (Dulcet's
+     * own apps, other OpenSubsonic clients) sees a new id when a photo arrives or changes, rather than keeping the album
+     * cover that stood in before. Cache only, never the network, so it is safe inside a database transaction; a missing
+     * or stale answer queues the same background refresh as [cachedArtistImage].
+     */
+    fun artistImageVersion(artist: ArtistRef): String? {
+        val cache = cache ?: return null
+        val mbid = canonical(artist) ?: return null
+        val pointer = cache.peek(pointerKey(mbid, Reach.Library))
+        if (pointer == null || (pointer.status == 200 && pointer.ageMillis > POINTER_REFRESH_MILLIS)) refresh(artist.copy(musicBrainzId = mbid), Reach.Library)
+        if (pointer?.status != 200) return null
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(pointer.body)
+        return digest.take(5).joinToString("") { "%02x".format(it) }
+    }
+
     @Volatile private var closed = false
 
     private fun refresh(artist: ArtistRef, reach: Reach) {

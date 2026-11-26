@@ -374,6 +374,13 @@ struct DulcetDiscoverArtworkView: View {
         }
         .frame(width: size, height: size).clipped().clipShape(outline).accessibilityHidden(true)
         .onAppear(perform: load)
+        // A shelf that refreshes in place (its first answer had no art yet, or named another image) keeps this
+        // view on screen, so onAppear never runs again; without this the tile kept its letter circle.
+        .onChange(of: artworkId) { _, newId in
+            operation?.cancel(); operation = nil
+            image = newId.flatMap { DulcetDiscoverImageMemory.image(for: $0) }
+            load()
+        }
         .onDisappear { operation?.cancel(); operation = nil }
     }
     private var outline: AnyShape {

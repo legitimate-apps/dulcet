@@ -1,4 +1,5 @@
 import CryptoKit
+import Darwin
 import Foundation
 
 public struct DulcetArtworkCacheKey: Sendable, Hashable {
@@ -67,7 +68,19 @@ public actor DulcetArtworkDiskCache {
         self.now = now
     }
 
+    /// A saved image and whether the server's short lifetime for it has run out.
+    public struct Saved: Sendable, Equatable {
+        public let data: Data
+        /// The server said this image stays current only briefly (an artist's stand-in while a photo may
+        /// still come) and that time has passed: ask again, and keep showing this only if asking fails.
+        public let isStale: Bool
+    }
+
     public func data(for key: DulcetArtworkCacheKey) -> Data? {
+        saved(for: key)?.data
+    }
+
+    public func saved(for key: DulcetArtworkCacheKey) -> Saved? {
         loadIndexIfNeeded()
         let url = fileURL(for: key)
         guard let data = try? Data(contentsOf: url) else {
@@ -75,19 +88,28 @@ public actor DulcetArtworkDiskCache {
             return nil
         }
         let access = now()
+        let isStale = Self.freshUntil(url).map { access >= $0 } ?? false
         try? fileManager.setAttributes([.modificationDate: access], ofItemAtPath: url.path)
         remember(Entry(url: url, byteCount: data.count, lastAccess: access))
-        return data
+        return Saved(data: data, isStale: isStale)
     }
 
-    public func insert(_ data: Data, for key: DulcetArtworkCacheKey, authorize: @Sendable () -> Bool = { true }) {
+    /// `freshFor` is the server's short lifetime for the image in seconds (see `AppleArtworkFetchOutcome`),
+    /// or nil for an image kept as long as its id. The file stays in the cache either way, so a stale image
+    /// still shows offline; only its freshness is recorded beside it.
+    public func insert(
+        _ data: Data, for key: DulcetArtworkCacheKey, freshFor: TimeInterval? = nil,
+        authorize: @Sendable () -> Bool = { true }
+    ) {
         guard !Task.isCancelled, authorize(), !data.isEmpty, data.count <= maximumByteCount else { return }
         loadIndexIfNeeded()
         let url = fileURL(for: key)
         do {
             try fileManager.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            // An atomic write replaces the file, so a lifetime recorded for an earlier image goes with it.
             try data.write(to: url, options: .atomic)
             let access = now()
+            if let freshFor { Self.setFreshUntil(access.addingTimeInterval(max(0, freshFor)), url) }
             try fileManager.setAttributes([.modificationDate: access], ofItemAtPath: url.path)
             remember(Entry(url: url, byteCount: data.count, lastAccess: access))
             evictIfNeeded()
@@ -234,6 +256,26 @@ public actor DulcetArtworkDiskCache {
             }
             return lhs.lastAccess < rhs.lastAccess
         }
+    }
+
+    private static let freshUntilAttribute = "com.legitimateapps.dulcet.fresh-until"
+
+    /// The lifetime rides in an extended attribute, so the cache's inventory of image files is unchanged.
+    private static func setFreshUntil(_ date: Date, _ url: URL) {
+        var seconds = date.timeIntervalSinceReferenceDate
+        _ = url.withUnsafeFileSystemRepresentation { path in
+            guard let path else { return Int32(-1) }
+            return setxattr(path, freshUntilAttribute, &seconds, MemoryLayout<Double>.size, 0, 0)
+        }
+    }
+
+    private static func freshUntil(_ url: URL) -> Date? {
+        var seconds: Double = 0
+        let read = url.withUnsafeFileSystemRepresentation { path -> Int in
+            guard let path else { return -1 }
+            return getxattr(path, freshUntilAttribute, &seconds, MemoryLayout<Double>.size, 0, 0)
+        }
+        return read == MemoryLayout<Double>.size ? Date(timeIntervalSinceReferenceDate: seconds) : nil
     }
 
     private func fileURL(for key: DulcetArtworkCacheKey) -> URL {

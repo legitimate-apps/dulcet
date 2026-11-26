@@ -138,6 +138,8 @@ class ServerContext(val config: Config, val db: Db, lyricsProvider: com.legitima
     val integrations = com.legitimateapps.dulcet.server.integrations.Integrations.from(config.integrations,discoverHttp,discoverCache,testingOverride={config.testMode && testing.discoverArtworkAllowLoopback}).also { chain ->
         // A library artist whose Connections photo changed is journalled, so v1 clients re-read its artwork reference.
         chain.onArtistImageChanged = { mbid -> db.write { execute("INSERT INTO api_journal(type,id,op,at) SELECT 'artist',id,'upsert',? FROM artist WHERE mbz_artist_id=?",System.currentTimeMillis(),mbid) } }
+        // /rest artist coverArt ids carry the photo's version, so clients that cache by id see a new photo.
+        if (chain.configured) catalog.artistImageVersion = { mbid -> chain.artistImageVersion(com.legitimateapps.dulcet.server.integrations.ArtistRef(mbid, "")) }
     }
     /** An artist's popular songs for getTopSongs; behind one small interface so it can move to Connections. */
     val artistPopularity = com.legitimateapps.dulcet.server.discover.ListenBrainzArtistPopularity(listenBrainz, db)

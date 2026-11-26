@@ -8073,6 +8073,28 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-26 — An artist's photo replaces its stand-in on devices that saved it (§16.14, §29, Discover).**
+OBSERVED on the household server and a DEV build, 2026-11-26: Pavement's and Peach Pit's artist pages
+showed an album cover while search showed the photo. Devices cache artwork by id with no expiry
+(Apple's disk cache is keyed by server, artwork id and size), so an `ar-` stand-in saved before
+Connections had a photo stayed for good; the five-minute `Cache-Control` was never read. Two changes,
+each enough alone. **Server:** while artist-image sources are configured, an artist's `coverArt` is
+`ar-<id>_<version>`, where the version is the first ten hex digits of the SHA-256 of the cached photo,
+and stays `ar-<id>` while no photo is known. `getCoverArt` and the artwork access check accept any
+version, current, old or none, and resolve it to the artist only when the plain id is not itself an
+artist; unknown ids stay not-found. A client that caches by id therefore asks for the photo under a
+new id, and old ids keep answering. Reading the version uses only the Connections cache and queues a
+background refresh, so no network call runs under the database lock. **Clients:** the shared core
+passes a `Cache-Control` lifetime under a day with the image (`no-cache` counts as zero); Apple
+records it beside the cached file, and past it asks again, keeping the saved image whenever the
+answer is not a usable image or the device is offline. Lasting images keep no lifetime. Discover
+tiles reload when a refreshed shelf names a new `artworkId` for a tile already on screen; before,
+only appearing did. **Discover:** the trending shelves show each release group, recording or artist
+once, keeping the most-listened row; OBSERVED: ListenBrainz's sitewide stats listed BTS's ARIRANG
+twice, two releases of one release group with one cover. Rows with no id are kept. Not changed:
+"New releases" with no Cover Art Archive image still show the placeholder note (the archive has no
+art for them, OBSERVED); falling back to the artist's photo is open.
+
 **2026-11-26 — Downloaded music is in My Library on this device (§29.9, §16.14).**
 Seen on an iPhone against a Dulcet Server: an album and a playlist were downloaded and played
 offline, yet Library > Albums showed the empty "Your Library Starts Here" invitation, because the
@@ -8157,9 +8179,8 @@ hour, lookups a day; a connection that fails with an outage is skipped for a min
 get an opaque `artworkId` only when an artist-image source is configured; it resolves through the
 chain by MusicBrainz id to at most 500 px; an artist nothing can picture answers not-found, so the
 client keeps its monogram, and one no source could be asked (every source in an outage) answers
-unavailable. With nothing configured, behaviour is as before. The Apple client needed no
-change: its Discover tile already draws an image when the tile has an `artworkId` and keeps the
-initial on failure, and library artist pages already show the `ar-` artwork. Deferred: matching by
+unavailable. With nothing configured, behaviour is as before. The Apple client needed changes after
+all: see the next entry, "An artist's photo replaces its stand-in on devices that saved it". Deferred: matching by
 name when an artist has no MusicBrainz id; a held Discover artist's own folder image.
 
 **2026-11-26 — An artist's Play leads with the artist's popular songs (§29, Discover).**

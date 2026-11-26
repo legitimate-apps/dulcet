@@ -27,11 +27,17 @@ internal data class ArtworkFetchRequest(
 }
 
 internal sealed interface ArtworkFetchResult {
-    data class Loaded(val bytes: ByteArray) : ArtworkFetchResult {
+    /**
+     * [freshForSeconds] is how long the server says the image stays current, when it says so for a short while
+     * (under [ARTWORK_LASTING_SECONDS]); null means keep it as long as the id. Dulcet Server answers an artist's
+     * stand-in (an album cover while a photo may still come) with five minutes, so a device that saved it can ask
+     * again rather than show the stand-in for good.
+     */
+    data class Loaded(val bytes: ByteArray, val freshForSeconds: Long? = null) : ArtworkFetchResult {
         override fun equals(other: Any?): Boolean =
-            other is Loaded && bytes.contentEquals(other.bytes)
+            other is Loaded && bytes.contentEquals(other.bytes) && freshForSeconds == other.freshForSeconds
 
-        override fun hashCode(): Int = bytes.contentHashCode()
+        override fun hashCode(): Int = bytes.contentHashCode() * 31 + freshForSeconds.hashCode()
     }
 
     data object Unavailable : ArtworkFetchResult
@@ -42,7 +48,23 @@ internal data class ArtworkEndpointResponse(
     val statusCode: Int,
     val body: ByteArray,
     val redactedUrl: String,
+    val cacheControl: String? = null,
 )
+
+/** A lifetime at or past this (a day) is treated as lasting: the id, not the clock, says when the image changes. */
+internal const val ARTWORK_LASTING_SECONDS = 86_400L
+
+/**
+ * The `max-age` of a `Cache-Control` value when it is shorter than [ARTWORK_LASTING_SECONDS]; `no-cache` and
+ * `no-store` count as zero. Anything else, absent or unreadable, is null: keep the image under its id.
+ */
+internal fun artworkFreshForSeconds(cacheControl: String?): Long? {
+    val directives = cacheControl?.split(',')?.map { it.trim().lowercase() } ?: return null
+    if (directives.any { it == "no-cache" || it == "no-store" }) return 0
+    val maxAge = directives.firstOrNull { it.startsWith("max-age=") }?.removePrefix("max-age=")?.trim('"')?.toLongOrNull()
+        ?: return null
+    return maxAge.coerceAtLeast(0).takeIf { it < ARTWORK_LASTING_SECONDS }
+}
 
 internal fun interface ArtworkEndpointTransport {
     suspend fun request(parameters: Map<String, String>): ArtworkEndpointResponse
@@ -96,7 +118,7 @@ internal class ArtworkFetcher private constructor(
                         DomainError.Server.Unknown(response.statusCode),
                     )
                     response.body.hasRecognizedArtworkSignature() -> {
-                        ArtworkFetchResult.Loaded(response.body)
+                        ArtworkFetchResult.Loaded(response.body, artworkFreshForSeconds(response.cacheControl))
                     }
                     else -> ArtworkFetchResult.Failed(DomainError.Protocol.MalformedEnvelope)
                 }
@@ -142,6 +164,7 @@ private class KtorArtworkEndpointTransport(
             statusCode = response.statusCode,
             body = response.body,
             redactedUrl = response.redactedUrl,
+            cacheControl = response.headers.cacheControl,
         )
     }
 
