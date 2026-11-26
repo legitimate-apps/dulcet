@@ -153,7 +153,7 @@ data class TrackInfo(
         /**
          * The id belonging to the credit at [position] of [credits]: only when the tag lists exactly one id per
          * credit, so "A feat. B" with a single id gives B none rather than A's. [legacyFirst] is a row written before
-         * the full list was stored; it is trusted only for a single credit.
+         * the full list was stored; it stays with the lead credit (position 0), as before, and no other.
          */
         fun creditMbid(ids: String?, legacyFirst: String?, position: Int, credits: Int): String? {
             // A row from before the id lists kept only the first id; it stays with the lead credit, as before, and no other.
