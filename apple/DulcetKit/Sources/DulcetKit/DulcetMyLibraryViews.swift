@@ -70,7 +70,14 @@ struct DulcetMyLibraryStatusLines: View {
     let onRetry: () -> Void
 
     var body: some View {
-        if let error = library.error {
+        if library.syncState == "offline" {
+            // Offline the lists are this device's music, downloads included: say offline, never
+            // "Couldn't refresh" (§16.14).
+            DulcetDestinationStatus(title: DulcetStrings.readerPageOffline, symbol: "wifi.slash",
+                identifier: "dulcet.myLibrary.offline")
+                .dulcetContentMarginPadding()
+                .background(.background, ignoresSafeAreaEdges: [])
+        } else if let error = library.error {
             DulcetDestinationStatus(title: DulcetStrings.myLibraryRefreshFailedTitle,
                 symbol: "exclamationmark.circle", retry: onRetry)
                 .accessibilityLabel(DulcetStrings.myLibraryRefreshFailed(DulcetStrings.readerErrorPhrase(error)))

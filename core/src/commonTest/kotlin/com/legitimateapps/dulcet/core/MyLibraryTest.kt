@@ -195,12 +195,14 @@ class MyLibraryTest {
         server: DulcetLibraryTestServer,
         config: MyLibraryConfig = MyLibraryConfig(),
         binding: CacheBinding = SessionEnv.BINDING,
+        downloads: DownloadedTrackSource = DownloadedTrackSource.None,
     ): LibraryReaderSession = LibraryReaderSession(
         database = env.database.database,
         cache = env.store.bind(binding),
         transport = server,
         scope = env.scope,
         config = LibraryReaderConfig(lookAheadMaxPerViewport = 0),
+        downloads = downloads,
         formPost = false,
         foreground = false,
         myLibraryConfig = config,
@@ -560,6 +562,118 @@ class MyLibraryTest {
     }
 
     // ---- Writes -----------------------------------------------------------------------------------
+
+    // ---- Downloads are in My Library on this device (§29.9, §28 2026-11-26) ---------------------------
+
+    /**
+     * An album downloaded on this device is in Library's albums, artists and songs, online and
+     * offline, without becoming a member on the server: nothing is sent, and membership stays the
+     * server's. Offline, the lists are the device's and no refresh failure is reported.
+     */
+    @Test
+    fun downloadedMusicIsInMyLibraryOnlineAndOfflineWithoutAServerWrite() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        server.serverAdd("album", albumId(5))
+        val downloaded = setOf("${albumId(3)}-track-0", "${albumId(3)}-track-1")
+        val session = online(session(env, server, downloads = DownloadedTrackSource { downloaded }))
+        // A download pins its tracks' metadata; opening the album is how this fixture caches it.
+        session.reader.open(LibraryQuery.Album(albumId(3)), Recorder(server.inner))
+        advanceUntilIdle()
+        session.myLibrary.refresh()
+
+        val online = session.myLibrary.snapshot(MyLibrarySort.RecentlyAdded)
+        assertEquals(listOf(albumId(5), albumId(3)), online.albumIds(), "the member first, then the device's download")
+        val album3 = online.albums.single { it.record.rawId == albumId(3) }
+        assertTrue(album3.deviceOnly)
+        assertEquals(false, album3.explicitlyAdded)
+        assertEquals(0, album3.memberSongCount)
+        assertEquals(false, online.albums.single { it.record.rawId == albumId(5) }.deviceOnly)
+        assertEquals(downloaded, online.songs.map { it.record.rawId }.toSet())
+        assertTrue(online.songs.all { it.deviceOnly })
+        assertEquals(listOf("artist-1"), online.artists.map { it.record.rawId }, "the artist of the member and of the download")
+        assertEquals(false, online.artists.single().deviceOnly, "artist 1 is there for the member album too")
+        assertEquals(MyLibraryMembership.NotAdded, session.myLibrary.membership(LibraryEntityRef(LibraryEntityKind.Album, albumId(3))),
+            "a download is not a server membership")
+        assertEquals(0, server.count("addToDulcetLibrary"), "no server write")
+        assertEquals(MyLibrarySyncState.Current, online.syncState)
+
+        session.setOnline(false)
+        val before = server.requests.size
+        assertIs<MyLibraryRefreshOutcome.Failed>(session.myLibrary.refresh(), "fixture: a refresh offline fails")
+        val offline = session.myLibrary.snapshot(MyLibrarySort.RecentlyAdded)
+        assertEquals(listOf(albumId(5), albumId(3)), offline.albumIds())
+        assertEquals(downloaded, offline.songs.map { it.record.rawId }.toSet())
+        assertEquals(MyLibrarySyncState.Offline, offline.syncState, "offline is not a failure")
+        assertNull(offline.lastError, "offline shows no refresh failure")
+        assertEquals(before, server.requests.size, "offline reads nothing")
+    }
+
+    /**
+     * A person who has added nothing but downloaded an album: offline, Library's lists show the
+     * download, never the empty invitation or a failure (use test 2026-11-26).
+     */
+    @Test
+    fun offlineWithOnlyDownloadsTheListsAreNeverEmpty() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        val downloaded = setOf("${albumId(3)}-track-0")
+        val first = online(session(env, server, downloads = DownloadedTrackSource { downloaded }))
+        first.reader.open(LibraryQuery.Album(albumId(3)), Recorder(server.inner))
+        advanceUntilIdle()
+        first.myLibrary.refresh()
+        assertEquals(listOf(albumId(3)), first.myLibrary.snapshot(MyLibrarySort.RecentlyAdded).albumIds())
+
+        // Relaunch with no network.
+        val second = session(env, server, downloads = DownloadedTrackSource { downloaded })
+        second.setOnline(false)
+        second.myLibrary.refresh()
+        val offline = second.myLibrary.snapshot(MyLibrarySort.Alphabetical)
+        assertEquals(listOf(albumId(3)), offline.albumIds())
+        assertEquals(listOf("${albumId(3)}-track-0"), offline.songs.map { it.record.rawId })
+        assertTrue(offline.artists.isNotEmpty())
+        assertEquals(MyLibrarySyncState.Offline, offline.syncState)
+        assertNull(offline.lastError)
+    }
+
+    /** A member song that is also downloaded is listed once, as a member. */
+    @Test
+    fun aDownloadedMemberSongIsListedOnceAsAMember() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        server.serverAdd("song", "${albumId(7)}-track-0")
+        val session = online(session(env, server, downloads = DownloadedTrackSource { setOf("${albumId(7)}-track-0") }))
+        session.myLibrary.refresh()
+        val snapshot = session.myLibrary.snapshot(MyLibrarySort.RecentlyAdded)
+        assertEquals(listOf("${albumId(7)}-track-0"), snapshot.songs.map { it.record.rawId })
+        assertEquals(false, snapshot.songs.single().deviceOnly)
+        assertEquals(false, snapshot.albums.single().deviceOnly)
+        assertEquals(1, snapshot.albums.single().memberSongCount)
+    }
+
+    /**
+     * Offline, nothing of an album that has no song on this device can play: its tracks are
+     * unavailable offline, so a shell's Play has nothing to start, and its row or tile says so.
+     */
+    @Test
+    fun offlineAnAlbumWithNothingDownloadedHasNothingToPlay() = sessionTest { env ->
+        val server = DulcetLibraryTestServer()
+        val session = online(session(env, server, downloads = DownloadedTrackSource { setOf("${albumId(3)}-track-0") }))
+        listOf(3, 9).forEach { id ->
+            session.reader.open(LibraryQuery.Album(albumId(id)), Recorder(server.inner))
+            advanceUntilIdle()
+        }
+        session.setOnline(false)
+        fun playability(id: Int): List<LibraryPlayability?> {
+            val pubs = Recorder<LibraryPublication>(server.inner)
+            session.reader.open(LibraryQuery.Album(albumId(id)), pubs)
+            return pubs.last.items.map { (it as LibraryItem.Track).playability }
+        }
+        val album9 = playability(9)
+        assertEquals(2, album9.size, "fixture: album 9's tracks are cached")
+        assertTrue(album9.all { it == LibraryPlayability.UnavailableOffline }, "nothing of album 9 can play: $album9")
+        assertEquals(listOf(LibraryPlayability.Downloaded, LibraryPlayability.UnavailableOffline), playability(3))
+        assertEquals(LibraryPlayability.UnavailableOffline, albumPlayability(hasDownloadedSong = false, online = false))
+        assertEquals(LibraryPlayability.Downloaded, albumPlayability(hasDownloadedSong = true, online = false))
+        assertEquals(LibraryPlayability.Streamable, albumPlayability(hasDownloadedSong = false, online = true))
+    }
 
     @Test
     fun anOfflineAddSurvivesARelaunchAndIsSentOnReconnect() = sessionTest { env ->

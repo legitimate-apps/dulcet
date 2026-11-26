@@ -1003,6 +1003,63 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 
 #if !os(tvOS)
+    /// An album downloaded on this device, never added to My Library, is in Library > Albums
+    /// online and after an offline relaunch, and the download writes nothing to the server
+    /// (spec §28, 2026-11-26). Offline, Library shows its offline line, never the empty poster.
+    @MainActor
+    func testDownloadedAlbumIsInLibraryOfflineWithoutAServerWrite() throws {
+        continueAfterFailure = false
+        try setOffline(false)
+        let album = try fixtureAlbum()
+        try removeAlbum(album.id)
+        try launch()
+        try select("browse")
+        try openAlbum(album.title)
+        revealAlbumActions()
+        let download = albumMenuAction(titles: ["Download"], identifier: NSPredicate(format: "identifier == 'dulcet.album.download'"))
+        XCTAssertTrue(download.waitForExistence(timeout: 20), app.debugDescription)
+        activate(download)
+        let albumResponse = try rest("getAlbum", params: ["id": album.id])
+        let detail = try XCTUnwrap(albumResponse["album"] as? [String: Any])
+        let songTitle = try XCTUnwrap((detail["song"] as? [[String: Any]])?.first?["title"] as? String)
+        let song = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", songTitle)).firstMatch
+        XCTAssertTrue(song.waitForExistence(timeout: 20), app.debugDescription)
+        let downloaded = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value CONTAINS %@", "Downloaded"), object: song)
+        XCTAssertEqual(XCTWaiter.wait(for: [downloaded], timeout: 90), .completed, "The album's Download must store its songs")
+        XCTAssertFalse(try serverContains(album.id), "A download is not a My Library write")
+        try select("library")
+        let albums = app.buttons["dulcet.myLibrary.section.albums"].firstMatch
+        XCTAssertTrue(albums.waitForExistence(timeout: 20), "Library must open its sections, not the empty poster: " + app.debugDescription)
+        activate(albums)
+        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Online, the downloaded album is in Library > Albums")
+        try capture("Downloads-Library-Albums-Online")
+        app.terminate()
+        try setOffline(true)
+        defer { try? setOffline(false) }
+        try launch(connect: false)
+        try select("library")
+        XCTAssertFalse(app.staticTexts["Your Library Starts Here"].firstMatch.exists, "Offline with downloads, Library is never the empty poster")
+        XCTAssertTrue(app.buttons["dulcet.myLibrary.section.albums"].firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        // A relaunch that has not reconnected states it once in the account banner; a session that
+        // drops offline states it in My Library's own status line.
+        let offlineLine = app.descendants(matching: .any).matching(NSPredicate(format: "identifier IN %@",
+            ["dulcet.reader.deviceOnly", "dulcet.myLibrary.offline"])).firstMatch
+        XCTAssertTrue(offlineLine.waitForExistence(timeout: 60), "Library must say it is offline: " + app.debugDescription)
+        try capture("Downloads-Library-Offline")
+        activate(app.buttons["dulcet.myLibrary.section.albums"].firstMatch)
+        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20), "Offline, the downloaded album is in Library > Albums")
+        try capture("Downloads-Library-Albums-Offline")
+        try select("library")
+        let songs = app.buttons["dulcet.myLibrary.section.songs"].firstMatch
+        XCTAssertTrue(songs.waitForExistence(timeout: 20))
+        activate(songs)
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", songTitle)).firstMatch.waitForExistence(timeout: 20),
+                      "Offline, Library > Songs lists the downloaded songs: " + app.debugDescription)
+        XCTAssertFalse(app.staticTexts["Nothing Here Yet"].firstMatch.exists)
+        try capture("Downloads-Library-Songs-Offline")
+        XCTAssertFalse(try serverContains(album.id), "Offline reading must not have queued a membership write")
+    }
+
     /// Catalog order, durable category selection, shuffle queue, and artist depth through UI.
     @MainActor
     func testIPhoneLibrarySortShuffleAndArtistDepth() throws {

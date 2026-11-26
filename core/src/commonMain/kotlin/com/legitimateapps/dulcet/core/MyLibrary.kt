@@ -269,6 +269,8 @@ internal data class MyLibraryAlbum(
     val memberSongCount: Int,
     val pending: Boolean,
     val rank: Long,
+    /** Shown only because songs of it are downloaded on this device: not a member on the server. */
+    val deviceOnly: Boolean = false,
 )
 
 internal data class MyLibraryArtist(
@@ -276,12 +278,21 @@ internal data class MyLibraryArtist(
     val explicitlyAdded: Boolean,
     val pending: Boolean,
     val rank: Long,
+    /** Shown only for downloaded music on this device. */
+    val deviceOnly: Boolean = false,
 )
 
-internal data class MyLibrarySong(val record: CacheTrackRecord, val pending: Boolean, val rank: Long)
+/** [deviceOnly]: downloaded on this device and not a member on the server. */
+internal data class MyLibrarySong(val record: CacheTrackRecord, val pending: Boolean, val rank: Long, val deviceOnly: Boolean = false)
+
+/**
+ * The rank of music shown only because it is downloaded: below every member, because the device
+ * keeps no time for a download that could be compared with a member's rank (spec §29.9).
+ */
+internal const val MY_LIBRARY_DEVICE_RANK: Long = Long.MIN_VALUE / 2
 
 /** Where the device's copy of the library stands. */
-internal enum class MyLibrarySyncState { Never, Syncing, Current, Cached, Failed }
+internal enum class MyLibrarySyncState { Never, Syncing, Current, Cached, Offline, Failed }
 
 internal data class MyLibrarySnapshot(
     val availability: MyLibraryAvailability,
@@ -344,6 +355,7 @@ internal class MyLibrary(
     private var syncing = false
     private var lastError: DomainError? = null
     private var refreshedThisSession = false
+    private var publishedOnline = true
 
     init {
         favourites.membershipDelivery = this
@@ -362,7 +374,13 @@ internal class MyLibrary(
                     MyLibraryAvailability.Unknown -> if (refreshRequested) launchRefresh()
                     MyLibraryAvailability.Unavailable -> Unit
                 }
+            } else if (publishedOnline) {
+                // Gone offline: republish once, so every row's playability and the status say so.
+                // A download change while offline notifies through the reader's local-collections hook.
+                publishedOnline = false
+                changed()
             }
+            publishedOnline = reader.online
         }
     }
 
@@ -613,10 +631,19 @@ internal class MyLibrary(
         val members = ranks.keys.groupBy({ it.first }, { it.second }).mapValues { it.value.toSet() }
         val cache = reader.cache
 
-        val songs = members[CacheItemKind.Track].orEmpty().mapNotNull { id ->
+        val memberSongs = members[CacheItemKind.Track].orEmpty().mapNotNull { id ->
             val record = cache.track(id)?.record ?: return@mapNotNull null
             MyLibrarySong(record, (CacheItemKind.Track to id) in pendingKeys, ranks.getValue(CacheItemKind.Track to id))
         }
+        // Downloaded music is the person's own on this device (CORPUS §5c): it joins every list here,
+        // online and offline, without a server write (spec §28, 2026-11-26). Its pinned metadata is
+        // always cached (§16.14), so these rows paint with no network.
+        val memberSongIds = members[CacheItemKind.Track].orEmpty()
+        val deviceSongs = guarded(emptySet()) { reader.downloads.downloadedTrackRawIds(cache.serverId) }
+            .filter { it !in memberSongIds }
+            .mapNotNull { id -> cache.track(id)?.record?.let { MyLibrarySong(it, pending = false, rank = MY_LIBRARY_DEVICE_RANK, deviceOnly = true) } }
+        val songs = memberSongs + deviceSongs
+        val memberSongsByAlbum = memberSongs.filter { it.record.albumRawId != null }.groupBy { it.record.albumRawId!! }
         val songsByAlbum = songs.filter { it.record.albumRawId != null }.groupBy { it.record.albumRawId!! }
         val memberTrackAlbums = members[CacheItemKind.Track].orEmpty().mapNotNullTo(mutableSetOf()) { cache.track(it)?.record?.albumRawId }
 
@@ -626,32 +653,41 @@ internal class MyLibrary(
             val record = cache.album(id)?.record ?: songsByAlbum[id]?.first()?.record?.let { song ->
                 CacheAlbumRecord(rawId = id, title = song.albumTitle ?: return@let null, credits = song.credits, artworkKey = song.artworkKey)
             } ?: return@mapNotNull null
-            val memberSongs = songsByAlbum[id].orEmpty()
-            val rank = maxOf(if (explicit) ranks.getValue(CacheItemKind.Album to id) else Long.MIN_VALUE, memberSongs.maxOfOrNull { it.rank } ?: Long.MIN_VALUE)
-            MyLibraryAlbum(record, explicit, memberSongs.size, (CacheItemKind.Album to id) in pendingKeys || memberSongs.any { it.pending }, rank)
+            val albumMemberSongs = memberSongsByAlbum[id].orEmpty()
+            val deviceOnly = !explicit && albumMemberSongs.isEmpty()
+            val rank = when {
+                deviceOnly -> MY_LIBRARY_DEVICE_RANK
+                else -> maxOf(if (explicit) ranks.getValue(CacheItemKind.Album to id) else Long.MIN_VALUE, albumMemberSongs.maxOfOrNull { it.rank } ?: Long.MIN_VALUE)
+            }
+            MyLibraryAlbum(record, explicit, albumMemberSongs.size, (CacheItemKind.Album to id) in pendingKeys || albumMemberSongs.any { it.pending }, rank, deviceOnly)
         }
 
         val artistRanks = mutableMapOf<String, Long>()
         val artistPending = mutableSetOf<String>()
-        fun contribute(artistId: String?, rank: Long, pending: Boolean) {
+        val artistsFromMembers = mutableSetOf<String>()
+        fun contribute(artistId: String?, rank: Long, pending: Boolean, deviceOnly: Boolean) {
             if (artistId == null) return
             artistRanks[artistId] = maxOf(artistRanks[artistId] ?: Long.MIN_VALUE, rank)
             if (pending) artistPending += artistId
+            if (!deviceOnly) artistsFromMembers += artistId
         }
-        members[CacheItemKind.Artist].orEmpty().forEach { contribute(it, ranks.getValue(CacheItemKind.Artist to it), (CacheItemKind.Artist to it) in pendingKeys) }
-        albums.forEach { album -> album.record.credits.forEach { contribute(it.artistRawId, album.rank, album.pending) } }
-        songs.forEach { song -> song.record.credits.forEach { contribute(it.artistRawId, song.rank, song.pending) } }
+        members[CacheItemKind.Artist].orEmpty().forEach { contribute(it, ranks.getValue(CacheItemKind.Artist to it), (CacheItemKind.Artist to it) in pendingKeys, false) }
+        albums.forEach { album -> album.record.credits.forEach { contribute(it.artistRawId, album.rank, album.pending, album.deviceOnly) } }
+        songs.forEach { song -> song.record.credits.forEach { contribute(it.artistRawId, song.rank, song.pending, song.deviceOnly) } }
         val artists = artistRanks.mapNotNull { (id, rank) ->
             val record = cache.artist(id)?.record ?: run {
                 val name = (albums.flatMap { it.record.credits } + songs.flatMap { it.record.credits })
                     .firstOrNull { it.artistRawId == id }?.name ?: return@mapNotNull null
                 CacheArtistRecord(rawId = id, name = name)
             }
-            MyLibraryArtist(record, id in members[CacheItemKind.Artist].orEmpty(), id in artistPending, rank)
+            MyLibraryArtist(record, id in members[CacheItemKind.Artist].orEmpty(), id in artistPending, rank, deviceOnly = id !in artistsFromMembers)
         }
 
         val syncState = when {
             syncing -> MyLibrarySyncState.Syncing
+            // Offline is not a failure: the lists are the device's, and the shells say "You're
+            // offline" rather than "Couldn't refresh" (§16.14).
+            !reader.online -> MyLibrarySyncState.Offline
             lastError != null -> MyLibrarySyncState.Failed
             state?.complete != true -> MyLibrarySyncState.Never
             refreshedThisSession -> MyLibrarySyncState.Current
@@ -660,7 +696,7 @@ internal class MyLibrary(
         return MyLibrarySnapshot(
             availability = availability,
             syncState = syncState,
-            lastError = lastError,
+            lastError = if (syncState == MyLibrarySyncState.Offline) null else lastError,
             lastReadAtWall = state?.readAtWall,
             albums = reader.applyMyLibraryCategory(albums.sortedWith(order(sort, { it.rank }, { it.record.title }, { it.record.rawId })), "myLibrary.albums", { it.record.rawId }, { it.rank }, if (sort == MyLibrarySort.RecentlyAdded) "recentlyAdded" else "title") { entry ->
                 val r = entry.record

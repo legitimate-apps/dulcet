@@ -8073,6 +8073,30 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-26 — Downloaded music is in My Library on this device (§29.9, §16.14).**
+Seen on an iPhone against a Dulcet Server: an album and a playlist were downloaded and played
+offline, yet Library > Albums showed the empty "Your Library Starts Here" invitation, because the
+person had added nothing to My Library, and offline Library > Songs said "Couldn't Refresh" over
+"Nothing Here Yet". Music's Library holds what a person downloads, and offline it lists what is on
+the device. **Choice: the device merges its downloads into My Library; a download writes nothing to
+the server.** Albums, artists and songs are the members of §29.9 plus the songs downloaded on this
+device, the albums of those songs and their artists, online and offline. A download is the person's
+own music on this device (CORPUS §5c) but not a server membership: membership, Add to Library and
+Remove from Library stay the server's, and every list item says whether it is shown only for this
+device (`deviceOnly`). Reasons, from the code: (1) it needs no server and so works the same on a
+server without `dulcetLibrary`, where Library already lists Downloaded (Browse shows the catalog);
+(2) it fixes music already downloaded, with no backfill of writes; (3) Automatic Downloads follows
+membership and favourites, so a write per download would feed it back into itself; (4) removing a
+download needs no decision about removing a membership. **Option written down, not adopted:** a
+download adds the item through the favourites outbox (`MutationField.InLibrary`), as Music does,
+which would also show it on the person's other devices. Downloaded-only items rank below every
+member in Recently Added, because the device keeps no download time comparable with a member's
+rank (ASSUMED good enough until a download carries a time). Offline, My Library's state is
+`offline`, not `failed`: no refresh failure is reported, and Apple states "You're offline" over the
+device's lists. Album items in My Library carry playability by search's rule (§16.14, 2026-11-24);
+offline, an album with no song on this device offers no Play, Shuffle, queue or Download in its
+menu, and its page's Play and Shuffle are disabled because none of its tracks can play.
+
 **2026-11-26 — Artist photos from the person's own tools: the Connections layer (§16.14, §29, Discover).**
 Artist tiles in Discover showed a monogram and library artist pages an album cover, because no
 source Dulcet used holds artist images and library folders rarely carry an artist picture. Tools a
@@ -15543,7 +15567,10 @@ without sending membership requests. Outcomes use the favourite outcome stream w
 `inLibrary`. Removing an album also removes its member songs.
 
 **Presentation.** Albums are the explicit members plus the albums of member songs; artists are the
-explicit members plus the artists of member albums and songs; songs are the explicit members. An
+explicit members plus the artists of member albums and songs; songs are the explicit members. Each
+list also holds this device's downloads that are not members — the downloaded songs, their albums and
+their artists — marked `deviceOnly`, online and offline, without a server write (§28, 2026-11-26).
+Offline, the state is `offline` rather than a refresh failure. An
 album is `added` when it is a member, `partial` when only some of its songs are, `notAdded` when a
 complete read says neither, and `unknown` before any complete read or flag. Items the device has no
 details for count toward membership but are left out of the lists until a read brings them. Sorts:

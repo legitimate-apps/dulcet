@@ -275,8 +275,9 @@ class LibraryDepthTest {
         var notices = 0
         session.myLibrary.addChangeListener { notices++ }
         session.reader.setOnline(false)
+        assertEquals(1, notices, "going offline republishes My Library once (§28, 2026-11-26)")
         session.reader.downloadsChanged()
-        assertEquals(1, notices)
+        assertEquals(2, notices, "a download change offline notifies once more")
         assertTrue(env.server.log.isEmpty())
         localScope.cancel()
     }

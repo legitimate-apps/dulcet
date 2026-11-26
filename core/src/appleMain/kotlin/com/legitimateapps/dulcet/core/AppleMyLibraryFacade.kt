@@ -173,9 +173,11 @@ public class AppleMyLibrarySubscription internal constructor(
  * - [availability]: `available`, `unavailable` (the server does not offer it: show Browse only) or
  *   `unknown` (not yet detected on this device).
  * - [syncState]: `never` (no complete read yet), `syncing`, `current` (read this session),
- *   `cached` (from an earlier session; shown from the device, offline included) or `failed` (the
- *   last refresh failed; [errorKind] says why, the lists still show what the device has).
- * - Lists hold only items whose details the device has; [membership] covers every item.
+ *   `cached` (from an earlier session), `offline` (the reader is offline: the lists are the
+ *   device's and no refresh failure is reported) or `failed` (the last refresh failed; [errorKind]
+ *   says why, the lists still show what the device has).
+ * - Lists hold only items whose details the device has; [membership] covers every item. They
+ *   include music downloaded on this device that is not a member (`deviceOnly`), online and offline.
  */
 public class AppleMyLibraryPublication internal constructor(
     public val sequence: Int,
@@ -214,6 +216,13 @@ public class AppleMyLibraryAlbum internal constructor(
     public val memberSongCount: Int,
     /** An add or remove of it, or of one of its member songs, has not reached the server yet. */
     public val pending: Boolean,
+    /** Shown only because songs of it are downloaded on this device; not a member on the server. */
+    public val deviceOnly: Boolean,
+    /**
+     * `downloaded` when one of its songs is on this device, `streamable` online, otherwise
+     * `unavailableOffline`: nothing of it can play now, so play actions are not offered.
+     */
+    public val playability: String?,
 )
 
 public class AppleMyLibraryArtist internal constructor(
@@ -224,6 +233,8 @@ public class AppleMyLibraryArtist internal constructor(
     public val albumCount: Int,
     public val explicitlyAdded: Boolean,
     public val pending: Boolean,
+    /** Shown only for music downloaded on this device. */
+    public val deviceOnly: Boolean,
 )
 
 public class AppleMyLibrarySong internal constructor(
@@ -238,6 +249,8 @@ public class AppleMyLibrarySong internal constructor(
     public val pending: Boolean,
     public val sourceContainer: String?,
     public val playability: String?,
+    /** Downloaded on this device and not a member on the server. */
+    public val deviceOnly: Boolean,
 )
 
 /**
@@ -274,11 +287,13 @@ internal fun MyLibrarySyncState.appleKind(): String = when (this) {
     MyLibrarySyncState.Syncing -> "syncing"
     MyLibrarySyncState.Current -> "current"
     MyLibrarySyncState.Cached -> "cached"
+    MyLibrarySyncState.Offline -> "offline"
     MyLibrarySyncState.Failed -> "failed"
 }
 
 internal fun MyLibrarySnapshot.toApple(sequence: Int, reader: LibraryReader? = null): AppleMyLibraryPublication {
     val downloaded = reader?.downloads?.downloadedTrackRawIds(reader.cache.serverId).orEmpty()
+    val downloadedAlbums = if (reader == null) emptySet() else downloaded.mapNotNullTo(mutableSetOf()) { reader.cache.track(it)?.record?.albumRawId }
     return AppleMyLibraryPublication(
     sequence = sequence,
     availability = availability.appleKind(),
@@ -290,16 +305,17 @@ internal fun MyLibrarySnapshot.toApple(sequence: Int, reader: LibraryReader? = n
         AppleMyLibraryAlbum(
             album.record.rawId, album.record.title, credit?.name, credit?.artistRawId, album.record.year ?: 0,
             album.record.artworkKey, album.record.songCount ?: -1, album.explicitlyAdded, album.memberSongCount, album.pending,
+            album.deviceOnly, reader?.let { albumPlayability(album.record.rawId in downloadedAlbums, it.online).appleKind() },
         )
     },
     artists = if (availability == MyLibraryAvailability.Unavailable) emptyList() else artists.map {
-        AppleMyLibraryArtist(it.record.rawId, it.record.name, it.record.artworkKey, it.record.albumCount ?: -1, it.explicitlyAdded, it.pending)
+        AppleMyLibraryArtist(it.record.rawId, it.record.name, it.record.artworkKey, it.record.albumCount ?: -1, it.explicitlyAdded, it.pending, it.deviceOnly)
     },
     songs = if (availability == MyLibraryAvailability.Unavailable) emptyList() else songs.map { song ->
         AppleMyLibrarySong(
             song.record.rawId, song.record.title, song.record.albumRawId, song.record.albumTitle,
             song.record.credits.firstOrNull()?.name, song.record.durationMilliseconds ?: -1L, song.record.artworkKey, song.pending, song.record.sourceContainer?.appleKind(),
-            reader?.trackPlayability(song.record.rawId, downloaded)?.appleKind(),
+            reader?.trackPlayability(song.record.rawId, downloaded)?.appleKind(), song.deviceOnly,
         )
     },
     snapshot = this,

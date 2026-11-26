@@ -1551,6 +1551,17 @@ internal enum class LibraryItemsOrder { Server, LocalView }
 
 internal enum class LibraryPlayability { Downloaded, Streamable, UnavailableOffline }
 
+/**
+ * An album's or an artist's playability as a row or tile (§16.14): `Downloaded` when one of its
+ * songs is on this device, `Streamable` online, and otherwise `UnavailableOffline` — nothing of it
+ * can play now, so its play actions are not offered.
+ */
+internal fun albumPlayability(hasDownloadedSong: Boolean, online: Boolean): LibraryPlayability = when {
+    hasDownloadedSong -> LibraryPlayability.Downloaded
+    online -> LibraryPlayability.Streamable
+    else -> LibraryPlayability.UnavailableOffline
+}
+
 internal data class LibraryAnchor(val itemRawId: String?, val index: Int)
 
 /** One row, as flat values. Per-user state is the cached value with pending changes overlaid. */
