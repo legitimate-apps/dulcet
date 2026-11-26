@@ -74,6 +74,9 @@ class Db private constructor(private val connection: Connection, val file: Path?
     /** Observers run after commit with autoCommit restored; observer failure cannot undo committed data. */
     fun afterCommit(listener: (Session) -> Unit) = lock.withLock { afterCommit.add(listener); Unit }
 
+    /** True while this thread is inside a read or write; work that can wait on the network must not start then. */
+    fun heldByCurrentThread(): Boolean = lock.isHeldByCurrentThread
+
     /** Nested reads share the enclosing snapshot; every outer read is one SQLite transaction. */
     fun <T> read(block: Session.() -> T): T = lock.withLock {
         if (!connection.autoCommit) Session(connection, workObserver).block() else transaction(false, block)
