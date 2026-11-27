@@ -919,6 +919,10 @@ struct DulcetDestinationStack: View {
     /// describes one destination at a time, so without it the Library tab would draw nothing
     /// while hidden and rebuild its grid -- scrolled back to the top -- on every return.
     @State private var retainedLibrary: DulcetSnapshot?
+    /// Where Listen Now's tiles register their artwork, so the album or playlist a tile opens
+    /// grows out of it and shrinks back into it.
+    @Namespace private var listenNowZoom
+    @State private var listenNowShown: [DulcetListenNowShelf: [DulcetReaderItem]] = [:]
     private struct ReaderContext: Hashable {
         var destination: DulcetSidebarDestination
         var generation: Int
@@ -970,7 +974,12 @@ struct DulcetDestinationStack: View {
                 if destination == .discover {
                     DulcetDiscoverHomeDestination()
                 } else if usesReader {
-                    if destination == .listenNow { DulcetListenNowView() }
+                    if destination == .listenNow {
+                        DulcetListenNowView().environment(\.dulcetListenNowZoom, listenNowZoom)
+                            .onPreferenceChange(DulcetListenNowShelfItems.self) { items in
+                                if items != listenNowShown { listenNowShown = items }
+                            }
+                    }
                     else { DulcetReaderCollectionRoot(destination: destination) }
                 } else if let displayed = displayedSnapshot {
                     DulcetStateSurface(store: store, libraryAsStackRoot: true,
@@ -1058,7 +1067,12 @@ struct DulcetDestinationStack: View {
                                                    newPath: String(describing: route), outcome: "presented")
                 }
                 .environment(\.dulcetReaderPage, route)
+                .environment(\.dulcetListenNowShown, listenNowShown)
                 .modifier(bar(drawsNotices: showing && store.readerPath.last == route))
+                // Only the page Listen Now opened directly zooms: a page pushed from that page has
+                // no tile on Listen Now to grow out of.
+                .modifier(DulcetListenNowZoomPage(route: route, namespace: listenNowZoom,
+                    zooms: destination == .listenNow && store.readerPath(for: .listenNow) == [route]))
         case let .discover(route):
             DulcetDiscoverHomeDestination(route: route).modifier(bar(drawsNotices: showing))
                 .onAppear { discoverPresentation.appeared(route) }

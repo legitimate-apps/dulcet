@@ -335,3 +335,46 @@ An independently focusable More Button opens a native confirmation dialog with t
 commands; remote Add reaches server membership and normal card Select still opens detail.
 The required TV membership test invokes this full-grid helper. The previous native Menu
 focus limitation is resolved through this explicit launcher, without claiming an OS prohibition.
+
+## Top Picks hero (2026-11-27)
+
+Listen Now on iPhone, iPad and Mac opens on **Top Picks for You**: up to six large cards, each
+with a one-line reason above it, a backdrop tinted from its artwork and a Play button. The cards
+are planned on the client from the shelf windows Home already reads (`DulcetListenNowPicks`), so
+no endpoint, query or cache changes and the server contract is unchanged:
+
+| Order | Card | Source shelf | Reason line |
+|---|---|---|---|
+| 1 | Daily Mix | `dailyMix` | Made for You |
+| 2 | Last album (or playlist) played | `recent`, else `recentPlaylists` | Jump Back In |
+| 3 | Artist mix | `artistStation` | Because You Listen to *artist* (Made for You when its tracks mix artists) |
+| 4 | Album to rediscover | `rediscover` | Rediscover |
+| 5 | Genre mix | `genreStation` | Because You Love *genre* |
+| 6 | Favorites Mix | `favourites` | Made for You |
+| 7 | Most played album | `frequent` | On Repeat |
+| 8 | Newest album | `newest` | Just Added |
+
+A mix needs three playable tracks (offline, tracks unavailable offline do not count); an album
+already picked is not picked twice; random music never becomes a pick, so a listener with no
+history sees no hero. A plain OpenSubsonic server answers `recent`, `frequent`, `newest`,
+`favourites` and the similar-songs `artistStation`, which yields Jump Back In, a Made for You
+station, On Repeat and Just Added. The station and genre shelves are titled after the one artist
+or genre they draw on ("More from *artist*"). Discover leads with **For You** (Artists like
+yours) once that shelf has artists, ahead of trending.
+
+Motion: cards page with view-aligned snapping and shrink and dim as they leave; the hero
+stretches on a pull and fades as the page scrolls; a card and a Play button give under the
+finger; on iPhone and iPad (iOS 18 and later) a card or tile opens its page with the system zoom
+transition, and a mix's page shows the rows Listen Now already drew while its own window opens.
+Reduce Motion removes the paging scale, parallax, stretch and press scale; the zoom is the
+system's own transition and follows the system setting (ASSUMED, not observed). tvOS keeps its
+shelves without the hero, because its arrival focus lands on the first shelf.
+
+`ListenNowTopPicksTests` (DulcetKit) pin the order, the cap, de-duplication, the plain-server
+fallback, the empty case, offline filtering, the mix artwork, shelf titles and the motion
+bounds; `DiscoverHomeOrderTests` pins Discover's order.
+`DulcetDesignTourUITests/testListenNowHeroPlaysAndMoves` (env-gated `DULCET_HOME_HERO_PROOF`)
+drives the iPhone against a disposable Dulcet Server seeded with plays, stars and ratings and a
+loopback ListenBrainz stand-in: it pages and scrolls the hero, taps the first card's Play and
+requires both the mini player and the card to show Pause, opens the card, and requires Discover
+to lead with For You. OBSERVED 2026-11-27 on an iOS 27 iPhone 17 Pro simulator: 1/1 passed.

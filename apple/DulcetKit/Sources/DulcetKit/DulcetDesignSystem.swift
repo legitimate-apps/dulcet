@@ -292,6 +292,9 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
     case dangerIconOnWindow = "danger-icon/window"
     /// A connected server's status mark, on the window or a grouped form.
     case onlineIconOnWindow = "online-icon/window"
+    /// Text and glyphs on an artwork's colour field (DulcetPlayerBackdrop), as on a Listen Now card.
+    case primaryTextOnArtworkTint = "primary-text/artwork-tint"
+    case secondaryTextOnArtworkTint = "secondary-text/artwork-tint"
 #if os(tvOS)
     case accountPromptOnTVWindow = "account-prompt/tv-window"
     case accountPromptOnTVFocus = "account-prompt/tv-focus"
@@ -315,6 +318,10 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             .dulcetDanger
         case .onlineIconOnWindow:
             .dulcetOnline
+        case .primaryTextOnArtworkTint:
+            .white
+        case .secondaryTextOnArtworkTint:
+            .white.opacity(0.88)
 #if os(tvOS)
         case .accountPromptOnTVWindow:
             .primary.opacity(0.75)
@@ -347,6 +354,8 @@ enum DulcetRegisteredContrastPair: String, CaseIterable, Hashable, Sendable {
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetOffline.opacity(0.10))]
         case .dangerIconOnTint:
             [AnyShapeStyle(Color.dulcetWindow), AnyShapeStyle(Color.dulcetDanger.opacity(0.11))]
+        case .primaryTextOnArtworkTint, .secondaryTextOnArtworkTint:
+            [AnyShapeStyle(DulcetPlayerBackdrop.brightestField)]
 #if os(tvOS)
         case .accountPromptOnTVWindow:
             [AnyShapeStyle(Color.dulcetWindow)]

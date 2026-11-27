@@ -593,6 +593,14 @@ func renderedFixtureStatesExerciseEveryRegisteredContrastPair() {
     readerLink.displayIfNeeded()
     RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
 
+    // A Listen Now card needs a library session too; render its caption, the artwork-tint pairs' site.
+    let pickCaption = NSHostingView(rootView: DulcetListenNowPickCaption(title: "Album", subtitle: "Artist")
+        .onDulcetRegisteredContrastPairs { observed.formUnion($0) })
+    pickCaption.frame = NSRect(x: 0, y: 0, width: 320, height: 80)
+    pickCaption.layoutSubtreeIfNeeded()
+    pickCaption.displayIfNeeded()
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+
     #expect(observed == Set(DulcetRegisteredContrastPair.allCases))
 }
 

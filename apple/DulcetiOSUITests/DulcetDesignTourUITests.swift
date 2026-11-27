@@ -437,6 +437,106 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         try provePlaylistContextIfAdvertised(in: app, compact: compact, environment: environment)
     }
 
+    /// Listen Now opens on Top Picks made from this listener's plays and stars, the hero moves as it
+    /// is paged and scrolled, and one tap on a card's Play plays it. Frames are shot in quick
+    /// succession so the motion can be seen. With `DULCET_HOME_HERO_PROOF=before` it only
+    /// photographs the page (for a build without the hero). Skipped unless that variable is set.
+    @MainActor
+    func testListenNowHeroPlaysAndMoves() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard let phase = environment["DULCET_HOME_HERO_PROOF"] else {
+            throw XCTSkip("Requires a disposable home fixture with plays and stars")
+        }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: url)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        let compact = width < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact))
+        let home = app.descendants(matching: .any)["dulcet.listenNow"].firstMatch
+        XCTAssertTrue(home.waitForExistence(timeout: 40), app.debugDescription)
+        _ = settle(app, seconds: 6)
+        shoot("home-\(phase)-top", app)
+        app.swipeUp(velocity: .slow)
+        _ = settle(app, seconds: 2)
+        shoot("home-\(phase)-shelves", app)
+        app.swipeUp(velocity: .slow)
+        _ = settle(app, seconds: 2)
+        shoot("home-\(phase)-shelves-more", app)
+        guard phase != "before" else { return }
+
+        app.swipeDown(velocity: .fast)
+        app.swipeDown(velocity: .fast)
+        let hero = app.descendants(matching: .any)["dulcet.listenNow.hero"].firstMatch
+        XCTAssertTrue(hero.waitForExistence(timeout: 20), app.debugDescription)
+        let first = app.buttons["dulcet.listenNow.hero.card.0"].firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10), app.debugDescription)
+        _ = settle(app, seconds: 2)
+        shoot("home-hero", app)
+        // Paging: the card leaving shrinks and dims while the next one grows in. The first shot
+        // after each swipe lands while the cards are still settling.
+        for index in 0..<2 {
+            hero.swipeLeft(velocity: .slow)
+            shoot("home-hero-page-\(index)", app)
+            _ = settle(app, seconds: 1.2)
+            shoot("home-hero-paged-\(index)", app)
+        }
+        hero.swipeRight(velocity: .fast)
+        hero.swipeRight(velocity: .fast)
+        _ = settle(app, seconds: 1.5)
+        // Scrolling the page: the hero fades as it leaves.
+        let page = app.windows.firstMatch
+        for step in 0..<3 {
+            page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75))
+                .press(forDuration: 0.05, thenDragTo: page.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.75 - 0.12 * Double(step + 1))),
+                       withVelocity: .slow, thenHoldForDuration: 0)
+            shoot("home-hero-scroll-\(step)", app)
+        }
+        app.swipeDown(velocity: .fast)
+        app.swipeDown(velocity: .fast)
+        _ = settle(app, seconds: 1.5)
+
+        // One tap plays the first pick.
+        // Control: nothing is sounding yet (a queue restored from an earlier run is paused).
+        let play = app.buttons["dulcet.listenNow.hero.play.0"].firstMatch
+        XCTAssertTrue(play.waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertFalse(play.label.contains("Pause"), "control: the pick is not playing yet: \(play.label)")
+        let restored = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        XCTAssertTrue(!restored.exists || restored.label == "Play", "control: nothing plays yet: \(restored.label)")
+        print("DULCET HOME HERO first=\(first.label) play=\(play.label)")
+        play.tap()
+        let mini = app.buttons["dulcet.mini-player.open"].firstMatch
+        XCTAssertTrue(mini.waitForExistence(timeout: 20), app.debugDescription)
+        let toggle = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        XCTAssertTrue(waitFor(timeout: 20) { toggle.label == "Pause" }, "the hero's Play must start playback: \(toggle.label)")
+        XCTAssertTrue(waitFor(timeout: 10) { play.label.contains("Pause") }, "the card playing shows Pause: \(play.label)")
+        print("DULCET HOME HERO playing=\(mini.label)")
+        shoot("home-hero-playing", app)
+
+        // Opening the card zooms into its page.
+        first.tap()
+        for frame in 0..<3 { shoot("home-hero-open-\(frame)", app) }
+        _ = settle(app, seconds: 2)
+        shoot("home-hero-opened", app)
+
+        // Discover opens on artists like the listener's own, ahead of what is trending.
+        XCTAssertTrue(openDestination("Discover", sidebar: "dulcet.sidebar.discover", in: app, compact: compact),
+            app.debugDescription)
+        let forYou = app.descendants(matching: .any)["discover.forYou"].firstMatch
+        let shown = forYou.waitForExistence(timeout: 30)
+        _ = settle(app, seconds: 3)
+        shoot("home-discover", app)
+        XCTAssertTrue(shown, "Discover leads with For You when the listener has similar artists")
+    }
+
     /// A search result opens inside the Search tab, as in the platform's own Music app: the tab
     /// bar stays on Search, Back returns to the same results with the same query, and the page
     /// and the query are both still there after another tab and back.
