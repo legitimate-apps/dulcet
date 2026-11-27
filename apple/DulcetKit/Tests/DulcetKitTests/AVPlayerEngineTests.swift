@@ -2585,9 +2585,16 @@ struct AVPlayerEngineTests {
     }
 
     @Test
-    func audioSessionActivatesOncePerSessionAndStopDeactivatesImmediately() async {
+    func audioSessionActivatesOncePerSessionAndStopDeactivatesAfterTheHandoverGrace() async {
+        let clock = ManualAVPlayerEngineClock()
         let audioSession = RecordingAudioSession()
-        let engine = DulcetAVPlayerEngine(audioSession: audioSession, systemMediaControls: RecordingSystemMediaControls())
+        let mediaControls = RecordingSystemMediaControls()
+        let engine = DulcetAVPlayerEngine(
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            audioSession: audioSession,
+            systemMediaControls: mediaControls
+        )
         let original = plan(session: "same-session", attempt: "attempt-one")
         let replacement = plan(session: "same-session", attempt: "attempt-two")
 
@@ -2597,7 +2604,52 @@ struct AVPlayerEngineTests {
         #expect(audioSession.deactivationCount == 0)
 
         _ = await execute(engine, .stop(commandID: .init("stop")))
-        #expect(audioSession.deactivationCount == 1)
+        #expect(audioSession.deactivationCount == 0, "a start may follow the stop and take the session over")
+        #expect(mediaControls.clearCount == 0)
+        #expect(clock.scheduledDelay == DulcetAVPlayerEngine.stopHandoverGracePeriod)
+        #expect(clock.fireScheduledDeadline(), "no handover deadline was scheduled")
+        #expect(audioSession.deactivationCount == 1, "no start followed: the session is released")
+        #expect(mediaControls.clearCount == 1, "and the system entry withdrawn")
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
+    /// A paused skip, as the lock screen's Next sends it: the owner stops the engine and prepares
+    /// the next entry without Play. The system entry must go straight from the old track to the
+    /// new one, paused, and the audio session must stay active between them -- deactivating it
+    /// gave up Now Playing, and the iPhone lock screen read "Not Playing" (OBSERVED 2026-11-27).
+    @Test
+    func aPausedSkipReplacesTheSystemEntryWithTheNextTrackPaused() async {
+        let clock = ManualAVPlayerEngineClock()
+        let audioSession = RecordingAudioSession()
+        let mediaControls = RecordingSystemMediaControls()
+        let engine = DulcetAVPlayerEngine(
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            audioSession: audioSession,
+            systemMediaControls: mediaControls
+        )
+        let first = plan(session: "cut-your-hair", attempt: "attempt-one", title: "Cut Your Hair")
+        let second = plan(session: "range-life", attempt: "attempt-two", title: "Range Life")
+
+        _ = await execute(engine, .prepare(commandID: .init("prepare-1"), plan: first))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        _ = await execute(engine, .play(commandID: .init("play")))
+        _ = await execute(engine, .pause(commandID: .init("pause")))
+        // The control: the first track is on the system entry before the skip.
+        #expect(mediaControls.publications.last?.metadata.title == "Cut Your Hair")
+
+        _ = await execute(engine, .stop(commandID: .init("replace")))
+        _ = await execute(engine, .prepare(commandID: .init("prepare-2"), plan: second))
+
+        #expect(mediaControls.clearCount == 0, "the entry is replaced, never withdrawn")
+        #expect(audioSession.deactivationCount == 0, "the session stays the Now Playing app's")
+        let shown = mediaControls.publications.last
+        #expect(shown?.metadata.title == "Range Life")
+        #expect(shown?.sessionID == second.playbackSessionID)
+        #expect(shown?.isPlaying == false, "the skip kept the paused state")
+        #expect(clock.scheduledDelay == nil, "the prepare cancelled the handover deadline")
+        #expect(!clock.fireScheduledDeadline())
+        #expect(mediaControls.clearCount == 0)
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
@@ -3142,6 +3194,10 @@ struct AVPlayerEngineTests {
             position: 0.5,
             reason: .user
         ))
+        #expect(mediaControls.clearCount == clearsBefore,
+                "the entry waits for the start a stop usually precedes")
+        #expect(mediaControls.transports.last?.3 == false, "and reads paused meanwhile")
+        #expect(clock.fireScheduledDeadline(), "no handover deadline was scheduled")
         #expect(mediaControls.clearCount == clearsBefore + 1, "the system entry is withdrawn")
 
         #expect(await execute(engine, .play(commandID: .init("play-after-stop")))

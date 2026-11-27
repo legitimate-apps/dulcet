@@ -48,7 +48,12 @@ public struct DulcetUpNextSection: View {
     @Environment(\.editMode) private var editMode
     /// The drag a row's handle is making, and every row's frame for it to measure against.
     @State private var handleDrag: DulcetQueueHandleDrag?
+    /// The rows the list has laid out now: a lazy list drops a row's view when it scrolls away.
     @State private var rowFrames: [DulcetQueueEntryID: CGRect] = [:]
+    /// Carries the list on while the dragged row is held at its top or bottom edge.
+    @State private var autoscroll: Task<Void, Never>?
+    @State private var autoscrollDirection: DulcetQueueHandleDrag.AutoscrollDirection?
+    @Environment(\.dulcetQueueScroller) private var scroller
 #endif
 
     public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void, autoplay: DulcetAutoplayToggle? = nil) {
@@ -115,7 +120,11 @@ public struct DulcetUpNextSection: View {
 #if os(iOS)
         let lifted = handleDrag?.source == offset
         baseRow(entry, offset: offset)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rowFrames[entry.id] = $0 }
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                rowFrames[entry.id] = frame
+                observeRowFrames()
+            }
+            .onDisappear { rowFrames[entry.id] = nil }
             .background {
                 if lifted {
                     RoundedRectangle(cornerRadius: DulcetMetrics.liftedRowCornerRadius, style: .continuous)
@@ -125,7 +134,7 @@ public struct DulcetUpNextSection: View {
                 }
             }
             .scaleEffect(lifted ? 1.03 : 1)
-            .offset(y: lifted ? handleDrag?.translation ?? 0 : handleDrag?.displacement(of: offset) ?? 0)
+            .offset(y: lifted ? handleDrag?.liftedOffset ?? 0 : handleDrag?.displacement(of: offset) ?? 0)
             .zIndex(lifted ? 1 : 0)
 #else
         baseRow(entry, offset: offset)
@@ -144,7 +153,7 @@ public struct DulcetUpNextSection: View {
         return AnyView(DulcetQueueReorderHandle(
             onChanged: { translation in
                 if handleDrag == nil {
-                    let frames = model.upcoming.map { rowFrames[$0.id] ?? .zero }
+                    let frames = model.upcoming.map { rowFrames[$0.id] }
                     guard let drag = DulcetQueueHandleDrag(source: offset, frames: frames) else { return }
                     DulcetHaptic.reorderLift.play()
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { handleDrag = drag }
@@ -152,12 +161,55 @@ public struct DulcetUpNextSection: View {
                 withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.86)) {
                     handleDrag?.translation = translation
                 }
+                updateAutoscroll()
             },
             onEnded: { endHandleDrag() }
         ))
     }
 
+    /// The upcoming position of every row laid out now, for the drag to read the scroll from.
+    private func observeRowFrames() {
+        guard handleDrag != nil else { return }
+        var current: [Int: CGRect] = [:]
+        for (index, entry) in model.upcoming.enumerated() {
+            if let frame = rowFrames[entry.id] { current[index] = frame }
+        }
+        handleDrag?.observe(currentFrames: current)
+    }
+
+    /// Scrolls the list a row at a time while the dragged row is held near its top or bottom, the
+    /// way the system list carries a dragged row on; the drag's target follows the scroll.
+    private func updateAutoscroll() {
+        let direction = scroller.flatMap { scroller in
+            handleDrag?.autoscrollDirection(viewport: scroller.viewport, margin: Self.autoscrollMargin)
+        }
+        guard direction != autoscrollDirection else { return }
+        autoscrollDirection = direction
+        autoscroll?.cancel()
+        autoscroll = nil
+        guard let direction, let scroller else { return }
+        autoscroll = Task { @MainActor in
+            while !Task.isCancelled, let drag = handleDrag {
+                let upcoming = model.upcoming
+                let next = direction == .down
+                    ? min(drag.target + 2, upcoming.count - 1) : max(drag.target - 2, 0)
+                withAnimation(.linear(duration: Self.autoscrollStep)) {
+                    scroller.proxy.scrollTo(upcoming[next].id, anchor: direction == .down ? .bottom : .top)
+                }
+                try? await Task.sleep(for: .seconds(Self.autoscrollStep))
+                if handleDrag?.autoscrollDirection(viewport: scroller.viewport, margin: Self.autoscrollMargin)
+                    != direction { break }
+            }
+        }
+    }
+
+    private static let autoscrollMargin: CGFloat = 56
+    private static let autoscrollStep: TimeInterval = 0.18
+
     private func endHandleDrag() {
+        autoscroll?.cancel()
+        autoscroll = nil
+        autoscrollDirection = nil
         guard let drag = handleDrag else { return }
         if let destination = drag.moveDestination,
            let intent = model.moveIntent(fromOffsets: IndexSet(integer: drag.source), toOffset: destination) {
@@ -513,6 +565,8 @@ public struct DulcetUpNextList: View {
     private let showsCurrentTrack: Bool
 #if os(iOS)
     @State private var editMode: EditMode = .inactive
+    /// The list's visible frame, for a handle drag to scroll it from its edges.
+    @State private var viewport: CGRect = .zero
 #endif
 
     public init(
@@ -564,6 +618,19 @@ public struct DulcetUpNextList: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dulcet.upNext")
         } else {
+#if os(iOS)
+        ScrollViewReader { proxy in
+            list
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { viewport = $0 }
+                .environment(\.dulcetQueueScroller, DulcetQueueScroller(proxy: proxy, viewport: viewport))
+        }
+#else
+        list
+#endif
+        }
+    }
+
+    private var list: some View {
         List {
             if showsCurrentTrack, let current = nowPlaying {
                 Section(DulcetStrings.nowPlaying) {
@@ -610,7 +677,6 @@ public struct DulcetUpNextList: View {
         .environment(\.editMode, $editMode)
 #endif
         .accessibilityIdentifier("dulcet.upNext")
-        }
     }
 
     private var upcomingSection: DulcetUpNextSection {

@@ -80,6 +80,98 @@ struct UpNextModelTests {
         #expect(DulcetQueueHandleDrag(source: 4, frames: frames) == nil)
     }
 
+    /// The iPhone case: a lazy list has laid out only the rows on screen (here rows 0...4 of 12,
+    /// 92 pt apart with 4 pt between them), so the rows below have no frame. Dragging the first
+    /// row 228 pt down -- the device's drag to the gap after the third row -- must land it third,
+    /// not past every row the list had not laid out (OBSERVED 2026-11-27: it landed near the end).
+    @Test
+    func aHandleDragCountsRowsTheListHasNotLaidOutWhereTheyAreNotAtTheTop() throws {
+        let frames = lazyFrames(count: 12, laidOut: 0...4)
+        let model = DulcetUpNextModel(nowPlaying: nowPlaying(["cur"] + (0..<12).map { "u\($0)" }, current: 0))
+
+        var drag = try #require(DulcetQueueHandleDrag(source: 0, frames: frames))
+        #expect(drag.spacing == 4)
+        // Each distance by the row middles it passes: 92 pt a row.
+        for (distance, landing) in [(40, 0), (100, 1), (180, 1), (190, 2), (228, 2), (280, 3), (400, 4), (700, 7)] {
+            drag.translation = CGFloat(distance)
+            #expect(drag.target == landing, "\(distance) pt down lands at \(landing), not \(drag.target)")
+        }
+        drag.translation = 228
+        #expect((1...2).map(drag.displacement(of:)) == [-92, -92], "the passed rows step up a whole pitch")
+        #expect(drag.displacement(of: 3) == 0)
+        let move = try #require(drag.moveDestination)
+        #expect(model.moveIntent(fromOffsets: [0], toOffset: move) == .move(.init("entry-1"), toIndex: 3))
+
+        // A drag that starts low in the screen and goes up, past rows the list scrolled away
+        // from: their stale frames are dropped for estimates where they are now.
+        var stale = frames
+        stale[0] = CGRect(x: 0, y: -900, width: 320, height: 88)
+        var up = try #require(DulcetQueueHandleDrag(source: 4, frames: stale))
+        up.translation = -200
+        #expect(up.target == 2)
+        up.translation = -400
+        #expect(up.target == 0)
+        #expect(up.slots[0].minY == 0, "the stale row 0 sits at its estimated place, above row 1")
+    }
+
+    /// A long move scrolls the list under the held row: the drop counts the scroll as distance,
+    /// rows the scroll lays out replace their estimates, and the lifted row stays under the finger.
+    @Test
+    func aHandleDragThatScrollsTheListLandsWhereTheFingerIsInTheContent() throws {
+        let model = DulcetUpNextModel(nowPlaying: nowPlaying(["cur"] + (0..<12).map { "u\($0)" }, current: 0))
+        var drag = try #require(DulcetQueueHandleDrag(source: 0, frames: lazyFrames(count: 12, laidOut: 0...4)))
+        // The finger holds at the bottom edge, 380 pt down; the list scrolls 460 pt (five rows).
+        drag.translation = 380
+        #expect(drag.target == 4)
+        let scrolled = 460.0
+        var now: [Int: CGRect] = [:]
+        for index in 5...9 {
+            // Row 7 wraps its title: 30 pt taller than the estimate.
+            let extra: CGFloat = index > 7 ? 30 : 0
+            now[index] = CGRect(x: 0, y: CGFloat(index) * 92 - scrolled + extra, width: 320,
+                                height: index == 7 ? 118 : 88)
+        }
+        now[0] = CGRect(x: 0, y: -scrolled, width: 320, height: 88)
+        drag.observe(currentFrames: now)
+        #expect(drag.scroll == 460)
+        #expect(drag.liftedOffset == 840, "the lifted row is carried down with its place")
+        #expect(drag.slots[8].minY == 766, "row 8 is where the list laid it out, below the tall row 7")
+        // The finger's point in the content is 44 + 380 + 460 = 884: past row 8's middle (810),
+        // short of row 9's (902). Without the scroll it would be 424, short of row 5.
+        #expect(drag.target == 8)
+        let move = try #require(drag.moveDestination)
+        #expect(model.moveIntent(fromOffsets: [0], toOffset: move) == .move(.init("entry-1"), toIndex: 9))
+
+        // Back up the other way: the list scrolls back to the top and the finger rises.
+        now = [0: CGRect(x: 0, y: 0, width: 320, height: 88), 1: CGRect(x: 0, y: 92, width: 320, height: 88)]
+        drag.observe(currentFrames: now)
+        #expect(drag.scroll == 0)
+        drag.translation = 100
+        #expect(drag.target == 1)
+    }
+
+    /// The edge zone that scrolls the list: only near an edge, and only toward rows that remain.
+    @Test
+    func aHandleDragScrollsOnlyFromTheEdgesTowardRowsThatRemain() throws {
+        var drag = try #require(DulcetQueueHandleDrag(source: 1, frames: lazyFrames(count: 12, laidOut: 0...4)))
+        let viewport = CGRect(x: 0, y: 0, width: 320, height: 460)
+        #expect(drag.autoscrollDirection(viewport: viewport, margin: 56) == nil)
+        drag.translation = 300 // middle at 436, within 56 of 460
+        #expect(drag.autoscrollDirection(viewport: viewport, margin: 56) == .down)
+        drag.translation = -120 // middle at 16
+        #expect(drag.autoscrollDirection(viewport: viewport, margin: 56) == nil, "nothing above the first row")
+        var last = try #require(DulcetQueueHandleDrag(source: 11, frames: lazyFrames(count: 12, laidOut: 9...11)))
+        last.translation = -900
+        #expect(last.autoscrollDirection(viewport: CGRect(x: 0, y: 700, width: 320, height: 460), margin: 56) == .up)
+    }
+
+    /// Rows 92 pt apart (88 tall, 4 between), with frames only for the rows the list laid out.
+    private func lazyFrames(count: Int, laidOut: ClosedRange<Int>) -> [CGRect?] {
+        (0..<count).map { index in
+            laidOut.contains(index) ? CGRect(x: 0, y: CGFloat(index) * 92, width: 320, height: 88) : nil
+        }
+    }
+
     @Test
     func removalAndJumpNameEntriesAndNeverTheCurrentOne() {
         let model = DulcetUpNextModel(nowPlaying: nowPlaying(["cur", "u0", "u1"], current: 0))
