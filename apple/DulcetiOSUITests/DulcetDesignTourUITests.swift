@@ -34,6 +34,78 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     }
 
     @MainActor
+    func testRoundSevenArtworkStays() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        XCTAssertEqual(URLComponents(string: url)?.host, "127.0.0.1")
+        let app = XCUIApplication()
+        let fixtureArgs = ["-dulcet-debug-account-fixture", UUID().uuidString, "-dulcet-debug-ui-markers",
+                           "-dulcet-debug-light-mode", "-dulcet-debug-capture-hide-diagnostics"]
+        app.launchArguments = fixtureArgs + ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", "fixture",
+            "-dulcet-debug-account-password", "fixture-canary-pw"]
+        launchInInteractionScope(app)
+        XCTAssertEqual(UIDevice.current.userInterfaceIdiom, .phone)
+        XCTAssertTrue(awaitConnection(in: app, compact: true), app.debugDescription)
+
+        func showHome() {
+            XCTAssertTrue(openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: true))
+            let card = app.buttons["dulcet.listenNow.hero.card.0"].firstMatch
+            XCTAssertTrue(card.waitForExistence(timeout: 45), app.debugDescription)
+            XCTAssertTrue(card.label.contains("Daily Mix"), card.label)
+        }
+        func showDiscover() {
+            XCTAssertTrue(openDestination("Discover", sidebar: "dulcet.sidebar.discover", in: app, compact: true))
+            XCTAssertTrue(app.staticTexts["discover.forYou"].firstMatch.waitForExistence(timeout: 35), app.debugDescription)
+            XCTAssertTrue(app.descendants(matching: .any)["discover.shelf.trendingArtists"].firstMatch.waitForExistence(timeout: 15))
+        }
+        func fixtureAction(_ action: String) throws {
+            var request = URLRequest(url: try XCTUnwrap(URL(string: url + "/art-control/" + action)))
+            request.httpMethod = "POST"
+            final class Response: @unchecked Sendable { var status = -1 }
+            let result = Response()
+            let done = DispatchSemaphore(value: 0)
+            URLSession.shared.dataTask(with: request) { _, response, _ in
+                result.status = (response as? HTTPURLResponse)?.statusCode ?? -1
+                done.signal()
+            }.resume()
+            XCTAssertEqual(done.wait(timeout: .now() + 20), .success)
+            XCTAssertEqual(result.status, 200)
+        }
+
+        showHome()
+        _ = settle(app, seconds: 4)
+        shoot("listen-now-online", app)
+        showDiscover()
+        let age = app.staticTexts["discover.home.age"].firstMatch
+        XCTAssertTrue(age.waitForExistence(timeout: 20))
+        XCTAssertTrue(age.label.contains("10 hours"), age.label)
+        shoot("discover-seeded-no-photos", app)
+
+        showHome()
+        try fixtureAction("refill")
+        showDiscover()
+        XCTAssertTrue(age.waitForNonExistence(timeout: 35), "Opening Discover alone must update the age.")
+        _ = settle(app, seconds: 5)
+        shoot("discover-refreshed-without-tap", app)
+
+        showHome()
+        _ = settle(app, seconds: 2)
+        try fixtureAction("stop")
+        app.terminate()
+        app.launchArguments = fixtureArgs
+        launchInInteractionScope(app)
+        showHome()
+        _ = settle(app, seconds: 8)
+        shoot("listen-now-stopped-cold", app)
+        showDiscover()
+        _ = settle(app, seconds: 4)
+        shoot("discover-stopped-cold", app)
+    }
+
+    @MainActor
     func testOfflineMusicSettingsPersistAcrossRelaunch() throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["DULCET_OFFLINE_PROOF"] == "1" else { throw XCTSkip("Requires the disposable offline-library fixture") }
