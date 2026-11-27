@@ -23,6 +23,15 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
 
     private static let playlistName = "Design Tour Mix"
     private var shotNumber = 0
+    private var connectionWordsOutageControl: String?
+
+    override func tearDown() {
+        if let control = connectionWordsOutageControl {
+            connectionWordsOutageControl = nil
+            _ = setTourOutage(control, enabled: false)
+        }
+        super.tearDown()
+    }
 
     @MainActor
     func testOfflineMusicSettingsPersistAcrossRelaunch() throws {
@@ -780,11 +789,21 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         search(album)
         XCTAssertTrue(app.buttons["dulcet.search.topResult"].firstMatch.waitForExistence(timeout: 20))
 
-        defer { _ = setTourOutage(control, enabled: false) }
+        connectionWordsOutageControl = control
         XCTAssertTrue(setTourOutage(control, enabled: true))
         // The first failure comes from Search while the connected app stays in the foreground.
         search(String(album.dropLast()))
         capture("search", failed: true)
+        // The iPhone keeps Search expanded after submitting, covering the normal tab bar.
+        if compact {
+            let close = app.buttons["Close"].firstMatch
+            XCTAssertTrue(close.waitForExistence(timeout: 10))
+            let frame = close.frame
+            XCTAssertTrue(app.frame.contains(CGPoint(x: frame.midX, y: frame.midY)))
+            app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: frame.midX - app.frame.minX, dy: frame.midY - app.frame.minY)).tap()
+            XCTAssertTrue(close.waitForNonExistence(timeout: 10))
+        }
         // Foreground reconnects the existing reader and shares its failure with every screen.
         XCUIDevice.shared.press(.home)
         app.activate()
@@ -796,6 +815,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         capture("album", failed: true)
 
         XCTAssertTrue(setTourOutage(control, enabled: false))
+        connectionWordsOutageControl = nil
         retry.firstMatch.tap()
         capture("album", failed: false)
         for (tab, id) in [("Listen Now", "listenNow"), ("Library", "library"), ("Discover", "discover"), ("Browse", "browse")] {
