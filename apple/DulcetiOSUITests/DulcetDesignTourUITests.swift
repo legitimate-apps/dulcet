@@ -758,9 +758,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(cover.waitForExistence(timeout: 20))
         XCTAssertTrue(waitFor(timeout: 15) { coverRelease.label.hasSuffix(", Album") }, "the warm-up answer reached Search")
 
-        let clear = app.buttons["dulcet.search.clearQuery"].firstMatch
-        XCTAssertTrue(clear.exists)
-        clear.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Harbor Signal".count))
         XCTAssertTrue(top.waitForNonExistence(timeout: 5))
         guard setTourRule(proxy, action: "hold", enabled: true, endpoint: "search3") else {
             XCTFail("Could not hold the fixture's search3 answer")
