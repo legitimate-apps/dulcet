@@ -57,6 +57,26 @@ class DiscoverShelvesTest {
         assertEquals(1,calls);pages.close()
     }
 
+    @Test fun homeRefreshesOldOrIncompleteSnapshotsButKeepsFreshCompleteShelves() = discoverStoreTest { env ->
+        val store = env.store()
+        val pages = DiscoverPages(this, DiscoverTestTransport(), store, { true })
+        val received = 1_000L
+        val image = "artist-photo"
+        val artist = sampleDiscoverItem(kind = "artist").copy(artworkId = image)
+        val fresh = DiscoverShelfPage("trendingArtists", listOf(artist), emptyList(), null,
+            DiscoverAge(received, 0, received, false, true))
+
+        assertTrue(pages.needsHomeRefresh(null, received))
+        assertTrue(pages.needsHomeRefresh(fresh, received), "the snapshot names a photo the device lacks")
+        store.putRead("artwork:$image", byteArrayOf(1), true, store.nextIssue())
+        assertFalse(pages.needsHomeRefresh(fresh, received + 29 * 60 * 1000))
+        assertTrue(pages.needsHomeRefresh(fresh, received + 30 * 60 * 1000))
+        assertTrue(pages.needsHomeRefresh(fresh.copy(age = fresh.age.copy(stale = true)), received))
+        assertTrue(pages.needsHomeRefresh(fresh.copy(items = listOf(artist.copy(artworkId = null))), received))
+        assertFalse(pages.needsHomeRefresh(fresh.copy(items = listOf(artist.copy(artworkId = null, target = null))), received))
+        pages.close()
+    }
+
     @Test fun playlistCacheAndShelfReadsShareMonotonicRateLimitAcrossWallRollback() = discoverStoreTest {env ->
         val wire=DiscoverTestTransport();var playlistCalls=0;var shelfCalls=0;var now=1000L
         val summary=DiscoverPlaylistSummary("playlist","Mix",null,2)

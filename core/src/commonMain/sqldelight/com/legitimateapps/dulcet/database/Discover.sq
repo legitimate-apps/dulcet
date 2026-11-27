@@ -8,6 +8,9 @@ CREATE TABLE discover_read (
   PRIMARY KEY (server_id, cache_key)
 );
 
+hasRead:
+SELECT cache_key FROM discover_read WHERE server_id = ? AND cache_key = ?;
+
 selectRead:
 SELECT * FROM discover_read WHERE server_id = ? AND cache_key = ?;
 upsertRead:

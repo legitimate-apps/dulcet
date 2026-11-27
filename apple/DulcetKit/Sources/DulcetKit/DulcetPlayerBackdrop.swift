@@ -51,7 +51,7 @@ struct DulcetPlayerBackdrop: View {
         operation = store.loadArtwork(reference, sizeBucket: bucket) { result in
             guard requestedGeneration == generation else { return }
             operation = nil
-            if case let .loaded(data) = result,
+            if let data = result.imageData,
                let image = DulcetArtworkMemoryCache.decode(data, maximumPixelSize: 64) {
                 colours = Self.sample(image)
             }

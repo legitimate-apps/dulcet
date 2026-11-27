@@ -3123,7 +3123,7 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
         let cachedOnly: Bool
         if case let .connected(account) = currentSnapshot.accountConnection {
             normalizedURL = account.normalizedServerURL
-            cachedOnly = rejectedArtworkServerIDs.contains(reference.serverID)
+            cachedOnly = !reconnectReachable || rejectedArtworkServerIDs.contains(reference.serverID)
         } else {
             normalizedURL = form.serverURL
             cachedOnly = true
@@ -3140,7 +3140,15 @@ extension DulcetAccountDataSource: DulcetArtworkLoading {
         )) { [weak self] outcome in
             guard let self, self.artworkGeneration == requestGeneration,
                   self.providerInstanceID == reference.serverID, self.accountRemovalID == nil else { return }
-            if case let .loaded(data) = outcome { self.artworkMemoryCache.insert(data, for: key) }
+            switch outcome {
+            case let .loaded(data):
+                self.artworkMemoryCache.insert(data, for: key)
+            case let .loadedFromOtherSize(data, bucket):
+                let actual = DulcetArtworkCacheKey(serverID: key.serverID, artworkKey: key.artworkKey, sizeBucket: bucket)
+                self.artworkMemoryCache.insert(data, for: actual)
+            case .unavailable, .failed, .cancelled:
+                break
+            }
             completion(outcome)
         }
     }

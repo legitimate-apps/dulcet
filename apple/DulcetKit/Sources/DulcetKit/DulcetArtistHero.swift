@@ -399,7 +399,7 @@ final class DulcetArtistHeroPicture {
         operation = store.loadArtwork(reference, sizeBucket: bucket) { [weak self] outcome in
             guard let self, requested == self.generation else { return }
             self.operation = nil
-            if case let .loaded(data) = outcome,
+            if let data = outcome.imageData,
                let image = DulcetArtworkMemoryCache.decode(data, maximumPixelSize: bucket.rawValue) {
                 accept(image)
             } else if case .cancelled = outcome {

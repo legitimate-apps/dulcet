@@ -148,6 +148,7 @@ interface DiscoverClient {
     fun artistAlbums(mbid: String, cursor: String?, completion: (DiscoverResult<DiscoverPage>) -> Unit): DiscoverOperation
     fun album(mbid: String, releaseId: String?, completion: (DiscoverResult<DiscoverAlbum>) -> Unit): DiscoverOperation
     fun albumTracks(mbid: String, releaseId: String, cursor: String?, completion: (DiscoverResult<DiscoverPage>) -> Unit): DiscoverOperation
+    fun openHome() = refreshHome()
     fun refreshHome()
     fun shelf(id: String, cursor: String?, completion: (DiscoverResult<DiscoverShelfPage>) -> Unit): DiscoverOperation
     fun playlists(query: String, cursor: String?, completion: (DiscoverResult<DiscoverPlaylistList>) -> Unit): DiscoverOperation
