@@ -727,6 +727,61 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     }
 
     @MainActor
+    func testSearchKeepsTheOriginalBeforeAndAfterTheServerAnswer() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["DULCET_SEARCH_STABILITY_PROOF"] == "1" else { throw XCTSkip("Requires a disposable fixture") }
+        let proxy = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let app = XCUIApplication()
+        app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
+            "-dulcet-debug-in-memory", "-dulcet-debug-account-server-url", proxy,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        let compact = try XCTUnwrap(settledWindowWidth(app.windows.firstMatch)) < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact))
+        XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))
+
+        let field = dulcetSearchField(in: app)
+        let scope = app.staticTexts["dulcet.search.scope"].firstMatch
+        let top = app.buttons["dulcet.search.topResult"].firstMatch
+        let songs = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'dulcet.search.result.' AND label ENDSWITH ', Song'"))
+        let studio = songs.matching(NSPredicate(format: "label CONTAINS %@", "Original Artist")).firstMatch
+        let cover = songs.matching(NSPredicate(format: "label CONTAINS %@", "Cover Artist")).firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        field.typeText("Harbor Signal")
+        XCTAssertTrue(studio.waitForExistence(timeout: 20))
+        XCTAssertTrue(cover.waitForExistence(timeout: 20))
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 15), "the warm-up answer reached Search")
+
+        let clear = app.buttons["dulcet.search.clearQuery"].firstMatch
+        XCTAssertTrue(clear.exists)
+        clear.tap()
+        XCTAssertTrue(top.waitForNonExistence(timeout: 5))
+        guard setTourRule(proxy, action: "hold", enabled: true, endpoint: "search3") else {
+            XCTFail("Could not hold the fixture's search3 answer")
+            return
+        }
+        defer { _ = setTourRule(proxy, action: "hold", enabled: false) }
+        field.tap()
+        field.typeText("Harbor Signal")
+        XCTAssertTrue(top.waitForExistence(timeout: 6))
+        XCTAssertTrue(scope.exists, "the server answer is held during the device paint")
+        XCTAssertTrue(studio.exists && cover.exists, "both recordings are visible in the device results")
+        print("DULCET SEARCH DEVICE TOP RESULT \(top.label)")
+        XCTAssertTrue(top.label.contains("Original Artist"), top.label)
+        shoot("search-original-device", app, includeMetadata: false)
+
+        XCTAssertTrue(setTourRule(proxy, action: "hold", enabled: false))
+        XCTAssertTrue(scope.waitForNonExistence(timeout: 15), "the server answer reached Search")
+        XCTAssertTrue(studio.exists && cover.exists)
+        print("DULCET SEARCH SERVER TOP RESULT \(top.label)")
+        XCTAssertTrue(top.label.contains("Original Artist"), top.label)
+        shoot("search-original-server", app, includeMetadata: false)
+    }
+
+    @MainActor
     func testSearchClearsItsFailureAfterTheServerRestarts() throws {
         let (app, control, compact) = try launchConnectionRecoveryFixture()
         XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))

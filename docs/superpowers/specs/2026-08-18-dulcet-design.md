@@ -5249,6 +5249,13 @@ every result carries a scope — `serverAndDevice`, `deviceWhileServerPending`, 
 - **Merging:** identity is the opaque id, so a server result **replaces** the local row of the same id
   (refreshing the cached object) rather than appearing twice. Late results never reorder items above the
   user's current scroll position; they append or replace in place.
+- **Top Result:** device and server publications use the same match, type and personal-preference
+  rules. When recordings share a title, a favorite leads. Three plays can establish a preference,
+  and a marked alternate needs at least three more plays than the most-played matching unmarked
+  recording. Without a personal preference, the unmarked recording leads. ListenBrainz breaks
+  ties within the same version tier. Remaining ties use normalized title and opaque id. A sparse
+  search hit retains known artwork for the same recording, and a song without its own artwork can
+  use its known album cover.
 - Each result type pages independently. Offsets advance by raw rows consumed, before display
   deduplication; `hasMore` is true when a positive requested count equals the raw response count.
   The core page carries these consumed-row counts through the Apple boundary. The caller preserves
@@ -8087,6 +8094,18 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-27 — Search holds onto the original across device and server results (§18.1).**
+The previous three-play threshold could promote a marked cover played three times over the original
+played twice, even with both recordings visible on the device. It could also promote a marked take
+when ListenBrainz supplied a count for only that take. The shared reader requires a three-play lead
+over the most-played unmarked recording of that title before a marked take can win on personal plays.
+Favorites still carry explicit preference. An unmarked recording precedes an alternate when the
+personal signals tie, and ListenBrainz distinguishes recordings within each version tier. Device and
+server publications use the same rules and a deterministic title and id tie-break. Song covers can
+come from the recording or its known album, and sparse search answers retain known recording
+metadata for the same album. Both Dulcet Server and other OpenSubsonic servers reach this rule
+through the reader's `search3` path.
 
 **2026-11-27 — A skip keeps the play state; Up Next reorders from an always-visible handle (§14.1, §12.10).**
 OBSERVED on the test iPhone, 2026-11-27: with "¿Cómo así?" paused, a left swipe on the mini-player

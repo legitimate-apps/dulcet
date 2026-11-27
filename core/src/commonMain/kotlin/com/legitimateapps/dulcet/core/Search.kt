@@ -572,7 +572,8 @@ internal class LibrarySearchSession(
             val sent = reader.send(
                 "search3", parameters, issued = { issuedOnPath = reader.networkPathRevision },
             ).requireOk("search3", parameters)
-            val entities = parseReaderSearch3(sent.response.body)
+            val parsed = parseReaderSearch3(sent.response.body)
+            val entities = parsed.copy(tracks = parsed.tracks.map(::completeSearchTrack))
             cache.writeEntities(CacheWriteStamp(sent.issueSeq, cache.now(), epochKey), CacheEntitySource.Search, entities)
             cache.evictIfNeeded()
             val provider = cache.serverId
@@ -592,6 +593,19 @@ internal class LibrarySearchSession(
         } catch (failure: Throwable) {
             ServerOutcome.Failed(failure.asReaderError())
         }
+    }
+
+    /** A sparse search hit can omit recording details we already know for this same song. */
+    private fun completeSearchTrack(track: CacheTrackRecord): CacheTrackRecord {
+        if (!track.albumTitle.isNullOrBlank() && track.albumRawId != null && track.artworkKey != null) return track
+        val previous = cache.track(track.rawId)?.takeUnless { it.row.gone }?.record ?: return track
+        val albumId = track.albumRawId ?: previous.albumRawId
+        if (albumId != previous.albumRawId) return track
+        return track.copy(
+            albumRawId = albumId,
+            albumTitle = track.albumTitle?.takeIf(String::isNotBlank) ?: previous.albumTitle,
+            artworkKey = track.artworkKey ?: previous.artworkKey,
+        )
     }
 
     private fun publish() {
@@ -619,7 +633,20 @@ internal class LibrarySearchSession(
                 (album?.credits.orEmpty() + track.credits).mapNotNullTo(playableArtists) { it.artistRawId }
             }
         }
-        val rows = items.map { item ->
+        val albums = mutableMapOf<String, CacheAlbumRecord?>()
+        val rows = items.map { result ->
+            val item = if (result.type == SearchResultType.Track &&
+                (result.albumTitle.isNullOrBlank() || result.artworkKey == null)
+            ) {
+                val album = result.albumRawId?.let { id ->
+                    if (id !in albums) albums[id] = cache.album(id)?.takeUnless { it.row.gone }?.record
+                    albums[id]
+                }
+                result.copy(
+                    albumTitle = result.albumTitle?.takeIf(String::isNotBlank) ?: album?.title,
+                    artworkKey = result.artworkKey ?: album?.artworkKey,
+                )
+            } else result
             val state = userState(item)
             val overlay = pending[item.member()]
             LibrarySearchRow(
@@ -854,31 +881,46 @@ private fun matchRank(query: String, result: SearchResultItem): Int {
  * share a title (the original, covers, a live session) then go, in this order, to:
  *
  * 1. what the person favourited;
- * 2. the one they play most, once they play it at all often ([OFTEN_PLAYED] plays; one or two stray
- *    plays are not a choice and must not outvote what everyone plays);
- * 3. the one more people play worldwide ([LibrarySearchRow.listens], the signal artist Top Songs
- *    use), so "gold soundz" leads with Pavement's song, not a cover of it;
- * 4. the one not marked as another version of the song (live, session, remix, acoustic, demo,
- *    cover, ...) in its own title or its album's, which is all a server without the figure can say.
+ * 2. the one they play most, once they play it at least [OFTEN_PLAYED] times. A marked alternate
+ *    needs that much of a lead over the matching ordinary recording to show a personal preference;
+ * 3. the recording whose title and album are free of alternate-version markers;
+ * 4. worldwide listens ([LibrarySearchRow.listens]) among recordings in the same version tier.
  *
- * A tie after that keeps the list's order. A match that only starts a later word or sits inside
- * one (`matchRank` above 5) leads nothing.
+ * Title and opaque id settle ties independently of the order in which rows arrive. A match that
+ * only starts a later word or sits inside one (`matchRank` above 5) leads nothing.
  */
 internal fun topResultIndex(query: String, rows: List<LibrarySearchRow>): Int? {
     val normalizedQuery = normalizeSearchText(query)
     if (normalizedQuery.isEmpty()) return null
-    val best = rows.withIndex().minWithOrNull(
-        compareBy<IndexedValue<LibrarySearchRow>>(
-            { matchRank(normalizedQuery, it.value.item) },
-            { leadRank(it.value.item.type) },
-            { if (it.value.favourite == true) 0 else 1 },
-            { (it.value.playCount ?: 0L).takeIf { plays -> plays >= OFTEN_PLAYED }?.let { plays -> -plays } ?: 0L },
-            { -(it.value.listens ?: 0L) },
-            { if (isOtherVersion(it.value.item)) 1 else 0 },
-            { it.index },
+    data class Candidate(val index: Int, val row: LibrarySearchRow) {
+        val title = normalizeSearchText(row.item.title)
+        val match = matchRank(normalizedQuery, row.item)
+        val alternate = isOtherVersion(row.item)
+        val plays = row.playCount ?: 0L
+    }
+    val candidates = rows.mapIndexed(::Candidate).filter { it.match <= TOP_RESULT_WORST_RANK }
+    val ordinaryPlaysByTitle = mutableMapOf<String, Long>()
+    for (candidate in candidates) {
+        if (candidate.row.item.type == SearchResultType.Track && !candidate.alternate) {
+            ordinaryPlaysByTitle[candidate.title] = maxOf(ordinaryPlaysByTitle[candidate.title] ?: 0L, candidate.plays)
+        }
+    }
+    fun personalPlays(candidate: Candidate): Long {
+        val baseline = if (candidate.alternate) ordinaryPlaysByTitle[candidate.title] ?: 0L else 0L
+        return if (candidate.plays - baseline >= OFTEN_PLAYED) candidate.plays else 0L
+    }
+    return candidates.minWithOrNull(
+        compareBy<Candidate>(
+            { it.match },
+            { leadRank(it.row.item.type) },
+            { it.row.favourite != true },
+            { -personalPlays(it) },
+            { it.alternate },
+            { -(it.row.listens ?: 0L) },
+            { it.title },
+            { it.row.item.id.rawId },
         ),
-    ) ?: return null
-    return if (matchRank(normalizedQuery, best.value.item) <= TOP_RESULT_WORST_RANK) best.index else null
+    )?.index
 }
 
 /** Plays after which a version counts as the person's choice rather than a try. */
