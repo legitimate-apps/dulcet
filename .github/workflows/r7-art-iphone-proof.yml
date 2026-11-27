@@ -18,9 +18,10 @@ jobs:
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
-      R7_ART_EVIDENCE: ${{ runner.temp }}/r7-art-evidence
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set the proof output directory
+        run: echo "R7_ART_EVIDENCE=$RUNNER_TEMP/r7-art-evidence" >> "$GITHUB_ENV"
       - name: Read toolchain pins
         id: pins
         run: python3 tools/export_toolchain.py >> "$GITHUB_OUTPUT"

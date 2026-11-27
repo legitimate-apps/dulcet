@@ -85,6 +85,10 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         shoot("discover-seeded-no-photos", app)
 
         showHome()
+        app.terminate()
+        app.launchArguments = fixtureArgs
+        launchInInteractionScope(app)
+        XCTAssertTrue(awaitConnection(in: app, compact: true), app.debugDescription)
         try fixtureAction("refill")
         showDiscover()
         XCTAssertTrue(age.waitForNonExistence(timeout: 35), "Opening Discover alone must update the age.")
