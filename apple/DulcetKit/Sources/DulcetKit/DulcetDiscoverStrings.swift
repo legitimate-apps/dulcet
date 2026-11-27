@@ -10,7 +10,6 @@ extension DulcetStrings {
     static let discoverHeld = dynamicText("discover.discoverHeld", fallback: "In your library")
     static let discoverNotHeld = dynamicText("discover.discoverNotHeld", fallback: "Not in your library")
     static let discoverUnknown = dynamicText("discover.discoverUnknown", fallback: "Library match unknown")
-    static let discoverOffline = dynamicText("discover.discoverOffline", fallback: "Offline")
     static let discoverReadFailed = dynamicText("discover.discoverReadFailed", fallback: "Could not refresh. Your last results are still here.")
     static let discoverWaiting = dynamicText("discover.discoverWaiting", fallback: "Not synced yet")
     static let discoverNotSaved = dynamicText("discover.discoverNotSaved", fallback: "Not saved")
@@ -42,14 +41,10 @@ extension DulcetStrings {
     static func discoverBusy(_ seconds: Int) -> String {
         dynamicFormatted("discover.discoverBusy", fallback: "Server is busy. Try again in %ld seconds.", seconds)
     }
-    static func discoverRefreshFailedShowing(_ age: String) -> String {
-        dynamicFormatted("discover.discoverRefreshFailedShowing", fallback: "Couldn\u{2019}t refresh · showing results from %@", age)
+    static func discoverShowingOlderResults(_ age: String) -> String {
+        dynamicFormatted("discover.discoverShowingOlderResults", fallback: "Showing results from %@", age)
     }
-    static let discoverRefreshFailedShowingEarlier = dynamicText("discover.discoverRefreshFailedShowingEarlier", fallback: "Couldn\u{2019}t refresh · showing earlier results")
-    static func discoverOfflineShowing(_ age: String) -> String {
-        dynamicFormatted("discover.discoverOfflineShowing", fallback: "Offline · showing results from %@", age)
-    }
-    static let discoverOfflineShowingEarlier = dynamicText("discover.discoverOfflineShowingEarlier", fallback: "Offline · showing earlier results")
+    static let discoverShowingEarlierResults = dynamicText("discover.discoverShowingEarlierResults", fallback: "Showing earlier results")
     static func discoverUpdated(_ age: String) -> String {
         dynamicFormatted("discover.discoverUpdated", fallback: "Updated %@", age)
     }
@@ -70,8 +65,6 @@ extension DulcetStrings {
     static let discoverRecentWishesEmpty = dynamicText("discover.discoverRecentWishesEmpty", fallback: "Your recent wishes will appear here.")
     static let discoverAgeUnavailable = dynamicText("discover.discoverAgeUnavailable", fallback: "Age unavailable")
     static let discoverUnavailable = dynamicText("discover.discoverUnavailable", fallback: "Discovery is temporarily unavailable.")
-    static let discoverConnect = dynamicText("discover.discoverConnect", fallback: "Connect to your server to explore music.")
-    static let discoverRetry = dynamicText("discover.discoverRetry", fallback: "Try Again")
     static let discoverLoading = dynamicText("discover.discoverLoading", fallback: "Loading")
     static let discoverRecordingUnavailable = dynamicText("discover.discoverRecordingUnavailable", fallback: "Recording Information Unavailable")
     static let discoverPlaylistSearchPrompt = dynamicText("discover.discoverPlaylistSearchPrompt", fallback: "Search public playlists")
@@ -80,9 +73,6 @@ extension DulcetStrings {
     static let discoverDone = dynamicText("discover.discoverDone", fallback: "Done")
     static func discoverSeeAllNamed(_ title: String) -> String {
         dynamicFormatted("discover.discoverSeeAllNamed", fallback: "See All %@", title)
-    }
-    static func discoverRetryAt(_ date: String) -> String {
-        dynamicFormatted("discover.discoverRetryAt", fallback: "Retry available at %@", date)
     }
     static func discoverWishedFor(_ title: String) -> String {
         dynamicFormatted("discover.discoverWishedFor", fallback: "Wished for %@", title)

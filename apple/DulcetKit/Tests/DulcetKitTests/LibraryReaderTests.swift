@@ -498,7 +498,8 @@ func owedAndOfflineContentSaysHowOldItIsAndWhy() {
         .cached(.offline, asOf: now.addingTimeInterval(-10)), now: now, includesReason: false
     )
     #expect(ageBelowAccountMessage?.contains(DulcetStrings.readerJustNow) == true)
-    #expect(ageBelowAccountMessage?.contains(DulcetStrings.readerReasonOffline) == false)
+    #expect(ageBelowAccountMessage?.localizedCaseInsensitiveContains("offline") == false)
+    #expect(unknownAge?.localizedCaseInsensitiveContains("offline") == false)
     #expect(DulcetReaderCopy.unavailableLine(.notCachedOffline, subject: .album) == DulcetStrings.readerUnavailableAlbum)
 }
 
@@ -506,14 +507,14 @@ func owedAndOfflineContentSaysHowOldItIsAndWhy() {
 func aPageStatesOnlyOfflineOrAFailedRefreshInPlainWords() {
     let now = Date(timeIntervalSince1970: 10_000)
     let old = now.addingTimeInterval(-3 * 86_400)
-    #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(.offline, asOf: old), now: now) == DulcetStrings.readerPageOffline)
-    #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(.offline, asOf: nil), now: now) == DulcetStrings.readerPageOffline)
-    let failed = DulcetReaderCopy.visibleFreshnessLine(.cached(.failed(.serverBusy), asOf: old), now: now)
+    #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(.offline, asOf: old)) == nil)
+    #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(.offline, asOf: nil)) == nil)
+    let failed = DulcetReaderCopy.visibleFreshnessLine(.cached(.failed(.serverBusy), asOf: old))
     #expect(failed == DulcetStrings.readerRefreshFailed(DulcetStrings.readerErrorBusy))
     // A routine refresh, a changed library and a page owing rows say nothing, however old.
     for reason in [DulcetReaderCachedReason.revalidating, .stale, .owed] {
-        #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(reason, asOf: old), now: now) == nil)
-        #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(reason, asOf: nil), now: now) == nil)
+        #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(reason, asOf: old)) == nil)
+        #expect(DulcetReaderCopy.visibleFreshnessLine(.cached(reason, asOf: nil)) == nil)
     }
     // The visible line never carries the age or the jargon it replaced.
     for line in [DulcetStrings.readerPageOffline, failed ?? ""] {
@@ -1775,7 +1776,7 @@ func searchIsAnsweredByTheReaderFromTheFirstCharacter() throws {
     search.publish(DulcetReaderSearchPublication(
         query: "a", sequence: 1, scope: .deviceOffline(nil), rows: []))
     #expect(model.current?.query == "a")
-    #expect(DulcetReaderCopy.searchScopeLabel(model.current?.scope) == DulcetStrings.readerSearchScopeOffline)
+    #expect(DulcetReaderCopy.searchScopeLabel(model.current?.scope) == nil)
     // A publication for an older query never shows under a newer one.
     model.updateQuery("ab")
     #expect(model.current == nil)
@@ -3077,15 +3078,16 @@ func aPlaylistDownloadIsCompleteOnlyWhenEveryKnownSongIsHere() {
 func theIndicatorSeparatesADeviceWithNoNetworkFromAServerThatDoesNotAnswer() {
     typealias Indicator = DulcetConnectionIndicator
     func choose(_ mode: DulcetLibraryReaderMode, offline: Bool = false, failure: DulcetReaderErrorKind? = nil,
-                connecting: Bool = false) -> Indicator? {
-        Indicator.choose(mode: mode, deviceOffline: offline, connectionFailure: failure, connecting: connecting)
+                connecting: Bool = false, serverReadFailed: Bool = false) -> Indicator? {
+        Indicator.choose(mode: mode, deviceOffline: offline, connectionFailure: failure,
+                         connecting: connecting, serverReadFailed: serverReadFailed)
     }
     // No network path: "You're offline", and nothing to retry.
     let offline = choose(.connected, offline: true)
     #expect(offline?.cause == .deviceOffline)
     #expect(offline?.offersRetry == false)
-    #expect(offline?.pageTitle == DulcetStrings.readerPageOffline)
-    #expect(offline?.bannerTitle == DulcetStrings.readerOfflineNotice)
+    #expect(offline?.title == "You’re offline")
+    #expect(offline?.presentationDelay == .zero)
     // A failure recorded while the network was gone says nothing about the server.
     #expect(choose(.connected, offline: true, failure: .unreachable)?.cause == .deviceOffline)
     #expect(choose(.deviceOnly, offline: true)?.cause == .deviceOffline)
@@ -3093,12 +3095,18 @@ func theIndicatorSeparatesADeviceWithNoNetworkFromAServerThatDoesNotAnswer() {
     let unreachable = choose(.connected, failure: .unreachable)
     #expect(unreachable?.cause == .serverUnreachable)
     #expect(unreachable?.offersRetry == true)
-    #expect(unreachable?.bannerTitle == DulcetStrings.connectionsUnreachableNotice)
-    #expect(unreachable?.pageTitle == DulcetStrings.readerPageServerUnreachable)
+    #expect(unreachable?.title == "Can’t reach your server")
+    #expect(unreachable?.presentationDelay == .seconds(3))
+    #expect(choose(.connected, failure: .timeout) == unreachable)
+    #expect(choose(.connected, serverReadFailed: true) == unreachable)
+    #expect(choose(.connected, offline: true, serverReadFailed: true) == offline)
+    #expect(choose(.connected, offline: true, failure: .serverIdentityChanged)?.cause == .connectionFailed)
+    #expect(DulcetReaderSearchScope.deviceOffline(nil).isConnectionFailure)
+    #expect(DulcetReaderSearchScope.deviceServerFailed(.timeout, nil).isConnectionFailure)
+    #expect(!DulcetReaderSearchScope.deviceWhileServerPending.isConnectionFailure)
     // A saved account not connected in this launch, with a network: the server, never "offline".
     #expect(choose(.deviceOnly)?.cause == .serverUnreachable)
-    #expect(choose(.deviceOnly, connecting: true)?.cause == .reconnecting)
-    #expect(choose(.deviceOnly, connecting: true)?.retryEnabled == false)
+    #expect(choose(.deviceOnly, connecting: true) == nil)
     // A refusal is not "unreachable"; a healthy connection says nothing.
     #expect(choose(.connected, failure: .invalidCredentials)?.cause == .connectionFailed)
     #expect(choose(.connected) == nil)
@@ -3129,7 +3137,11 @@ func aScreenStatesTheConnectionOnceAndNeverRepeatsItInAFreshnessLine() {
     // A banner above, a device-only list, or a page that explains itself: nothing more.
     #expect(plan(offlineFreshness, shown: true).isEmpty)
     #expect(plan(offlineFreshness, local: true).isEmpty)
-    #expect(plan(.unavailable(.notCachedOffline)).isEmpty)
+    #expect(plan(.unavailable(.notCachedOffline)).indicator == offline)
+    #expect(plan(.cached(.failed(.timeout), asOf: nil), indicator: unreachable) == unreachablePlan)
+    #expect(plan(.unavailable(.failed(.unreachable)), indicator: unreachable) == unreachablePlan)
+    #expect(plan(.cached(.failed(.serverBusy), asOf: nil), indicator: unreachable) == unreachablePlan)
+    #expect(plan(.cached(.failed(.timeout), asOf: nil), indicator: nil).isEmpty)
     // A failed refresh is a different statement: its line and its Try Again, but no indicator.
     let failed = plan(.cached(.failed(.serverBusy), asOf: Date()), indicator: nil)
     #expect(failed.indicator == nil && failed.lines.count == 1 && failed.offersRetry)
@@ -3144,6 +3156,8 @@ func theSessionNamesTheDeviceOfflineOnlyAfterTheGraceAndTheServerOtherwise() thr
     reachability.report(reachable: false)
     #expect(!session.isDeviceOffline, "a blip inside the grace is not offline")
     #expect(session.connectionIndicator() == nil)
+    #expect(session.connectionIndicator(serverReadFailed: true) == nil,
+            "a request failing during the path grace must not produce a server message")
     delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
     #expect(session.isDeviceOffline)
     #expect(session.connectionIndicator()?.cause == .deviceOffline)

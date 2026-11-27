@@ -215,14 +215,16 @@ struct DulcetSystemScrollChrome: ViewModifier {
 /// 26 systems content starts below it and scrolls under it with the native scroll-edge effect;
 /// earlier systems inset the page the same way, under an opaque status.
 private struct DulcetAccountStatusBar: ViewModifier {
-    var hidden = false
+    let serverReadFailed: Bool
     func body(content: Content) -> some View {
-        if hidden {
-            content
-        } else if #available(iOS 26.0, macOS 26.0, tvOS 26.0, *) {
-            content.safeAreaBar(edge: .top, spacing: 0) { DulcetReaderAccountBanner(opaque: false) }
+        if #available(iOS 26.0, macOS 26.0, tvOS 26.0, *) {
+            content.safeAreaBar(edge: .top, spacing: 0) {
+                DulcetReaderAccountBanner(opaque: false, serverReadFailed: serverReadFailed)
+            }
         } else {
-            content.safeAreaInset(edge: .top, spacing: 0) { DulcetReaderAccountBanner() }
+            content.safeAreaInset(edge: .top, spacing: 0) {
+                DulcetReaderAccountBanner(serverReadFailed: serverReadFailed)
+            }
         }
     }
 }
@@ -246,7 +248,9 @@ struct DulcetEdgeToEdgeShelf: ViewModifier {
 extension View {
     /// `hidden` while the page shows a `DulcetStateMessage` that already states the account's
     /// condition and offers its retry, so the page says it once.
-    func dulcetAccountStatusBar(hidden: Bool = false) -> some View { modifier(DulcetAccountStatusBar(hidden: hidden)) }
+    func dulcetAccountStatusBar(serverReadFailed: Bool = false) -> some View {
+        modifier(DulcetAccountStatusBar(serverReadFailed: serverReadFailed))
+    }
 }
 
 struct DulcetAccountSheetClose: ViewModifier {

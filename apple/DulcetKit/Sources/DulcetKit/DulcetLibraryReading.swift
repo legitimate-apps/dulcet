@@ -201,7 +201,7 @@ public final class DulcetLibrarySession {
     @ObservationIgnored private let unreachableGrace: Duration
     @ObservationIgnored private let reachabilityLog: @MainActor (String) -> Void
     /// An unreachable report not yet acted on, and when it arrived (for the log only).
-    @ObservationIgnored private var heldUnreachable: (timer: any DulcetLibraryReaderCancellable, since: ContinuousClock.Instant)?
+    private var heldUnreachable: (timer: any DulcetLibraryReaderCancellable, since: ContinuousClock.Instant)?
     /// After the network returned and the server still did not answer: the next reconnect waits
     /// here (1, 2, 4, 8 then 15 s), so a radio still coming up is found within seconds. The path's
     /// return is the trigger; this only covers a server that is slow to answer behind it.
@@ -314,9 +314,13 @@ public final class DulcetLibrarySession {
     /// The one connection indicator every screen draws, or nil when there is nothing to say.
     /// `connecting` is the account's own reconnect in flight (the store knows it, the session does
     /// not).
-    public func connectionIndicator(connecting: Bool = false) -> DulcetConnectionIndicator? {
-        DulcetConnectionIndicator.choose(
-            mode: mode, deviceOffline: isDeviceOffline, connectionFailure: connectionFailure, connecting: connecting)
+    public func connectionIndicator(connecting: Bool = false, serverReadFailed: Bool = false) -> DulcetConnectionIndicator? {
+        // A read can fail before the path monitor's grace settles. Hold its message as well,
+        // so an airplane-mode transition never briefly puts the blame on the server.
+        if heldUnreachable != nil, connectionFailure != .serverIdentityChanged { return nil }
+        return DulcetConnectionIndicator.choose(
+            mode: mode, deviceOffline: isDeviceOffline, connectionFailure: connectionFailure,
+            connecting: connecting, serverReadFailed: serverReadFailed)
     }
 
     /// Whether the reader may read the server now, as far as this session knows: connected, and

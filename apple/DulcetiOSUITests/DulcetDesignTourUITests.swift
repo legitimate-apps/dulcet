@@ -23,6 +23,15 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
 
     private static let playlistName = "Design Tour Mix"
     private var shotNumber = 0
+    private var connectionWordsOutageControl: String?
+
+    override func tearDown() {
+        if let control = connectionWordsOutageControl {
+            connectionWordsOutageControl = nil
+            _ = setTourOutage(control, enabled: false)
+        }
+        super.tearDown()
+    }
 
     @MainActor
     func testOfflineMusicSettingsPersistAcrossRelaunch() throws {
@@ -715,6 +724,107 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(keyboard.waitForNonExistence(timeout: 5), "the keyboard went down with the tap")
         _ = settle(app)
         shoot("search-top-result-playing", app)
+    }
+
+    /// The server can disappear while the simulator still has a usable network path.
+    @MainActor
+    func testOneConnectionMessagePerDestination() throws {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard let control = environment["DULCET_CONNECTION_WORDS_CONTROL_URL"] else {
+            throw XCTSkip("Requires a disposable server and outage control")
+        }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        for endpoint in [url, control] {
+            XCTAssertEqual(URLComponents(string: endpoint)?.host, "127.0.0.1")
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        let compact = try XCTUnwrap(settledWindowWidth(app.windows.firstMatch)) < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+
+        let failure = app.staticTexts.matching(NSPredicate(format: "label == %@", "Can’t reach your server"))
+        let offline = app.staticTexts.matching(NSPredicate(format: "label == %@", "You’re offline"))
+        let retry = app.buttons.matching(NSPredicate(format: "label == %@", "Try Again"))
+
+        func capture(_ screen: String, failed: Bool) {
+            if failed {
+                XCTAssertTrue(failure.firstMatch.waitForExistence(timeout: 30), app.debugDescription)
+                XCTAssertEqual(failure.count, 1, screen)
+                XCTAssertEqual(retry.count, 1, screen)
+            } else {
+                XCTAssertTrue(failure.firstMatch.waitForNonExistence(timeout: 20), app.debugDescription)
+                XCTAssertEqual(retry.count, 0, screen)
+            }
+            XCTAssertEqual(offline.count, 0, screen)
+            _ = settle(app)
+            shoot((failed ? "server-stopped-" : "recovered-") + screen, app)
+        }
+
+        func open(_ tab: String, _ id: String) {
+            XCTAssertTrue(openDestination(tab, sidebar: "dulcet.sidebar." + id, in: app, compact: compact),
+                app.debugDescription)
+        }
+
+        func search(_ text: String) {
+            open("Search", "search")
+            let field = dulcetSearchField(in: app)
+            XCTAssertTrue(field.waitForExistence(timeout: 10))
+            field.tap()
+            if let value = field.value as? String, value != field.placeholderValue {
+                field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: value.count))
+            }
+            field.typeText(text + "\n")
+        }
+
+        let album = try XCTUnwrap(environment["DULCET_CONNECTION_WORDS_ALBUM"])
+        XCTAssertTrue(openAlbum(album, in: app, compact: compact), app.debugDescription)
+        open("Discover", "discover")
+        XCTAssertTrue(app.descendants(matching: .any)["discover.home.refresh"].firstMatch.waitForExistence(timeout: 20))
+        search(album)
+        XCTAssertTrue(app.buttons["dulcet.search.topResult"].firstMatch.waitForExistence(timeout: 20))
+
+        connectionWordsOutageControl = control
+        XCTAssertTrue(setTourOutage(control, enabled: true))
+        // The first failure comes from Search while the connected app stays in the foreground.
+        search(String(album.dropLast()))
+        capture("search", failed: true)
+        // The iPhone keeps Search expanded after submitting, covering the normal tab bar.
+        if compact {
+            let close = app.buttons["Close"].firstMatch
+            XCTAssertTrue(close.waitForExistence(timeout: 10))
+            let frame = close.frame
+            XCTAssertTrue(app.frame.contains(CGPoint(x: frame.midX, y: frame.midY)))
+            app.coordinate(withNormalizedOffset: .zero)
+                .withOffset(CGVector(dx: frame.midX - app.frame.minX, dy: frame.midY - app.frame.minY)).tap()
+            XCTAssertTrue(close.waitForNonExistence(timeout: 10))
+        }
+        // Foreground reconnects the existing reader and shares its failure with every screen.
+        XCUIDevice.shared.press(.home)
+        app.activate()
+        for (tab, id) in [("Listen Now", "listenNow"), ("Library", "library"), ("Discover", "discover"), ("Browse", "browse")] {
+            open(tab, id)
+            capture(id, failed: true)
+        }
+        XCTAssertTrue(openAlbum(album, in: app, compact: compact), app.debugDescription)
+        capture("album", failed: true)
+
+        XCTAssertTrue(setTourOutage(control, enabled: false))
+        connectionWordsOutageControl = nil
+        retry.firstMatch.tap()
+        capture("album", failed: false)
+        for (tab, id) in [("Listen Now", "listenNow"), ("Library", "library"), ("Discover", "discover"), ("Browse", "browse")] {
+            open(tab, id)
+            capture(id, failed: false)
+        }
+        search(album)
+        XCTAssertTrue(app.buttons["dulcet.search.topResult"].firstMatch.waitForExistence(timeout: 20))
+        capture("search", failed: false)
     }
 
     /// Chooses the Search tab even while a page covers its field.
@@ -2412,7 +2522,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         self.launchInInteractionScope(app)
         step("listen-now-offline", app) {
             self.openDestination("Listen Now", sidebar: "dulcet.sidebar.listenNow", in: app, compact: compact)
-                && app.staticTexts["Can't reach your server. Showing music on this device."].firstMatch.waitForExistence(timeout: 60)
+                && app.staticTexts["Can’t reach your server"].firstMatch.waitForExistence(timeout: 60)
                 && app.buttons["Try Again"].firstMatch.exists
                 && self.restoredMiniPlayerSettled(in: app) && self.settle(app)
                 && self.offlineCatalogueShelvesAbsent(in: app)

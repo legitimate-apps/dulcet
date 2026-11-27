@@ -25,7 +25,7 @@ struct DulcetListenNowView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @State private var recentItems: [DulcetProviderItemID] = []
     @State private var shownShelves: Set<DulcetListenNowShelf> = []
-    @State private var showsUnreachable = false
+    @State private var serverReadFailed = false
     /// What each shown shelf drew, from which the Top Picks are chosen.
     @State private var shownItems: [DulcetListenNowShelf: [DulcetReaderItem]] = [:]
     var body: some View {
@@ -45,17 +45,7 @@ struct DulcetListenNowView: View {
             if items != shownItems { shownItems = items }
         }
         .onPreferenceChange(DulcetShownListenNowShelves.self) { shownShelves = $0 }
-        .task(id: isOfflineWithNothingShown) {
-            // A grace period: shelves read from the device answer well within it, so a cached
-            // page never flashes the message while it loads. Some shelves never answer offline,
-            // which is why this does not wait for every one.
-            guard isOfflineWithNothingShown else { showsUnreachable = false; return }
-            try? await Task.sleep(for: .seconds(1.5))
-            if !Task.isCancelled { showsUnreachable = isOfflineWithNothingShown }
-        }
-        .overlay {
-            if showsUnreachable { unreachableMessage }
-        }
+        .onPreferenceChange(DulcetReaderServerFailure.self) { serverReadFailed = $0 }
 #if !os(tvOS)
         .refreshable { store.librarySession?.reconnect() }
 #endif
@@ -71,48 +61,9 @@ struct DulcetListenNowView: View {
         .accessibilityIdentifier("dulcet.listenNow")
         // Content passes under the account's status as it does under the bars, and starts below
         // it at rest: an overlay drew the status over the first shelf's heading.
-        .dulcetAccountStatusBar(hidden: showsUnreachable)
-    }
-
-    /// Offline, or kept offline by a failed reconnect, with no shelf drawing anything.
-    private var isOfflineWithNothingShown: Bool {
-        let offline = store.librarySession?.ownsConnectionMessage == true
-        return offline && shownShelves.isEmpty
-    }
-
-    /// The page's one message in place of shelves, with the status bar's own retry. With no
-    /// network path the message says the device is offline and offers no retry: the network's
-    /// return brings Dulcet back by itself.
-    private var unreachableMessage: some View {
-        let deviceOnly = store.librarySession?.mode == .deviceOnly
-        if store.librarySession?.isDeviceOffline == true {
-            return DulcetStateMessage(
-                symbol: "wifi.slash",
-                title: DulcetStrings.readerOfflineDeviceTitle,
-                message: DulcetStrings.readerOfflineDeviceMessage,
-                accessibilityIdentifier: "dulcet.listenNow.unreachable",
-                action: nil
-            )
-        }
-        let serverName: String? = switch store.snapshot.accountConnection {
-        case let .saved(serverName): serverName
-        default: nil
-        }
-        return DulcetStateMessage(
-            symbol: "wifi.slash",
-            title: serverName.map(DulcetStrings.serverUnreachableTitle) ?? DulcetStrings.serverUnreachableGenericTitle,
-            message: DulcetStrings.savedAccountDisconnectedFootnote,
-            accessibilityIdentifier: "dulcet.listenNow.unreachable",
-            action: DulcetStateAction(
-                DulcetStrings.tryAgain,
-                systemImage: "arrow.clockwise",
-                isDefaultAction: false,
-                accessibilityIdentifier: deviceOnly ? "dulcet.reader.reconnect" : "dulcet.reader.retry"
-            ) {
-                if deviceOnly { store.submitAccountConnection() } else { dulcetReaderRetry(store) }
-            }
-        )
-        .identifyingUnreachableServer(serverName)
+        .dulcetAccountStatusBar(serverReadFailed: serverReadFailed)
+        .environment(\.dulcetAccountMessageShown,
+            store.readerConnectionIndicator(serverReadFailed: serverReadFailed) != nil)
     }
 
     /// Apple TV has no Refresh control (the section refreshes when it is entered, see
@@ -301,7 +252,7 @@ private struct DulcetListenNowShelfView: View {
                     // a stack gap each, three of them about 50 points of blank page.
                     .padding(.bottom, DulcetSpacing.md)
                 } else if shelf == .newest {
-                    if case let .unavailable(reason) = window.freshness {
+                    if case let .unavailable(reason) = window.freshness, !reason.isConnectionFailure {
                         DulcetReaderUnavailableView(reason: reason, subject: .list)
                     } else if window.freshness == .loading {
                         ProgressView().frame(maxWidth: .infinity, minHeight: 100)
@@ -313,6 +264,7 @@ private struct DulcetListenNowShelfView: View {
             }
             .preference(key: DulcetRecentlyPlayedItems.self,
                 value: shelf == .recent ? model.window?.items.map(\.id) ?? [] : [])
+            .preference(key: DulcetReaderServerFailure.self, value: model.window?.freshness.isConnectionFailure == true)
             .preference(key: DulcetShownListenNowShelves.self,
                 value: model.window.map(shows) == true ? [shelf] : [])
             .preference(key: DulcetListenNowShelfItems.self,

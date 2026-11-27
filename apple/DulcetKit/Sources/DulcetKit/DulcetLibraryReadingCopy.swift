@@ -19,20 +19,19 @@ enum DulcetReaderCopy {
     ) -> String? {
         guard case let .cached(reason, asOf) = freshness else { return nil }
         let seen = asOf.map { DulcetStrings.readerSeenAt(age($0, now: now)) } ?? DulcetStrings.readerSeenUnknownAge
-        return includesReason ? DulcetStrings.readerSeenWithReason(seen, reasonPhrase(reason)) : seen
+        guard includesReason, !freshness.isConnectionFailure else { return seen }
+        return DulcetStrings.readerSeenWithReason(seen, reasonPhrase(reason))
     }
 
-    /// The one short line a page shows over content it already has, only where it helps the
-    /// listener (spec §16.14): offline, or a refresh that failed. A routine refresh, a library
-    /// that changed since, and a page still owing rows say nothing; the age and reason stay
-    /// available to accessibility through ``freshnessLine(_:now:includesReason:)``.
-    static func visibleFreshnessLine(_ freshness: DulcetReaderFreshness, now: Date = Date()) -> String? {
+    /// The connection indicator handles transport problems. A non-transport refresh error
+    /// can still explain why the visible page could not be updated.
+    static func visibleFreshnessLine(_ freshness: DulcetReaderFreshness) -> String? {
         guard case let .cached(reason, _) = freshness else { return nil }
         switch reason {
-        case .offline: return DulcetStrings.readerPageOffline
-        case let .failed(kind): return DulcetStrings.readerRefreshFailed(DulcetStrings.readerErrorPhrase(kind))
+        case let .failed(kind) where !kind.isTransportFailure:
+            return DulcetStrings.readerRefreshFailed(DulcetStrings.readerErrorPhrase(kind))
         case .internalFailure: return DulcetStrings.readerRefreshFailed(DulcetStrings.readerReasonInternal)
-        case .revalidating, .stale, .owed: return nil
+        case .offline, .failed, .revalidating, .stale, .owed: return nil
         }
     }
 
@@ -54,7 +53,7 @@ enum DulcetReaderCopy {
     /// - `localCollection`: a list of this device's own music, which no server state describes.
     /// - `reconnectAvailable`: false while the network is down, when retrying changes nothing.
     static func statusPlan(
-        window: DulcetLibraryWindow,
+        window: DulcetLibraryWindow?,
         indicator: DulcetConnectionIndicator?,
         accountMessageShown: Bool,
         localCollection: Bool,
@@ -63,11 +62,8 @@ enum DulcetReaderCopy {
         // Downloaded is what is on this device: the server library's freshness says nothing
         // about it, and the account banner already says when the device is offline.
         if localCollection || accountMessageShown { return StatusPlan() }
-        if case .cached(.offline, _) = window.freshness {
-            // The reader is offline. The indicator is the one statement of that; with none
-            // (a reconnect is just starting) the screen says nothing rather than a guess.
-            return StatusPlan(indicator: indicator)
-        }
+        if let indicator { return StatusPlan(indicator: indicator) }
+        guard let window, !window.freshness.isConnectionFailure else { return StatusPlan() }
         // A screen with nothing to show says why in its own body, with its own Try Again.
         if case .unavailable = window.freshness { return StatusPlan() }
         let coverage: String? = switch window.coverage {
@@ -84,7 +80,7 @@ enum DulcetReaderCopy {
     /// The statement shown instead of content when there is none -- never a spinner.
     static func unavailableLine(_ reason: DulcetReaderUnavailableReason, subject: Subject) -> String {
         switch reason {
-        case .notCachedOffline:
+        case .notCachedOffline, .failed(.timeout), .failed(.unreachable):
             switch subject {
             case .album: DulcetStrings.readerUnavailableAlbum
             case .list: DulcetStrings.readerUnavailableList
@@ -138,25 +134,12 @@ enum DulcetReaderCopy {
         return window.freshness.isOffline ? DulcetStrings.readerAvailableOffline : DulcetStrings.libraryLocalOrder
     }
 
-    /// The label of a search's scope (§16.15); nil when the server answered and nothing needs
-    /// saying.
+    /// A scope describes where rows came from. The screen's connection status describes why.
     static func searchScopeLabel(_ scope: DulcetReaderSearchScope?) -> String? {
         switch scope {
-        case nil, .serverAndDevice:
-            return nil
-        case .deviceWhileServerPending:
-            return DulcetStrings.readerSearchScopeDevice
-        case .deviceOffline:
-            return DulcetStrings.readerSearchScopeOffline
-        case let .deviceServerFailed(kind, _):
-            return DulcetStrings.readerSearchScopeFailed(DulcetStrings.readerErrorPhrase(kind))
+        case .deviceWhileServerPending: DulcetStrings.readerSearchScopeDevice
+        default: nil
         }
-    }
-
-    /// The connection's own failure, stated once above the screen while it keeps the reader
-    /// offline (§16.14).
-    static func connectionLine(_ failure: DulcetReaderErrorKind?) -> String? {
-        failure.map { DulcetStrings.readerConnectionFailed(DulcetStrings.readerErrorPhrase($0)) }
     }
 
     static func countKind(_ items: [DulcetReaderItem]) -> DulcetReaderCountKind {
@@ -172,7 +155,7 @@ enum DulcetReaderCopy {
 
     private static func reasonPhrase(_ reason: DulcetReaderCachedReason) -> String {
         switch reason {
-        case .offline: DulcetStrings.readerReasonOffline
+        case .offline: DulcetStrings.readerReasonStale
         case .revalidating: DulcetStrings.readerReasonRevalidating
         case .stale: DulcetStrings.readerReasonStale
         case .owed: DulcetStrings.readerReasonOwed

@@ -581,7 +581,6 @@ enum DulcetStrings {
     static let readerSortFavorites = text("reader.sort.favorites", "Favorites")
     static let readerJustNow = text("reader.age.justNow", "just now")
     static let readerSeenUnknownAge = text("reader.seen.unknownAge", "Showing what this device had saved, age unknown")
-    static let readerReasonOffline = text("reader.reason.offline", "you\u{2019}re offline")
     static let readerReasonRevalidating = text("reader.reason.revalidating", "checking your server")
     static let readerReasonStale = text("reader.reason.stale", "your library has changed since")
     static let readerReasonOwed = text("reader.reason.owed", "more is still to load")
@@ -591,11 +590,6 @@ enum DulcetStrings {
         formatted("reader.page.refreshFailed", "Couldn\u{2019}t refresh \u{00B7} %@", reason)
     }
     static let readerPageServerUnreachable = text("reader.page.serverUnreachable", "Can\u{2019}t reach your server")
-    static let readerOfflineDeviceTitle = text("reader.offline.device.title", "You\u{2019}re Offline")
-    static let readerOfflineDeviceMessage = text("reader.offline.device.message", "Dulcet comes back as soon as your device is online again. Your downloaded music plays meanwhile.")
-    static let readerOfflineNotice = text("reader.offlineNotice", "You're offline. Showing music on this device.")
-    static let readerOfflineConnectingNotice = text("reader.offlineConnectingNotice", "Showing what's on this device while Dulcet reconnects…")
-    static let connectionsUnreachableNotice = text("connections.unreachableNotice", "Can't reach your server. Showing music on this device.")
     static let readerErrorUnreachable = text("reader.error.unreachable", "couldn\u{2019}t reach your server")
     static let readerErrorTimeout = text("reader.error.timeout", "your server didn\u{2019}t answer in time")
     static let readerErrorCredentials = text("reader.error.credentials", "your server didn\u{2019}t accept your sign-in")
@@ -605,9 +599,9 @@ enum DulcetStrings {
     static let readerErrorTLS = text("reader.error.tls", "your server\u{2019}s certificate isn\u{2019}t trusted")
     static let readerErrorAccessRefused = text("reader.error.accessRefused", "your server refused access")
     static let readerErrorServer = text("reader.error.server", "your server couldn\u{2019}t answer")
-    static let readerUnavailableAlbum = text("reader.unavailable.album", "You haven\u{2019}t opened this album on this device. Connect to your server to see it.")
-    static let readerUnavailableList = text("reader.unavailable.list", "You haven\u{2019}t opened this on this device. Connect to your server to see it.")
-    static let readerUnavailableAlbumTracks = text("reader.unavailable.albumTracks", "This album\u{2019}s songs aren\u{2019}t on this device. Connect to your server to see them.")
+    static let readerUnavailableAlbum = text("reader.unavailable.album", "You haven\u{2019}t opened this album on this device.")
+    static let readerUnavailableList = text("reader.unavailable.list", "You haven\u{2019}t opened this on this device.")
+    static let readerUnavailableAlbumTracks = text("reader.unavailable.albumTracks", "This album\u{2019}s songs aren\u{2019}t on this device.")
     static let readerUnavailableGone = text("reader.unavailable.gone", "This is no longer on your server.")
     static let readerUnavailableInternal = text("reader.unavailable.internal", "Couldn\u{2019}t load this · something went wrong on this device.")
     static let readerUnavailableClosed = text("reader.unavailable.closed", "This screen has closed.")
@@ -721,18 +715,8 @@ enum DulcetStrings {
         )
     }
 
-    /// Offline search answers from what this device has seen, most of it not downloaded; the
-    /// rows say which. The line says only what a listener needs: offline, and what plays.
-    static let readerSearchScopeOffline = text(
-        "reader.search.scope.offline", "You\u{2019}re offline \u{00B7} downloaded music plays now"
-    )
-
     static func readerSearchFailedBody(_ phrase: String) -> String {
         formatted("reader.search.failed.body", "Nothing on this device matches, and %@.", phrase)
-    }
-
-    static func readerSearchScopeFailed(_ phrase: String) -> String {
-        formatted("reader.search.scope.failed", "On this device · %@", phrase)
     }
 
     static func readerSignOutPending(_ count: Int) -> String {
