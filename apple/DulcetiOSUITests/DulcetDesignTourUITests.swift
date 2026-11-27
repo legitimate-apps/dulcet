@@ -742,18 +742,21 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))
 
         let field = dulcetSearchField(in: app)
-        let scope = app.staticTexts["dulcet.search.scope"].firstMatch
+        let scope = app.descendants(matching: .any).matching(identifier: "dulcet.search.scope").firstMatch
         let top = app.buttons["dulcet.search.topResult"].firstMatch
         let songs = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'dulcet.search.result.' AND label ENDSWITH ', Song'"))
         let studio = songs.matching(NSPredicate(format: "label CONTAINS %@", "Original Artist")).firstMatch
         let cover = songs.matching(NSPredicate(format: "label CONTAINS %@", "Cover Artist")).firstMatch
+        let coverRelease = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'dulcet.search.result.' AND label BEGINSWITH %@",
+            "Harbor Signal (triple j Like a Version),")).firstMatch
         XCTAssertTrue(field.waitForExistence(timeout: 10))
         field.tap()
         field.typeText("Harbor Signal")
         XCTAssertTrue(studio.waitForExistence(timeout: 20))
         XCTAssertTrue(cover.waitForExistence(timeout: 20))
-        XCTAssertTrue(scope.waitForNonExistence(timeout: 15), "the warm-up answer reached Search")
+        XCTAssertTrue(waitFor(timeout: 15) { coverRelease.label.hasSuffix(", Album") }, "the warm-up answer reached Search")
 
         let clear = app.buttons["dulcet.search.clearQuery"].firstMatch
         XCTAssertTrue(clear.exists)
@@ -768,13 +771,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         field.typeText("Harbor Signal")
         XCTAssertTrue(top.waitForExistence(timeout: 6))
         XCTAssertTrue(scope.exists, "the server answer is held during the device paint")
+        XCTAssertTrue(coverRelease.label.hasSuffix(", Album, On this device"), coverRelease.label)
         XCTAssertTrue(studio.exists && cover.exists, "both recordings are visible in the device results")
         print("DULCET SEARCH DEVICE TOP RESULT \(top.label)")
         XCTAssertTrue(top.label.contains("Original Artist"), top.label)
         shoot("search-original-device", app, includeMetadata: false)
 
         XCTAssertTrue(setTourRule(proxy, action: "hold", enabled: false))
-        XCTAssertTrue(scope.waitForNonExistence(timeout: 15), "the server answer reached Search")
+        XCTAssertTrue(waitFor(timeout: 15) { coverRelease.label.hasSuffix(", Album") }, "the server answer reached Search")
         XCTAssertTrue(studio.exists && cover.exists)
         print("DULCET SEARCH SERVER TOP RESULT \(top.label)")
         XCTAssertTrue(top.label.contains("Original Artist"), top.label)
