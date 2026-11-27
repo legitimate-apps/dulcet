@@ -110,7 +110,7 @@ private struct DulcetListenNowPickCard: View {
         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
             Text(pick.reason.text)
                 .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .dulcetForeground(.secondaryTextOnWindow)
                 .lineLimit(1)
                 .frame(width: width, alignment: .leading)
                 .accessibilityHidden(true)
@@ -145,18 +145,7 @@ private struct DulcetListenNowPickCard: View {
                                    startPoint: .top, endPoint: .bottom)
                 }
                 .frame(maxHeight: .infinity, alignment: .top)
-            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-                Text(pick.title)
-                    .font(.title3.bold())
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
-                if !pick.subtitle.isEmpty {
-                    Text(verbatim: pick.subtitle)
-                        .font(.subheadline)
-                        .opacity(0.82)
-                        .lineLimit(2)
-                }
-            }
-            .foregroundStyle(.white)
+            DulcetListenNowPickCaption(title: pick.title, subtitle: pick.subtitle)
             .multilineTextAlignment(.leading)
             .padding(.leading, DulcetSpacing.md)
             // Clear of the Play button at the trailing corner.
@@ -203,7 +192,7 @@ private struct DulcetListenNowPickCard: View {
         } label: {
             Image(systemName: playing ? "pause.fill" : "play.fill")
                 .font(.title3.weight(.semibold))
-                .foregroundStyle(.white)
+                .dulcetForeground(.primaryTextOnArtworkTint)
                 .frame(width: DulcetListenNowHeroMetrics.playButtonSize, height: DulcetListenNowHeroMetrics.playButtonSize)
                 .contentTransition(.symbolEffect(.replace))
                 .dulcetHeroGlassCircle()
@@ -241,6 +230,28 @@ private struct DulcetListenNowPickCard: View {
 }
 
 /// A card or a button that gives under the finger, as Music's do, and springs back.
+/// A card's title and subtitle on its artwork's colour field.
+struct DulcetListenNowPickCaption: View {
+    let title: String
+    let subtitle: String
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+            Text(verbatim: title)
+                .font(.title3.bold())
+                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 3 : 2)
+                .dulcetForeground(.primaryTextOnArtworkTint)
+            if !subtitle.isEmpty {
+                Text(verbatim: subtitle)
+                    .font(.subheadline)
+                    .lineLimit(2)
+                    .dulcetForeground(.secondaryTextOnArtworkTint)
+            }
+        }
+    }
+}
+
 private struct DulcetPressedCardStyle: ButtonStyle {
     let reduceMotion: Bool
     func makeBody(configuration: Configuration) -> some View {
