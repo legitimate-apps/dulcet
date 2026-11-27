@@ -59,7 +59,7 @@ class Source(Handler):
         if path == "/1/explore/fresh-releases/":
             return self.output({"payload": {"releases": []}})
         if path == "/1/playlist/search":
-            return self.output({"payload": {"playlists": []}})
+            return self.output({"playlists": []})
         if path == "/api/v1/artist":
             return self.output([{"id": i + 1, "artistName": name, "foreignArtistId": key,
                                 "images": [{"coverType": "poster", "url": f"/MediaCover/{i+1}/poster.jpg?lastWrite=1", "extension": ".jpg"}]}

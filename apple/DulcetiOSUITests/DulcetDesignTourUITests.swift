@@ -58,7 +58,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         }
         func showDiscover() {
             XCTAssertTrue(openDestination("Discover", sidebar: "dulcet.sidebar.discover", in: app, compact: true))
-            XCTAssertTrue(app.staticTexts["discover.forYou"].firstMatch.waitForExistence(timeout: 35), app.debugDescription)
+            XCTAssertTrue(app.descendants(matching: .any)["discover.forYou"].firstMatch.waitForExistence(timeout: 35), app.debugDescription)
             XCTAssertTrue(app.descendants(matching: .any)["discover.shelf.trendingArtists"].firstMatch.waitForExistence(timeout: 15))
         }
         func fixtureAction(_ action: String) throws {
