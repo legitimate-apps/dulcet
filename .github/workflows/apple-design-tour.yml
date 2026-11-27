@@ -40,7 +40,9 @@ jobs:
           evidence="$RUNNER_TEMP/recovery-evidence"
           udid=
           fixture=
+          sampler=
           cleanup() {
+            if [[ -n "$sampler" ]]; then kill -TERM "$sampler" 2>/dev/null || true; fi
             if [[ -n "$fixture" ]]; then
               kill -TERM "$fixture" 2>/dev/null || true
               wait "$fixture" || true
@@ -48,6 +50,8 @@ jobs:
             if [[ -n "$udid" ]]; then xcrun simctl shutdown "$udid" || true; fi
           }
           trap cleanup EXIT
+          python3 tools/ci/host-pressure sample --output "$evidence/pressure.log" --interval 5 &
+          sampler=$!
           python3 tools/r7-recovery-proof-fixture.py "$evidence/fixture" > "$evidence/fixture.log" 2>&1 &
           fixture=$!
           ready=
@@ -57,11 +61,13 @@ jobs:
             sleep 1
           done
           test "$ready" = yes
-          python3 tools/ci/isolate-simulator --phase recovery-proof --keep-name 'iPhone 18 Pro' \
-            --settle --settle-pressure --warmup-app "$RUNNER_TEMP/recovery-dd/Build/Products/Debug-iphonesimulator/Dulcet DEV.app" \
-            | tee "$evidence/simulator.log"
-          udid="$(sed -nE 's/^SIMULATOR ISOLATION phase=recovery-proof keep=([0-9A-Fa-f-]+) .*isolated=true.*/\1/p' "$evidence/simulator.log")"
+          udid="$(python3 tools/ci/isolate-simulator --phase recovery-proof --keep-name 'iPhone 18 Pro' \
+            --plan | sed -nE 's/^SIMULATOR ISOLATION PLAN phase=recovery-proof keep=([0-9A-Fa-f-]+) .*/\1/p')"
           test -n "$udid"
+          python3 tools/ci/isolate-simulator --phase recovery-proof --keep "$udid" \
+            --settle --require-isolation | tee "$evidence/simulator.log"
+          python3 tools/ci/host-pressure settle --phase recovery-proof --output "$evidence/pressure.log" \
+            | tee -a "$evidence/simulator.log"
           mkdir -p "$evidence/screens"
           export TEST_RUNNER_DULCET_CONNECTION_RECOVERY_CONTROL_URL=http://127.0.0.1:4909
           export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4907
