@@ -14,7 +14,7 @@ concurrency:
 jobs:
   iphone-artwork:
     runs-on: xcode-27
-    timeout-minutes: 55
+    timeout-minutes: 65
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -52,8 +52,11 @@ jobs:
               exit 1
             }
       - name: Drive the iPhone against the disposable server
-        timeout-minutes: 12
+        timeout-minutes: 25
         run: bash tools/r7-art-proof/run.sh
+      - name: Export the named XCTest screenshots
+        if: always()
+        run: bash tools/r7-art-proof/export.sh
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         if: always()
         with:

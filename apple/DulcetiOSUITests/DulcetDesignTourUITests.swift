@@ -95,8 +95,6 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         _ = settle(app, seconds: 5)
         shoot("discover-refreshed-without-tap", app)
 
-        showHome()
-        _ = settle(app, seconds: 2)
         try fixtureAction("stop")
         app.terminate()
         app.launchArguments = fixtureArgs

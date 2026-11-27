@@ -1,6 +1,5 @@
 #!/bin/bash
 set -euo pipefail
-root="$PWD"
 out="$R7_ART_EVIDENCE"
 dd="$RUNNER_TEMP/r7-art-dd"
 mkdir -p "$out/screens"
@@ -11,11 +10,7 @@ cleanup() {
     if [ -n "$udid" ]; then xcrun simctl shutdown "$udid" 2>/dev/null || true; fi
     if [ -n "$fixture_pid" ]; then kill "$fixture_pid" 2>/dev/null || true; fi
     if [ -n "$server_pid" ]; then kill "$server_pid" 2>/dev/null || true; fi
-    for photo in "$out/screens/"*.png; do
-        if [ -f "$photo" ]; then
-            sips -Z 800 -s format jpeg -s formatOptions 50 "$photo" --out "${photo%.png}.jpg" >/dev/null
-        fi
-    done
+
 }
 trap cleanup EXIT
 trap 'exit 143' TERM
@@ -42,11 +37,12 @@ if [ -z "$udid" ]; then
     udid=$(xcrun simctl list devices available -j | jq -r '.devices | to_entries[] | select(.key|contains("iOS-27")) | .value[] | select(.name=="iPhone 18 Pro") | .udid' | head -n 1)
 fi
 test -n "$udid"
-xcrun simctl bootstatus "$udid" -b
+xcrun simctl bootstatus "$udid" -b 2>&1 | tee "$out/simulator.log"
 plan=$(find "$dd/Build/Products" -maxdepth 1 -name 'DulcetiOS_*iphonesimulator*.xctestrun' -print -quit)
 test -f "$plan"
 export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4914
-export TEST_RUNNER_DULCET_DESIGN_TOUR_OUT="$out/screens"
+export TEST_RUNNER_DULCET_DESIGN_TOUR_OUT="$out/screens" DULCET_DESIGN_TOUR_OUT="$out/screens"
 xcodebuild test-without-building -xctestrun "$plan" -destination "id=$udid" -parallel-testing-enabled NO \
+  -test-timeouts-enabled YES -default-test-execution-time-allowance 720 -maximum-test-execution-time-allowance 720 \
   -resultBundlePath "$out/art-proof.xcresult" \
-  '-only-testing:DulcetiOSUITests/DulcetDesignTourUITests/testRoundSevenArtworkStays' | tee "$out/pilot.log"
+  '-only-testing:DulcetiOSUITests/DulcetDesignTourUITests/testRoundSevenArtworkStays' 2>&1 | tee "$out/pilot.log"
