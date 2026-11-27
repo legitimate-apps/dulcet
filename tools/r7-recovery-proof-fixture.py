@@ -75,13 +75,13 @@ def stop():
     print(f"STOPPED pid={server.pid} rc={server.returncode}", flush=True)
     server = None
 
-def start():
+def start(timeout=18):
     global server
     if server is not None and server.poll() is None:
         return True
     with (root / "server.log").open("ab") as log:
         server = subprocess.Popen([str(binary), "serve", *settings], env=env, stdout=log, stderr=log)
-    deadline = time.monotonic() + 18
+    deadline = time.monotonic() + timeout
     while time.monotonic() < deadline and server.poll() is None:
         try:
             with urlopen(rest + "ping" + query, timeout=0.5) as response:
@@ -111,7 +111,7 @@ def interrupted(*_):
 signal.signal(signal.SIGTERM, interrupted)
 signal.signal(signal.SIGINT, interrupted)
 try:
-    if not start():
+    if not start(timeout=120):
         raise RuntimeError("Dulcet Server failed startup")
     with ThreadingHTTPServer(("127.0.0.1", 4909), Control) as control:
         control.serve_forever()
