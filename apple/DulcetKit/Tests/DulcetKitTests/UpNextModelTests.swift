@@ -35,6 +35,51 @@ struct UpNextModelTests {
         #expect(model.moveIntent(fromOffsets: [0], toOffset: 9) == nil)
     }
 
+    /// The handle drag, as a person makes it: rows 60 pt tall, the second one taller (a wrapped
+    /// title). Each drop must name the entry and land it where the gap showed.
+    @Test
+    func aHandleDragLandsTheRowWhereTheGapOpenedAndNamesTheRightQueueMove() throws {
+        // queue: h0 cur1 | u2 u3 u4 u5   (upcoming rows 0...3 are queue indices 2...5)
+        let model = DulcetUpNextModel(nowPlaying: nowPlaying(["h", "cur", "u0", "u1", "u2", "u3"], current: 1))
+        let frames = [
+            CGRect(x: 0, y: 0, width: 320, height: 60),
+            CGRect(x: 0, y: 60, width: 320, height: 80),
+            CGRect(x: 0, y: 140, width: 320, height: 60),
+            CGRect(x: 0, y: 200, width: 320, height: 60),
+        ]
+
+        // Row 0 dragged down past row 1's middle (100) but not row 2's (170): it lands second.
+        var down = try #require(DulcetQueueHandleDrag(source: 0, frames: frames))
+        down.translation = 80
+        #expect(down.target == 1)
+        #expect(down.displacement(of: 1) == -60, "the row it passed steps up by the dragged row's height")
+        #expect(down.displacement(of: 2) == 0)
+        #expect(down.displacement(of: 0) == 0, "the dragged row follows the finger, not the gap")
+        let downMove = try #require(down.moveDestination)
+        #expect(model.moveIntent(fromOffsets: [0], toOffset: downMove) == .move(.init("entry-2"), toIndex: 3))
+
+        // Row 3 dragged all the way up: it lands first and every row above steps down.
+        var up = try #require(DulcetQueueHandleDrag(source: 3, frames: frames))
+        up.translation = -230
+        #expect(up.target == 0)
+        #expect((0...2).map(up.displacement(of:)) == [60, 60, 60])
+        let upMove = try #require(up.moveDestination)
+        #expect(model.moveIntent(fromOffsets: [3], toOffset: upMove) == .move(.init("entry-5"), toIndex: 2))
+
+        // Past the bottom: the last place, and no further.
+        var end = try #require(DulcetQueueHandleDrag(source: 1, frames: frames))
+        end.translation = 900
+        #expect(end.target == 3)
+        let endMove = try #require(end.moveDestination)
+        #expect(model.moveIntent(fromOffsets: [1], toOffset: endMove) == .move(.init("entry-3"), toIndex: 5))
+
+        // A small wobble is no move at all, and a row that is not there is no drag.
+        var wobble = try #require(DulcetQueueHandleDrag(source: 2, frames: frames))
+        wobble.translation = 20
+        #expect(wobble.moveDestination == nil)
+        #expect(DulcetQueueHandleDrag(source: 4, frames: frames) == nil)
+    }
+
     @Test
     func removalAndJumpNameEntriesAndNeverTheCurrentOne() {
         let model = DulcetUpNextModel(nowPlaying: nowPlaying(["cur", "u0", "u1"], current: 0))

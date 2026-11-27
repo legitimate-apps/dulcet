@@ -14,6 +14,8 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
     let onActivate: () -> Void
     @ViewBuilder let menuActions: () -> MenuActions
     @ViewBuilder let editingActions: () -> EditingActions
+    /// Up Next's grabber, at the trailing edge where the system player's queue has it.
+    var reorderHandle: AnyView? = nil
     @State private var hovered = false
     @FocusState private var menuFocused: Bool
 
@@ -58,6 +60,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
 #else
                         Text(track.duration.dulcetDuration).font(.caption.monospacedDigit()).dulcetForeground(.primaryTextOnWindow)
                         more
+                        if let reorderHandle { reorderHandle }
 #endif
                     }
                 }

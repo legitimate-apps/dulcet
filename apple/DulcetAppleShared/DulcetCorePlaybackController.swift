@@ -633,7 +633,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 // repeat-all. The presentation offers Next exactly when this can act, so an
                 // enabled button is never one that does nothing.
                 guard Self.hasEntryAfterCurrent(snapshot) else { return }
-                let transition = queueClient.next()
+                let transition = queueClient.next(shouldAutoPlay: skipKeepsPlaying)
                 guard transition.errorKind == nil else { return publishFailure() }
                 start(transition.startDirective)
             case .retry:
@@ -704,7 +704,7 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
         case .toggle:
             send(currentPresentation.nowPlaying?.isPlaying == true ? .pause : .play)
         case .next:
-            startOrStop(queueClient.nextForSession(playbackSessionId: sessionID))
+            startOrStop(queueClient.nextForSession(playbackSessionId: sessionID, shouldAutoPlay: skipKeepsPlaying))
         case .previous:
             guard queueClient.acceptsCommand(playbackSessionId: sessionID, requiresSeekable: false) else { return }
             switch previousAction(for: session) {
@@ -717,7 +717,8 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
                 }
             case "move":
                 pendingPreviousRestart = nil
-                startOrStop(queueClient.previousForSession(playbackSessionId: sessionID))
+                startOrStop(queueClient.previousForSession(playbackSessionId: sessionID,
+                    shouldAutoPlay: skipKeepsPlaying))
             case "replay":
                 pendingPreviousRestart = nil
                 _ = queueClient.recordPlayRequested(playbackSessionId: sessionID)
@@ -743,6 +744,14 @@ final class DulcetCorePlaybackController: DulcetPlaybackControlling, DulcetQueue
             retryCurrentEntry()
         }
     }
+
+    /// A skip changes the song, never whether it sounds (spec §14.1): the entry it reaches plays
+    /// exactly when the person sees playback going as they skip, and starts paused otherwise. Play
+    /// is the way to start listening. It reads the same presentation Play/Pause reads, so a skip
+    /// from the mini-player, Now Playing, the lock screen or Control Center -- every one of which
+    /// arrives at `send` -- agrees with the button the person sees. A skip while the previous
+    /// skip's entry still opens reads the intent that start carries (`publishPreparing`).
+    private var skipKeepsPlaying: Bool { currentPresentation.nowPlaying?.isPlaying == true }
 
     /// Whether Next has an entry to go to: one follows the current entry, or repeat-all wraps to
     /// the first. The same predicate decides the presentation's `canGoNext` without a session.

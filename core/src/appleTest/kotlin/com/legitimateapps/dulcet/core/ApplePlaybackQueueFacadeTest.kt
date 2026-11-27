@@ -119,7 +119,7 @@ class ApplePlaybackQueueFacadeTest {
     fun staleAttemptEventCannotReplaceTheCurrentCoreSnapshot() {
         val fixture = fixture()
         fixture.client.replaceAndStart(queueRequest(rawIds = listOf("track-a", "track-b")))
-        val advanced = fixture.client.next()
+        val advanced = fixture.client.next(shouldAutoPlay = true)
         val currentAttempt = advanced.startDirective?.attemptId
 
         val stale = fixture.client.recordReady("attempt:3", 180_000, "seekable")
@@ -142,9 +142,9 @@ class ApplePlaybackQueueFacadeTest {
         fixture.client.recordReady(firstAttempt, 180_000, "seekable")
         assertEquals(true, fixture.client.acceptsCommand(firstSession, true))
 
-        val second = fixture.client.nextForSession(firstSession)
+        val second = fixture.client.nextForSession(firstSession, shouldAutoPlay = true)
         val secondSession = assertNotNull(second.startDirective?.playbackSessionId)
-        val stale = fixture.client.previousForSession(firstSession)
+        val stale = fixture.client.previousForSession(firstSession, shouldAutoPlay = true)
         assertNull(stale.startDirective)
         assertEquals(secondSession, stale.snapshot?.currentSession?.playbackSessionId)
         assertEquals(false, fixture.client.acceptsCommand(firstSession, false))

@@ -853,6 +853,83 @@ class PlaybackAutoSkipTest {
         assertFalse(b.shouldAutoPlay, "nobody pressed Play")
     }
 
+    // ---- skips keep the play state ----------------------------------------------------------
+
+    /**
+     * A skip changes the song, not whether it sounds (§14.1). The person paused, then skipped
+     * both ways: each entry it reaches starts paused, and Play is what starts it.
+     */
+    @Test
+    fun aSkipWhilePausedReachesTheEntryPausedInBothDirections() = rig(listOf("a", "b", "c")) { rig ->
+        val a = rig.start()
+        rig.play(a, from = 0, to = 10)
+        rig.apply(rig.controller.recordPlaybackEvent(PlaybackEngineEvent.Paused(a.attemptId, 10.seconds)))
+
+        val b = assertNotNull(
+            rig.apply(rig.controller.nextForSession(a.playbackSessionId, shouldAutoPlay = false)).startDirective,
+        )
+        assertEquals("b", b.itemId.rawId)
+        assertFalse(b.shouldAutoPlay, "Next while paused stays paused")
+        assertNotEquals(a.playbackSessionId, b.playbackSessionId, "still a next-item boundary")
+
+        val back = assertNotNull(
+            rig.apply(rig.controller.previousForSession(b.playbackSessionId, shouldAutoPlay = false)).startDirective,
+        )
+        assertEquals("a", back.itemId.rawId)
+        assertFalse(back.shouldAutoPlay, "Previous while paused stays paused")
+    }
+
+    /** The control: the same skips while playing keep playing. */
+    @Test
+    fun aSkipWhilePlayingKeepsPlayingInBothDirections() = rig(listOf("a", "b", "c")) { rig ->
+        val a = rig.start()
+        rig.play(a, from = 0, to = 10)
+
+        val b = assertNotNull(
+            rig.apply(rig.controller.nextForSession(a.playbackSessionId, shouldAutoPlay = true)).startDirective,
+        )
+        assertEquals("b", b.itemId.rawId)
+        assertTrue(b.shouldAutoPlay, "Next while playing keeps playing")
+        val back = assertNotNull(
+            rig.apply(rig.controller.previousForSession(b.playbackSessionId, shouldAutoPlay = true)).startDirective,
+        )
+        assertEquals("a", back.itemId.rawId)
+        assertTrue(back.shouldAutoPlay, "Previous while playing keeps playing")
+    }
+
+    /**
+     * A paused skip that lands on a broken track moves past it still paused, as a restored queue
+     * does; once the person presses Play the queue plays on past the next failure.
+     */
+    @Test
+    fun aPausedSkipStaysPausedPastAFailureUntilThePersonPlays() = rig(listOf("a", "b", "c", "d")) { rig ->
+        val a = rig.start()
+        rig.play(a, from = 0, to = 10)
+        rig.apply(rig.controller.recordPlaybackEvent(PlaybackEngineEvent.Paused(a.attemptId, 10.seconds)))
+        val b = assertNotNull(rig.apply(rig.controller.next(shouldAutoPlay = false)).startDirective)
+
+        val c = assertNotNull(rig.fail(b, DomainError.Playback.NoPlayableSource).startDirective)
+        assertEquals("c", c.itemId.rawId)
+        assertFalse(c.shouldAutoPlay, "nobody pressed Play")
+
+        rig.apply(rig.controller.recordPlayRequested(c.playbackSessionId))
+        val d = assertNotNull(rig.fail(c, DomainError.Playback.NoPlayableSource).startDirective)
+        assertEquals("d", d.itemId.rawId)
+        assertTrue(d.shouldAutoPlay, "the person pressed Play, so the queue plays on")
+    }
+
+    /** A skip addressed to a session that is no longer current changes nothing, paused or not. */
+    @Test
+    fun aPausedSkipForAStaleSessionChangesNothing() = rig(listOf("a", "b", "c")) { rig ->
+        val a = rig.start()
+        val b = assertNotNull(rig.apply(rig.controller.next(shouldAutoPlay = true)).startDirective)
+
+        val stale = rig.apply(rig.controller.nextForSession(a.playbackSessionId, shouldAutoPlay = false))
+
+        assertNull(stale.startDirective)
+        assertEquals(b.playbackSessionId, stale.snapshot.currentSession?.playbackSessionId)
+    }
+
     // ---- what the chain counts ---------------------------------------------------------------
 
     /**

@@ -852,6 +852,81 @@ final class DulcetCorePlaybackSystemTests: XCTestCase {
         XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.current.id.rawID, "b")
     }
 
+    /// A skip changes the song, not whether it sounds (spec §14.1): paused, Next and Previous
+    /// each reach their entry paused -- the presentation offers Play and the engine is never told
+    /// to play -- whether they come from the app or from the lock screen and Control Center,
+    /// which arrive through the engine's remote command router.
+    func testASkipWhilePausedReachesTheEntryPausedFromTheAppAndTheLockScreen() async throws {
+        for path in ["app", "remote"] {
+            let fixture = makeFixture(tracks: ["a", "b", "c"])
+            fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+            let first = try await fixture.waitForPrepare(rawID: "a")
+            fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+            fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
+            fixture.controller.send(.pause)
+            fixture.emit(.paused(attemptID: first, position: 5))
+            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.isPlaying == false }
+            XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.isPlaying, false,
+                           "\(path): paused before the skip, or this proves nothing")
+            let plays = fixture.engine.count("play")
+
+            try skip(.next, via: path, fixture)
+            let second = try await fixture.waitForPrepare(rawID: "b")
+            XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.current.id.rawID, "b", path)
+            XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.isPlaying, false,
+                           "\(path): the skip offers Play while the entry opens")
+            fixture.emit(.ready(attemptID: second, duration: 120, seekability: .seekable))
+            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.phase == .paused }
+            try await Task.sleep(for: .milliseconds(300))
+            XCTAssertEqual(fixture.engine.count("play"), plays, "\(path): Next while paused must not start sound")
+            XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.isPlaying, false, path)
+
+            let prepares = fixture.engine.count("prepare")
+            try skip(.previous, via: path, fixture)
+            let back = try await fixture.waitForPrepare(rawID: "a", after: prepares)
+            fixture.emit(.ready(attemptID: back, duration: 120, seekability: .seekable))
+            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.phase == .paused }
+            try await Task.sleep(for: .milliseconds(300))
+            XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.current.id.rawID, "a", path)
+            XCTAssertEqual(fixture.engine.count("play"), plays, "\(path): Previous while paused must not start sound")
+
+            // Play is the way to start: it plays the entry the skips reached.
+            fixture.controller.send(.play)
+            await fixture.waitFor { fixture.engine.count("play") > plays }
+            XCTAssertGreaterThan(fixture.engine.count("play"), plays, path)
+        }
+    }
+
+    /// The control for the test above: the same skips while playing keep playing.
+    func testASkipWhilePlayingKeepsPlayingFromTheAppAndTheLockScreen() async throws {
+        for path in ["app", "remote"] {
+            let fixture = makeFixture(tracks: ["a", "b", "c"])
+            fixture.controller.replaceQueueAndPlay(fixture.intent(startIndex: 0))
+            let first = try await fixture.waitForPrepare(rawID: "a")
+            fixture.emit(.ready(attemptID: first, duration: 120, seekability: .seekable))
+            fixture.emit(.playbackProgressBegan(attemptID: first, wallClock: Date(), mediaPosition: 1))
+            await fixture.waitFor { fixture.controller.currentPresentation.nowPlaying?.progressBegan == true }
+            let plays = fixture.engine.count("play")
+
+            try skip(.next, via: path, fixture)
+            let second = try await fixture.waitForPrepare(rawID: "b")
+            XCTAssertEqual(fixture.controller.currentPresentation.nowPlaying?.isPlaying, true,
+                           "\(path): a skip while playing keeps Pause")
+            fixture.emit(.ready(attemptID: second, duration: 120, seekability: .seekable))
+            await fixture.waitFor { fixture.engine.count("play") > plays }
+            XCTAssertGreaterThan(fixture.engine.count("play"), plays, "\(path): Next while playing plays the next entry")
+        }
+    }
+
+    private func skip(_ intent: DulcetPlaybackControlIntent, via path: String, _ fixture: Fixture) throws {
+        guard path == "remote" else { return fixture.controller.send(intent) }
+        let session = try XCTUnwrap(fixture.queue.snapshot().snapshot?.currentSession)
+        let router = try XCTUnwrap(fixture.engine.remoteRouter)
+        let id = DulcetPlaybackSessionID(session.playbackSessionId)
+        XCTAssertTrue(router.handleRemotePlaybackCommand(intent == .next ? .next(sessionID: id) : .previous(sessionID: id)))
+    }
+
     /// The same skip, read as the sequence of statuses the surfaces receive: none between the two
     /// tracks is the bare "preparing" that names nothing.
     func testASkipPublishesNoNamelessStatusBetweenTheTracks() async throws {

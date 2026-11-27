@@ -2022,7 +2022,8 @@ The supported command set is declared once in the core and mirrored by both `Now
 implementations: play, pause, toggle, next, previous, seek (**only when the engine reports the item
 seekable**), and rating/favourite where the user's role permits it. Not supported in v1: queue editing
 from system UI, playback-rate control, and chapter navigation. Metadata updates are ordered — Now
-Playing is updated after `Ready` and after each `AttemptReplaced`. Apple also publishes the known
+Playing is updated after `Ready` and after each `AttemptReplaced`. A remote next or previous keeps
+the play state exactly as the in-app skip does (§14.1). Apple also publishes the known
 track metadata at `Preparing`, after audio-session activation, with elapsed time zero and playback
 rate zero until playback starts; stream readiness and artwork must not gate the entry's existence.
 Late duration and seekability update both the system entry and the core observation. Stop/release
@@ -2934,6 +2935,17 @@ either stop the music or silently start something; Next and Pause already say wh
 upcoming* removes everything after the current entry. *Jump* (tapping a queue row) is a next-item
 boundary: the outgoing session is finalized (§12.1). No edit is a session boundary, and no edit
 starts or stops anything except Jump.
+
+**A skip keeps the play state (2026-11-27).** Next and Previous change the song, never whether it
+sounds: the entry a skip reaches plays when playback was going as the person skipped, and starts
+paused when it was paused, from any surface -- the in-app buttons, the mini-player and cover swipes,
+the lock screen, Control Center and a headset. Play is the way to start listening. The owner passes
+the play state it shows into the core's `next`/`previous` (`shouldAutoPlay`); a paused skip is a
+paused start, so a skip past that entry's own failure stays paused too (§12.12) until the person
+presses Play. Android's controller already kept its play intent across a skip. Jump (tapping a queue
+row) still plays: it is a choice of what to hear now. On iOS every Up Next row carries a reorder
+handle: a drag that starts on it moves the row at once, without Edit, and the row's tap, swipe to
+remove and context menu stay.
 
 **Android (2026-09-30)** edits through the same core calls. Its shell differs in one respect: a
 new queue starts only once its first entry has been read from the server, so for that moment the
@@ -8075,6 +8087,21 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-27 — A skip keeps the play state; Up Next reorders from an always-visible handle (§14.1, §12.10).**
+OBSERVED on the test iPhone, 2026-11-27: with "¿Cómo así?" paused, a left swipe on the mini-player
+advanced to "Me pongo loca" and started it playing (twice). On Apple, every skip started its entry with
+the core's default `shouldAutoPlay = true`; Android already kept its own play intent. Rule now: a skip
+-- Next, Previous, a mini-player or cover swipe, the lock screen, Control Center, a headset -- reaches
+its entry in the play state the person saw, and Play is what starts listening. This matches the system
+player's own contract: `MPMusicPlayerController.skipToNextItem()` "starts playback of the next media
+item ... or if the music player isn't playing, designates the next media item as the next item to play"
+(OBSERVED, Apple documentation, read 2026-11-27). The core's `next`, `previous`, `nextForSession` and
+`previousForSession` take `shouldAutoPlay` (default true, so Android is unchanged); a paused skip marks
+its attempt as a paused start, so an automatic skip past it stays paused until Play. Up Next on iOS
+shows a reorder handle on every row, as the system player's queue does: dragging it moves the row at
+once with a haptic on pickup and on drop, and the row keeps its tap, swipe and context menu because the
+list never enters edit mode. Edit remains for its Remove and Move buttons.
 
 **2026-11-27 — Apple Discover revalidates stale snapshots and Listen Now keeps seen covers offline (§18.2, §29.10).**
 Discover Home restores saved shelves immediately. It reads a shelf in the background when the
