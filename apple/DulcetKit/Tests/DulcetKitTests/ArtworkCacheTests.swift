@@ -35,6 +35,26 @@ func credentialBearingArtworkRequestCannotPrintCredentials() {
 }
 
 @Test
+func resizedArtworkSurvivesAColdCacheReadWithoutTheServer() async throws {
+    let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+    let shown = DulcetArtworkCacheKey(serverID: "server", artworkKey: "album-cover", sizeBucket: .pixels256)
+    let requested = DulcetArtworkCacheKey(serverID: shown.serverID, artworkKey: shown.artworkKey, sizeBucket: .pixels512)
+    let otherAccount = DulcetArtworkCacheKey(serverID: "other", artworkKey: shown.artworkKey, sizeBucket: .pixels512)
+    let data = Data([0xff, 0xd8, 0xff])
+    let writer = DulcetArtworkDiskCache(rootDirectory: root)
+    await writer.insert(data, for: shown)
+
+    let offline = DulcetArtworkDiskCache(rootDirectory: root)
+    #expect(await offline.saved(for: requested) == nil)
+    let alternate = await offline.alternate(for: requested)
+    #expect(alternate?.bucket == shown.sizeBucket)
+    #expect(alternate?.saved.data == data)
+    #expect(await offline.alternate(for: otherAccount) == nil)
+    #expect(await offline.statistics().entryCount == 1)
+}
+
+@Test
 func artworkDiskCacheUsesTheExactTripleAndEvictsLeastRecentlyUsedEntries() async throws {
     let root = FileManager.default.temporaryDirectory
         .appendingPathComponent(UUID().uuidString, isDirectory: true)

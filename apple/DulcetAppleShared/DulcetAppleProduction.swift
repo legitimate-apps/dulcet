@@ -865,7 +865,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
             guard let self else { return }
             await reconcileCacheBudget()
             guard !Task.isCancelled, !cancelled else { return }
-            var stale: Data?
+            var fallback: DulcetArtworkFetchOutcome?
             if let cached = await cache.saved(for: key) {
                 guard !Task.isCancelled, !cancelled else { return }
                 if Self.isDecodableImage(cached.data) {
@@ -875,14 +875,22 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
                         deliver(.loaded(cached.data))
                         return
                     }
-                    stale = cached.data
+                    fallback = .loaded(cached.data)
                 } else {
                     await cache.remove(key)
                 }
             }
+            if fallback == nil, let alternate = await cache.alternate(for: key),
+               Self.isDecodableImage(alternate.saved.data) {
+                fallback = .loadedFromOtherSize(alternate.saved.data, alternate.bucket)
+                if alternate.bucket.rawValue > key.sizeBucket.rawValue, !alternate.saved.isStale {
+                    deliver(fallback ?? .unavailable)
+                    return
+                }
+            }
             guard !Task.isCancelled, !cancelled else { return }
-            guard !request.cachedOnly, mayFetchRemote() else { deliver(.unavailable); return }
-            startNetworkRequest(key: key, stale: stale)
+            guard !request.cachedOnly, mayFetchRemote() else { deliver(fallback ?? .unavailable); return }
+            startNetworkRequest(key: key, fallback: fallback)
         }
     }
 
@@ -896,7 +904,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
         completion = nil
     }
 
-    private func startNetworkRequest(key: DulcetArtworkCacheKey, stale: Data?) {
+    private func startNetworkRequest(key: DulcetArtworkCacheKey, fallback: DulcetArtworkFetchOutcome?) {
         let coreRequest = AppleArtworkFetchRequest(
             providerInstanceId: request.reference.serverID,
             artworkKey: request.reference.artworkKey,
@@ -912,7 +920,7 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
             if let foundationData = outcome.data {
                 let data = foundationData as Data
                 guard Self.isDecodableImage(data) else {
-                    deliver(stale.map { .loaded($0) } ?? .unavailable)
+                    deliver(fallback ?? .unavailable)
                     return
                 }
                 let freshFor = outcome.freshForSeconds >= 0 ? TimeInterval(outcome.freshForSeconds) : nil
@@ -927,8 +935,8 @@ private final class DulcetCoreArtworkFetchOperation: DulcetArtworkFetchOperation
             }
             if outcome.error?.kind == "cancelled" {
                 deliver(.cancelled)
-            } else if let stale {
-                deliver(.loaded(stale))
+            } else if let fallback {
+                deliver(fallback)
             } else if outcome.error != nil {
                 deliver(.failed)
             } else {

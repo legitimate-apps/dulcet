@@ -172,7 +172,10 @@ internal class DiscoverAccount(
         override fun shelf(id:String,cursor:String?,completion:(DiscoverResult<DiscoverShelfPage>)->Unit)=page(completion){pages.shelf(id,cursor,it)}
         override fun playlists(query:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylistList>)->Unit)=page(completion){pages.playlists(query,cursor,it)}
         override fun playlist(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylist>)->Unit)=page(completion){pages.playlist(mbid,cursor,it)}
-        override fun refreshHome(){
+        override fun openHome() = loadHome(automatic = true)
+        override fun refreshHome() = loadHome(automatic = false)
+
+        private fun loadHome(automatic: Boolean){
             reader.checkConfined();if(closed || !active())return
             visibleHome=true
             val ticket=++homeTicket
@@ -180,13 +183,29 @@ internal class DiscoverAccount(
             homeWishlistJob?.cancel()
             scope.launch {
               try {
+                fun cachedShelves() = discoverShelfIds.map { id ->
+                    val current = shelves.firstOrNull { it.id == id }
+                    DiscoverShelfState(id, current?.page ?: pages.cachedShelf(id), false, current?.error)
+                }
+                // Restore the previous answer while capability negotiation or a live read runs.
+                if(automatic && gates().canSearch) {
+                    shelves = cachedShelves()
+                    publish()
+                }
                 detect()
                 if(closed || !active() || homeTicket!=ticket)return@launch
                 if(!gates().canSearch){shelves=emptyList();publish();return@launch}
-                shelves=discoverShelfIds.map {id -> DiscoverShelfState(id,shelves.firstOrNull {it.id==id}?.page?.let {it.copy(age=it.age.copy(fromDeviceCache=true))} ?: pages.cachedShelf(id),true,null)}
+                val cached = cachedShelves()
+                val now = reader.cache.now()
+                val refresh = cached.filter { state ->
+                    !automatic || (reader.online && (state.error != null || pages.needsHomeRefresh(state.page, now)))
+                }.map { it.id }.toSet()
+                shelves = cached.map { state ->
+                    if (state.id in refresh) state.copy(loading = true, error = null) else state
+                }
                 publish()
                 homeWishlistJob=scope.launch {homeWishes.refresh(WishFilter())}
-                for(id in discoverShelfIds) {
+                for(id in refresh) {
                     if(closed || !active() || homeTicket!=ticket)break
                     homeOperations+=pages.shelf(id,null,{result ->
                         if(!closed && active() && homeTicket==ticket) {

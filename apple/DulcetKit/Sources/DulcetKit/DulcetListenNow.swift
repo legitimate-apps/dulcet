@@ -267,8 +267,9 @@ private struct DulcetListenNowShelfView: View {
             .preference(key: DulcetReaderServerFailure.self, value: model.window?.freshness.isConnectionFailure == true)
             .preference(key: DulcetShownListenNowShelves.self,
                 value: model.window.map(shows) == true ? [shelf] : [])
+            // The hero can still open a saved shelf whose standalone row is hidden offline.
             .preference(key: DulcetListenNowShelfItems.self,
-                value: model.window.flatMap { shows($0) ? [shelf: $0.items] : nil } ?? [:])
+                value: model.window.flatMap { $0.hasContent ? [shelf: $0.items] : nil } ?? [:])
         }
     }
     private func shows(_ window: DulcetLibraryWindow) -> Bool {
