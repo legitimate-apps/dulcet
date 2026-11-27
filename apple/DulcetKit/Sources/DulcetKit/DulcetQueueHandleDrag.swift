@@ -65,7 +65,7 @@ struct DulcetQueueReorderHandle: View {
         Image(systemName: "line.3.horizontal")
             .font(.body.weight(.medium))
             .dulcetForeground(.primaryTextOnWindow)
-            .frame(minWidth: 44, minHeight: 44)
+            .frame(minWidth: DulcetMetrics.minimumTouchTarget, minHeight: DulcetMetrics.minimumTouchTarget)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0, coordinateSpace: .global)

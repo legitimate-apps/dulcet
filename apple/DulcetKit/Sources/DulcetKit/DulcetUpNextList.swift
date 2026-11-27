@@ -118,7 +118,7 @@ public struct DulcetUpNextSection: View {
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rowFrames[entry.id] = $0 }
             .background {
                 if lifted {
-                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    RoundedRectangle(cornerRadius: DulcetMetrics.liftedRowCornerRadius, style: .continuous)
                         .fill(.regularMaterial)
                         .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
                         .padding(.horizontal, -DulcetUpNextList.rowInset / 2)

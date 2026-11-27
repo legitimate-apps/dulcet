@@ -75,7 +75,7 @@ public struct DulcetSystemVolumeSlider: View {
         // As the system player draws it: a quiet speaker at each end of a slim track whose filled
         // part carries the weight, and a small thumb. MPVolumeView's stock thumb is a large white
         // disc that outweighed the track beside it (OBSERVED on the test iPhone, 2026-11-27).
-        HStack(spacing: 10) {
+        HStack(spacing: DulcetSpacing.xs) {
             Image(systemName: "speaker.fill").accessibilityHidden(true)
             DulcetVolumeViewRepresentable()
                 .frame(height: 34)
@@ -118,14 +118,14 @@ private struct DulcetVolumeViewRepresentable: UIViewRepresentable {
         let size = CGSize(width: 9, height: 4)
         let image = UIGraphicsImageRenderer(size: size).image { _ in
             UIColor.white.withAlphaComponent(alpha).setFill()
-            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 2).fill()
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 2).fill() // design-token: allow a bitmap drawn for UIKit, half its 4 pt height
         }
         return image.resizableImage(withCapInsets: UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 4))
     }
 
     /// The thumb, drawn with room for its shadow, which also widens where a finger can take it.
     private static func thumb(diameter: CGFloat) -> UIImage {
-        let inset: CGFloat = 4
+        let inset: CGFloat = 4 // design-token: allow bitmap room for the thumb's shadow, not layout
         let size = CGSize(width: diameter + inset * 2, height: diameter + inset * 2)
         return UIGraphicsImageRenderer(size: size).image { context in
             context.cgContext.setShadow(offset: CGSize(width: 0, height: 1), blur: 3,

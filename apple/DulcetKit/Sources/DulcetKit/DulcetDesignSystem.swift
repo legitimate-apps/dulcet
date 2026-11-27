@@ -103,6 +103,8 @@ extension DulcetMetrics {
     static let topResultArtworkSize: CGFloat = 96
     /// The smallest tappable area on iPhone and iPad (HIG).
     static let minimumTouchTarget: CGFloat = 44
+    /// An Up Next row lifted by its reorder handle: the card it floats on while it moves.
+    static let liftedRowCornerRadius: CGFloat = 12
     /// A list's leading icon column (settings rows, menus), before Dynamic Type scaling.
     static let listIconColumnWidth: CGFloat = 28
     /// A shelf tile on iPhone. Regular widths use an adaptive grid of `gridTileMinimumWidth`.
