@@ -72,10 +72,19 @@ public struct DulcetSystemVolumeSlider: View {
 
     public var body: some View {
         #if os(iOS)
-        DulcetVolumeViewRepresentable()
-            .frame(height: 34)
-            .accessibilityLabel(DulcetQueueStrings.volume)
-            .accessibilityIdentifier("dulcet.player.volume")
+        // As the system player draws it: a quiet speaker at each end of a slim track whose filled
+        // part carries the weight, and a small thumb. MPVolumeView's stock thumb is a large white
+        // disc that outweighed the track beside it (OBSERVED on the test iPhone, 2026-11-27).
+        HStack(spacing: 10) {
+            Image(systemName: "speaker.fill").accessibilityHidden(true)
+            DulcetVolumeViewRepresentable()
+                .frame(height: 34)
+                .accessibilityLabel(DulcetQueueStrings.volume)
+                .accessibilityIdentifier("dulcet.player.volume")
+            Image(systemName: "speaker.wave.3.fill").accessibilityHidden(true)
+        }
+        .font(.caption)
+        .foregroundStyle(.secondary)
         #else
         EmptyView()
         #endif
@@ -95,7 +104,35 @@ public struct DulcetSystemVolumeSlider: View {
 #if os(iOS)
 private struct DulcetVolumeViewRepresentable: UIViewRepresentable {
     func makeUIView(context: Context) -> MPVolumeView {
-        MPVolumeView(frame: .zero)
+        let view = MPVolumeView(frame: .zero)
+        view.setMinimumVolumeSliderImage(Self.track(alpha: 0.92), for: .normal)
+        view.setMaximumVolumeSliderImage(Self.track(alpha: 0.28), for: .normal)
+        view.setVolumeThumbImage(Self.thumb(diameter: 14), for: .normal)
+        // A finger on the thumb grows it, so the drag still shows what it holds.
+        view.setVolumeThumbImage(Self.thumb(diameter: 22), for: .highlighted)
+        return view
+    }
+
+    /// A 4 pt capsule the slider stretches between its rounded ends.
+    private static func track(alpha: CGFloat) -> UIImage {
+        let size = CGSize(width: 9, height: 4)
+        let image = UIGraphicsImageRenderer(size: size).image { _ in
+            UIColor.white.withAlphaComponent(alpha).setFill()
+            UIBezierPath(roundedRect: CGRect(origin: .zero, size: size), cornerRadius: 2).fill()
+        }
+        return image.resizableImage(withCapInsets: UIEdgeInsets(top: 0, left: 4, bottom: 0, right: 4))
+    }
+
+    /// The thumb, drawn with room for its shadow, which also widens where a finger can take it.
+    private static func thumb(diameter: CGFloat) -> UIImage {
+        let inset: CGFloat = 4
+        let size = CGSize(width: diameter + inset * 2, height: diameter + inset * 2)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            context.cgContext.setShadow(offset: CGSize(width: 0, height: 1), blur: 3,
+                color: UIColor.black.withAlphaComponent(0.25).cgColor)
+            UIColor.white.setFill()
+            UIBezierPath(ovalIn: CGRect(x: inset, y: inset, width: diameter, height: diameter)).fill()
+        }
     }
 
     func updateUIView(_ view: MPVolumeView, context: Context) {}
