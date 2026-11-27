@@ -283,7 +283,27 @@ private fun starred(ctx: ServerContext, call: Call, container: String): Reply {
     }
 }
 
-private fun search(ctx: ServerContext, call: Call, container: String): Reply {
+/**
+ * Marks each song with `dulcetListens`, its worldwide listens from the artist's stored popularity (the signal artist Top
+ * Songs use), so a client choosing a Top Result between an original and a cover of one title can lead with the one people
+ * play. Songs with no figure are left unmarked. Reads the stored answer only (never a wait on an outside service, never
+ * under the database lock): the artist's MusicBrainz id comes from one short read, then the cache is asked per artist.
+ */
+private suspend fun withListens(ctx: ServerContext, songs: List<Node>) {
+    val byArtist = songs.filter { it["artistId"] is String }.groupBy { it["artistId"] as String }
+    if (byArtist.isEmpty()) return
+    val mbids = ctx.db.read {
+        val marks = byArtist.keys.joinToString(",") { "?" }
+        query("SELECT id, lower(mbz_artist_id) AS mbid FROM artist WHERE id IN ($marks) AND mbz_artist_id IS NOT NULL AND mbz_artist_id != ''", *byArtist.keys.toTypedArray()) { it.string("id") to it.string("mbid") }
+    }.toMap()
+    for ((artistId, rows) in byArtist) {
+        val popular = mbids[artistId]?.let { ctx.artistPopularity.cachedTopRecordings(it) }?.takeIf { it.isNotEmpty() } ?: continue
+        val listens = TopSongs.listensFor(rows.map { TopSongs.SongRef(it["id"] as String, it["title"] as? String ?: "", (it["musicBrainzId"] as? String)?.ifEmpty { null }) }, popular)
+        rows.forEach { row -> listens[row["id"] as String]?.takeIf { it > 0 }?.let { row["dulcetListens"] = it } }
+    }
+}
+
+private suspend fun search(ctx: ServerContext, call: Call, container: String): Reply {
     val raw = (call.param("query") ?: "").trim().removeSurrounding("\"").trim()
     val words = fold(raw).split(' ').filter(String::isNotEmpty)
     fun clause(column: String): Pair<String, List<Any?>> =
@@ -299,6 +319,7 @@ private fun search(ctx: ServerContext, call: Call, container: String): Reply {
     val artists = if (artistCount == 0) emptyList() else ctx.catalog.artists(userId, "ar.album_count > 0 AND $artistWhere", artistArgs, limit = artistCount, offset = call.int("artistOffset", 0))
     val albums = if (albumCount == 0) emptyList() else ctx.catalog.albums(userId, albumWhere, albumArgs, limit = albumCount, offset = call.int("albumOffset", 0))
     val songs = if (songCount == 0) emptyList() else ctx.catalog.songs(userId, songWhere, songArgs, order = "t.title COLLATE NOCASE, t.id", limit = songCount, offset = call.int("songOffset", 0))
+    withListens(ctx, songs)
     return ok {
         child(container) {
             artists.forEach { add(it) }

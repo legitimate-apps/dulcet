@@ -191,7 +191,7 @@ internal class DiscoverAccount(
                     homeOperations+=pages.shelf(id,null,{result ->
                         if(!closed && active() && homeTicket==ticket) {
                             shelves=shelves.map {state -> if(state.id!=id) state else when(result) {
-                                is DiscoverResult.Value -> DiscoverShelfState(id,result.value,false,result.value.refreshError)
+                                is DiscoverResult.Value -> {pages.prefetchArtwork(result.value.items.mapNotNull {it.artworkId});DiscoverShelfState(id,result.value,false,result.value.refreshError)}
                                 is DiscoverResult.Failed -> state.copy(page=state.page?.let {it.copy(age=it.age.copy(fromDeviceCache=true))},loading=false,error=result.error)
                             }}
                             publish()

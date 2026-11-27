@@ -1,5 +1,6 @@
 package com.legitimateapps.dulcet.server
 
+import com.legitimateapps.dulcet.server.api.TopSongs
 import com.legitimateapps.dulcet.server.db.Db
 import com.legitimateapps.dulcet.server.discover.DiscoverSettings
 import io.ktor.server.testing.ApplicationTestBuilder
@@ -106,6 +107,52 @@ class TopSongsPopularityTest {
         // The rest keep today's spread: each record's opener, newest first.
         assertEquals(listOf("Cactus", "Bamboo", "Aardvark"), titles.drop(3).take(3))
         assertEquals(catalog.size, titles.size)
+    }
+
+    private suspend fun ApplicationTestBuilder.searchListens(user: String, query: String): Map<String, Long?> {
+        val reply = client.rest("search3", user, "password", "query" to query, "songCount" to "50")
+        assertEquals("ok", reply["status"]!!.jsonPrimitive.content, reply.toString())
+        return reply["searchResult3"]!!.jsonObject["song"]!!.jsonArray.associate {
+            val song = it.jsonObject
+            song["title"]!!.jsonPrimitive.content to song["dulcetListens"]?.jsonPrimitive?.content?.toLong()
+        }
+    }
+
+    /** Round 6: a search for a title shared by an original and a cover led with the cover; the client needs the figure to tell them apart. */
+    @Test fun `search marks each song with its worldwide listens by recording id or by title and version`() = fixture("pop-search") { ctx, lb, _ ->
+        ctx.users.create("alice", "password", false)
+        val listens = searchListens("alice", "")
+        assertEquals(500_000L, listens["Cedar"], "by recording MBID")
+        assertEquals(400_000L, listens["Banjo"], "by title, the song carries no MBID here")
+        assertEquals(300_000L, listens["Abacus"])
+        // Control: songs the popularity answer does not name, and a studio song whose only popular take is the live one, have no figure.
+        assertEquals(null, listens["Cactus"], "unnamed is absent, not zero")
+        assertEquals(null, listens["Cobalt"], "the live take's figure is not the studio song's")
+        assertTrue("Cobalt" in listens, "the control song is in the answer")
+        // Search reads the stored answer only: the scan's one background fetch is all that ever went upstream.
+        assertEquals(1, lb.requests.size)
+    }
+
+    @Test fun `search states no listens while ListenBrainz has given no answer`() = fixture("pop-search-down", answer = 500 to "unavailable") { ctx, lb, _ ->
+        ctx.users.create("alice", "password", false)
+        assertTrue(searchListens("alice", "").values.all { it == null })
+    }
+
+    @Test fun `listensFor gives a song the figure of its best recording and a cover or live take none`() {
+        val popular = listOf(
+            com.legitimateapps.dulcet.server.discover.PopularRecording(rec(1), "Gold Soundz", 2_400_000),
+            com.legitimateapps.dulcet.server.discover.PopularRecording(null, "Gold Soundz", 10),
+            com.legitimateapps.dulcet.server.discover.PopularRecording(null, "Cut Your Hair (Live)", 500),
+        )
+        val songs = listOf(
+            TopSongs.SongRef("tagged", "Gold Soundz", rec(1)), TopSongs.SongRef("untagged", "Gold Soundz", null),
+            TopSongs.SongRef("studio", "Cut Your Hair", null), TopSongs.SongRef("live", "Cut Your Hair (Live)", null),
+        )
+        val listens = TopSongs.listensFor(songs, popular)
+        assertEquals(2_400_000L, listens["tagged"])
+        assertEquals(10L, listens["untagged"], "a title match with no MBID takes the next recording that names it")
+        assertEquals(null, listens["studio"])
+        assertEquals(500L, listens["live"])
     }
 
     @Test fun `only the artist id and the operator's token go upstream, never the listener`() = fixture("pop-privacy") { ctx, lb, _ ->
