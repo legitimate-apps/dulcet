@@ -211,6 +211,185 @@ class DiscoverShelvesTest {
         client.close();parent.closeDiscoverClients()
     }
 
+    @Test fun reconnectKeepsHomeShelvesAcrossAnUnresolvedExtensionCheck() = readerTest { env ->
+        val wire = HomeRecoveryWire()
+        val parent = homeRecoverySession(env, wire)
+        val client = parent.openDiscoverClient()
+        val homes = mutableListOf<DiscoverHome>()
+        var access: DiscoverFeatureAccess? = null
+        client.observe { publication ->
+            access = publication.access
+            publication.home?.let(homes::add)
+        }
+        client.openHome()
+        runCurrent()
+        val initial = homes.last().shelves.map { assertNotNull(it.page).id }
+        assertEquals(discoverShelfIds, initial)
+        homes.clear()
+
+        parent.setOnline(false)
+        runCurrent()
+        wire.server.extensionFailure = true
+        parent.reader.setOnline(true, newPath = true)
+        runCurrent()
+        advanceTimeBy(3_000)
+        runCurrent()
+        assertTrue(wire.server.requests.count { it == "getOpenSubsonicExtensions" } >= 2)
+        assertEquals("unresolved", access?.detection)
+        val shelvesAtThreeSeconds = homes.last().shelves.mapNotNull { it.page?.id }
+        wire.server.extensionFailure = false
+        assertIs<ReaderConnectionOutcome.Read>(parent.reader.reconnect())
+        runCurrent()
+
+        assertEquals(initial, shelvesAtThreeSeconds, "a failed extension probe must not empty Home at +3s")
+        assertTrue(homes.all { home -> home.shelves.mapNotNull { it.page?.id } == initial },
+            "every publication through recovery keeps the shelves")
+
+        wire.server.advertised = false
+        assertIs<ReaderConnectionOutcome.Read>(parent.reader.reconnect())
+        runCurrent()
+        assertEquals("known", access?.detection)
+        assertEquals(false, access?.discoverAvailable)
+        assertTrue(homes.last().shelves.isEmpty(), "a successful probe can establish that Discover was disabled")
+        client.close()
+        parent.closeDiscoverClients()
+    }
+
+    @Test fun reconnectWithShelvesKeepsLateRecentWishesFailureQuiet() = readerTest { env ->
+        val wire = HomeRecoveryWire()
+        val parent = homeRecoverySession(env, wire)
+        val client = parent.openDiscoverClient()
+        val homes = mutableListOf<DiscoverHome>()
+        client.observe { it.home?.let(homes::add) }
+        client.openHome()
+        runCurrent()
+        val initial = homes.last().shelves.map { assertNotNull(it.page).id }
+        assertEquals(discoverShelfIds, initial)
+        homes.clear()
+
+        parent.setOnline(false)
+        runCurrent()
+        wire.wishFailureDelay = 30_000
+        wire.albumShelfFailureDelay = 30_000
+        parent.reader.setOnline(true, newPath = true)
+        runCurrent()
+        assertTrue(parent.reader.online)
+        assertEquals(1, wire.delayedWishReads, "reconnect itself issued getDulcetWishlist")
+        val restoredAt = testScheduler.currentTime
+        val samples = mutableMapOf<Long, List<String>>()
+        for (second in listOf(3L, 6L, 10L, 30L, 60L)) {
+            advanceTimeBy(restoredAt + second * 1000 - testScheduler.currentTime)
+            runCurrent()
+            samples[second] = homes.last().refreshFeedback()
+        }
+
+        assertEquals(1, wire.deliveredWishFailures, "the working path returned HTTP 504 for getDulcetWishlist")
+        assertEquals(1, wire.deliveredAlbumShelfFailures, "trendingAlbums failed and fell back to its cached page")
+        assertTrue(homes.all { home -> home.shelves.mapNotNull { it.page?.id } == initial })
+        assertEquals(samples.keys.associateWith { emptyList<String>() }, samples)
+        assertTrue(homes.all { it.refreshFeedback().isEmpty() }, "no intermediate publication should show Try Again")
+
+        homes.clear()
+        client.refreshHome()
+        runCurrent()
+        assertTrue(homes.isNotEmpty() && homes.all { it.refreshFeedback().isEmpty() },
+            "an explicit refresh starts without replaying the automatic failure")
+        advanceTimeBy(30_000)
+        runCurrent()
+        assertEquals(2, wire.deliveredWishFailures)
+        assertEquals(listOf("trendingAlbums:upstream-unavailable", "recentWishes:upstream-unavailable"),
+            homes.last().refreshFeedback(), "a failed refresh the listener requested can report a failure")
+        client.close()
+        parent.closeDiscoverClients()
+    }
+
+    @Test fun replacedPathDiscardsAnOldManualRefreshBeforeTheNewEpochAnswers() = readerTest { env ->
+        val wire = HomeRecoveryWire()
+        val parent = homeRecoverySession(env, wire)
+        val client = parent.openDiscoverClient()
+        val homes = mutableListOf<DiscoverHome>()
+        client.observe { it.home?.let(homes::add) }
+        client.openHome()
+        runCurrent()
+
+        wire.wishFailureDelay = 5_000
+        client.refreshHome()
+        runCurrent()
+        assertEquals(1, wire.delayedWishReads)
+        advanceTimeBy(1_000)
+        homes.clear()
+
+        // A satisfied-to-satisfied handoff leaves the reader online. The epoch cannot answer yet.
+        val epoch = CompletableDeferred<Unit>()
+        wire.holdScanStatus = epoch
+        parent.reader.setOnline(true, newPath = true)
+        val reconnect = backgroundScope.async { parent.reader.reconnect() }
+        runCurrent()
+        assertTrue(parent.reader.online)
+        advanceTimeBy(4_000)
+        runCurrent()
+        assertTrue(reconnect.isActive)
+        assertEquals(1, wire.deliveredWishFailures, "the retired path completed its request")
+        assertTrue(homes.isNotEmpty(), "the old request settled")
+        assertTrue(homes.all { it.refreshFeedback().isEmpty() }, "only the restored path can report an outcome")
+
+        wire.wishFailureDelay = null
+        epoch.complete(Unit)
+        runCurrent()
+        assertIs<ReaderConnectionOutcome.Read>(reconnect.await())
+        assertTrue(homes.last().refreshFeedback().isEmpty())
+        client.close()
+        parent.closeDiscoverClients()
+    }
+
+    private fun DiscoverHome.refreshFeedback() = buildList {
+        for (shelf in shelves) {
+            val failure = shelf.error ?: shelf.page?.refreshError
+            if (failure != null) add("${shelf.id}:${failure.code}")
+            if (shelf.page?.age?.stale == true) add("${shelf.id}:stale")
+        }
+        wishesError?.let { add("recentWishes:${it.code}") }
+    }
+
+    private suspend fun TestScope.homeRecoverySession(env: ReaderEnv, wire: HomeRecoveryWire) =
+        LibraryReaderSession(com.legitimateapps.dulcet.database.DulcetDatabase(env.driver),
+            env.store.bind(ReaderEnv.BINDING), wire, backgroundScope,
+            config = LibraryReaderConfig(monotonic = testScheduler.timeSource), formPost = false, foreground = false)
+            .also { it.reader.connect() }
+
+    private class HomeRecoveryWire(val server: DiscoverSessionWire = DiscoverSessionWire()) :
+        LibraryEndpointTransport by server {
+        var wishFailureDelay: Long? = null
+        var albumShelfFailureDelay: Long? = null
+        var holdScanStatus: CompletableDeferred<Unit>? = null
+        var delayedWishReads = 0
+        var deliveredWishFailures = 0
+        var deliveredAlbumShelfFailures = 0
+
+        override suspend fun request(endpoint: String, parameters: Map<String, String>): LibraryEndpointResponse {
+            if (endpoint == "getDulcetWishlist") wishFailureDelay?.let { wait ->
+                delayedWishReads++
+                delay(wait)
+                deliveredWishFailures++
+                return LibraryEndpointResponse(504, "Gateway Timeout", "https://fixture.invalid?<redacted>")
+            }
+            if (endpoint == "getScanStatus") holdScanStatus?.await()
+            if (endpoint != "getDulcetDiscoverShelf") return server.request(endpoint, parameters)
+            val id = parameters["id"]
+            if (id == "trendingAlbums") albumShelfFailureDelay?.let { wait ->
+                delay(wait)
+                deliveredAlbumShelfFailures++
+                return LibraryEndpointResponse(504, "Gateway Timeout", "https://fixture.invalid?<redacted>")
+            }
+            val field = if (id == "publicPlaylists") {
+                """"dulcetDiscoverPlaylists":{"playlist":[]}"""
+            } else {
+                """"dulcetDiscover":{"item":[$discoverItemJson],"ageSeconds":1}"""
+            }
+            return LibraryEndpointResponse(200, discoverEnvelope(field), "https://fixture.invalid?<redacted>")
+        }
+    }
+
     @Test fun homeCacheReadFailurePublishesStorageWithoutEscapingReader() = readerTest {env ->
         val wire=DiscoverSessionWire()
         val parent=LibraryReaderSession(com.legitimateapps.dulcet.database.DulcetDatabase(env.driver),env.store.bind(ReaderEnv.BINDING),wire,

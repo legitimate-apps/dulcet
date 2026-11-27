@@ -106,6 +106,8 @@ internal class DiscoverAccount(
     fun close(){retired=true;reader.cancelWishRetry();clients.toList().forEach {it.close()};outbox.close()}
     private fun <T> failed(code:String):DiscoverResult<T> = DiscoverResult.Failed(DiscoverFailure(code,null,false))
 
+    private enum class HomeLoad { Open, Refresh, Reconnect }
+
     private inner class SessionDiscoverClient:DiscoverClient {
         private var closed=false
         private val scope=CoroutineScope(reader.scope.coroutineContext+SupervisorJob(reader.scope.coroutineContext[Job]))
@@ -116,12 +118,28 @@ internal class DiscoverAccount(
         private val operations=mutableSetOf<CommandOperation<*>>()
         private var visibleHome=false
         private var homeTicket=0L
+        private var homeLoad=HomeLoad.Open
+        private var homePathRevision=reader.networkPathRevision
+        private var homeLoadJob:Job?=null
         private var shelves=emptyList<DiscoverShelfState>()
         private val homeOperations=mutableListOf<DiscoverOperation>()
         private fun newHomeWishes()=WishlistReader(store,wishlistTransport,outbox,::gates,{!closed&&active()},changed=::publish)
         private var homeWishes=newHomeWishes()
         private var homeWishlistJob:Job?=null
-        private fun home():DiscoverHome? = if(!visibleHome) null else DiscoverHome(shelves,recentDiscoverWishes(homeWishes.rows),homeWishes.loading,homeWishes.settled,homeWishes.error)
+        private fun home():DiscoverHome? {
+            if(!visibleHome) return null
+            val onCurrentPath = homePathRevision == reader.networkPathRevision
+            val hasContent = shelves.any { state ->
+                state.page?.let { it.items.isNotEmpty() || it.playlists.isNotEmpty() } == true
+            }
+            // Keep refresh failures for revalidation, but leave usable Home content quiet unless
+            // the listener asked to refresh it. The session still reports actual connection loss.
+            val showsFailures = onCurrentPath && (homeLoad == HomeLoad.Refresh || !hasContent)
+            val visibleShelves = if(showsFailures) shelves else shelves.map {it.withoutRefreshError()}
+            return DiscoverHome(visibleShelves,recentDiscoverWishes(homeWishes.rows),homeWishes.loading,
+                homeWishes.settled,homeWishes.error.takeIf {showsFailures})
+        }
+        private fun DiscoverShelfState.withoutRefreshError() = copy(page=page?.copy(refreshError=null),error=null)
         private var visibleWishlist=false
         private var filter=WishFilter()
         private var refreshing:Job?=null
@@ -135,9 +153,7 @@ internal class DiscoverAccount(
         private var renewed=false
         fun retireRequests(){
             refreshing?.cancel();operations.toList().forEach {it.cancel()}
-            homeTicket++
-            homeOperations.toList().forEach {it.cancel()};homeOperations.clear()
-            homeWishlistJob?.cancel();homeWishlistJob=null
+            cancelHomeLoads()
             search.close();pages.close();wishlist.close();homeWishes.close()
         }
         fun renewRequests(){
@@ -172,54 +188,74 @@ internal class DiscoverAccount(
         override fun shelf(id:String,cursor:String?,completion:(DiscoverResult<DiscoverShelfPage>)->Unit)=page(completion){pages.shelf(id,cursor,it)}
         override fun playlists(query:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylistList>)->Unit)=page(completion){pages.playlists(query,cursor,it)}
         override fun playlist(mbid:String,cursor:String?,completion:(DiscoverResult<DiscoverPlaylist>)->Unit)=page(completion){pages.playlist(mbid,cursor,it)}
-        override fun openHome() = loadHome(automatic = true)
-        override fun refreshHome() = loadHome(automatic = false)
+        override fun openHome() = loadHome(HomeLoad.Open)
+        override fun refreshHome() = loadHome(HomeLoad.Refresh)
 
-        private fun loadHome(automatic: Boolean){
+        private fun cancelHomeLoads(){
+            homeTicket++
+            homeLoadJob?.cancel();homeLoadJob=null
+            homeOperations.forEach {it.cancel()};homeOperations.clear()
+            homeWishlistJob?.cancel();homeWishlistJob=null
+        }
+
+        private fun loadHome(load: HomeLoad){
             reader.checkConfined();if(closed || !active())return
             visibleHome=true
-            val ticket=++homeTicket
-            homeOperations.toList().forEach {it.cancel()};homeOperations.clear()
-            homeWishlistJob?.cancel()
-            scope.launch {
+            cancelHomeLoads()
+            homeLoad=load
+            homeWishes.clearError()
+            if(load != HomeLoad.Open) shelves=shelves.map {it.withoutRefreshError()}
+            val ticket=homeTicket
+            val pathRevision=reader.networkPathRevision
+            homePathRevision=pathRevision
+            fun current() = !closed && active() && homeTicket==ticket && reader.networkPathRevision==pathRevision
+            homeLoadJob=scope.launch {
               try {
                 fun cachedShelves() = discoverShelfIds.map { id ->
                     val current = shelves.firstOrNull { it.id == id }
                     DiscoverShelfState(id, current?.page ?: pages.cachedShelf(id), false, current?.error)
                 }
                 // Restore the previous answer while capability negotiation or a live read runs.
-                if(automatic && gates().canSearch) {
+                if(gates().discoverAvailable) {
                     shelves = cachedShelves()
                     publish()
                 }
                 detect()
-                if(closed || !active() || homeTicket!=ticket)return@launch
-                if(!gates().canSearch){shelves=emptyList();publish();return@launch}
+                if(!current()) return@launch
+                val access=gates()
+                if(!access.canSearch) {
+                    // A failed probe leaves the last-known feature available for display only.
+                    shelves=if(access.detection=="known") emptyList() else shelves.map {it.copy(loading=false)}
+                    publish()
+                    return@launch
+                }
                 val cached = cachedShelves()
                 val now = reader.cache.now()
                 val refresh = cached.filter { state ->
-                    !automatic || (reader.online && (state.error != null || pages.needsHomeRefresh(state.page, now)))
+                    load != HomeLoad.Open || (reader.online && (state.error != null || pages.needsHomeRefresh(state.page, now)))
                 }.map { it.id }.toSet()
                 shelves = cached.map { state ->
-                    if (state.id in refresh) state.copy(loading = true, error = null) else state
+                    if (state.id in refresh) state.withoutRefreshError().copy(loading = true) else state
                 }
                 publish()
-                homeWishlistJob=scope.launch {homeWishes.refresh(WishFilter())}
+                if(access.canReadWishlist && current()) {
+                    homeWishlistJob=scope.launch {homeWishes.refresh(WishFilter(), ::current)}
+                }
                 for(id in refresh) {
-                    if(closed || !active() || homeTicket!=ticket)break
+                    if(!current()) break
                     homeOperations+=pages.shelf(id,null,{result ->
-                        if(!closed && active() && homeTicket==ticket) {
+                        if(current()) {
                             shelves=shelves.map {state -> if(state.id!=id) state else when(result) {
                                 is DiscoverResult.Value -> {pages.prefetchArtwork(result.value.items.mapNotNull {it.artworkId});DiscoverShelfState(id,result.value,false,result.value.refreshError)}
                                 is DiscoverResult.Failed -> state.copy(page=state.page?.let {it.copy(age=it.age.copy(fromDeviceCache=true))},loading=false,error=result.error)
                             }}
                             publish()
                         }
-                    },12)
+                    },12,valid=::current)
                 }
               } catch(cancelled:CancellationException){throw cancelled}
                 catch(_:Exception){
-                    if(!closed && active() && homeTicket==ticket) {
+                    if(current()) {
                         val failure=DiscoverFailure("storage",null,true)
                         shelves=discoverShelfIds.map {id -> DiscoverShelfState(id,shelves.firstOrNull {it.id==id}?.page?.let {it.copy(age=it.age.copy(fromDeviceCache=true))},false,failure)}
                         publish()
@@ -269,12 +305,15 @@ internal class DiscoverAccount(
                 }
                 renewed=false
                 if(visibleWishlist && (unresolved || access.wishlistAvailable))refreshWishlist(filter)
-                if(visibleHome && (unresolved || access.discoverAvailable))refreshHome()
+                if(visibleHome && (unresolved || access.discoverAvailable))loadHome(HomeLoad.Reconnect)
             }else {
                 if(!active()) {
                     retireRequests()
                     shelves=emptyList()
                     groups=groups.map {it.copy(loading=false,error=DiscoverFailure("identity-changed",null,false))}
+                } else if(visibleHome) {
+                    cancelHomeLoads()
+                    shelves=shelves.map {it.copy(loading=false)}
                 }
                 publish()
             }

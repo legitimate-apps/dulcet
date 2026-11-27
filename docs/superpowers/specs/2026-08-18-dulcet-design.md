@@ -8088,6 +8088,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-27 — Discover keeps its shelves through reconnect (§16.14, §29.10).**
+Home keeps the last shelves for the authorized account while it rechecks capabilities and refreshes.
+A failed capability check leaves those shelves visible and grants no new reads. A definitive loss
+of Discover support or of account authorization still removes them. Home ignores results from a
+replaced connection path. When Home already has usable shelves, automatic refresh failures from
+shelves and Recent wishes stay quiet. The session still tells the person about a connection loss,
+and Home can report a failed refresh when the listener asked for it or there are no usable shelves.
+A source-reported freshness note can still describe older results.
+
 **2026-11-27 — A skip keeps the play state; Up Next reorders from an always-visible handle (§14.1, §12.10).**
 OBSERVED on the test iPhone, 2026-11-27: with "¿Cómo así?" paused, a left swipe on the mini-player
 advanced to "Me pongo loca" and started it playing (twice). On Apple, every skip started its entry with
