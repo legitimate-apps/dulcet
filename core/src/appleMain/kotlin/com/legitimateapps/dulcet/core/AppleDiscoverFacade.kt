@@ -69,6 +69,7 @@ public class AppleDiscoverClient(private val reader:AppleLibraryReaderClient) {
         operation(completion,{it.appleDiscoverAlbumResult()}) {target,done ->target.album(mbid,releaseId,done)}
     public fun albumTracks(mbid:String,releaseId:String,cursor:String?,completion:(AppleDiscoverPageResult)->Unit):AppleLibraryReaderOperation =
         operation(completion,{it.appleDiscoverPageResult()}) {target,done ->target.albumTracks(mbid,releaseId,cursor,done)}
+    public fun openHome()=command {it.openHome()}
     public fun refreshHome()=command {it.refreshHome()}
     public fun shelf(id:String,cursor:String?,completion:(AppleDiscoverShelfPageResult)->Unit):AppleLibraryReaderOperation =
         operation(completion,{it.appleDiscoverShelfPageResult()}) {target,done -> target.shelf(id,cursor,done)}

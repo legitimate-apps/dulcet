@@ -302,6 +302,7 @@ extension DulcetCoreLibraryReader: DulcetDiscoverProviding {
         let subscription = client.observe(listener: bridge)
         return lifetime.operation { [bridge] in _ = bridge; subscription.close() }
     }
+    func openHome() { guard !closed else { return }; client.openHome() }
     func refreshHome() { guard !closed else { return }; client.refreshHome() }
     func shelf(id: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverShelfPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
         let deliver = lifetime.delivery(completion)

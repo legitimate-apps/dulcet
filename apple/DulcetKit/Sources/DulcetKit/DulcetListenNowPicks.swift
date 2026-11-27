@@ -64,6 +64,11 @@ struct DulcetListenNowPick: Identifiable, Hashable, Sendable {
         }
     }
 
+    var playableMixTracks: [DulcetTrack] {
+        guard case let .mix(_, tracks) = content else { return [] }
+        return tracks.filter { !$0.isUnavailableOffline }.compactMap(\.playableTrack)
+    }
+
     /// The page the card opens.
     var route: DulcetReaderRoute? {
         switch content {
@@ -90,7 +95,7 @@ enum DulcetListenNowPicks {
         var usedCollections = Set<DulcetProviderItemID>()
 
         func mix(_ shelf: DulcetListenNowShelf, reason: (([DulcetReaderItem]) -> DulcetListenNowPickReason?)? = nil) {
-            let tracks = playable(shelves[shelf] ?? [])
+            let tracks = (shelves[shelf] ?? []).filter { $0.kind == .track }
             guard tracks.count >= minimumMixTracks else { return }
             let chosen = reason?(tracks) ?? .madeForYou
             picks.append(DulcetListenNowPick(
@@ -181,10 +186,6 @@ enum DulcetListenNowPicks {
         case 1...3: return ListFormatter.localizedString(byJoining: ranked)
         default: return DulcetStrings.homeArtistsAndMore(ranked.prefix(3).joined(separator: ", "))
         }
-    }
-
-    private static func playable(_ items: [DulcetReaderItem]) -> [DulcetReaderItem] {
-        items.filter { $0.kind == .track && $0.playableTrack != nil && !$0.isUnavailableOffline }
     }
 
     private static func shared(_ values: [String?]) -> String? {

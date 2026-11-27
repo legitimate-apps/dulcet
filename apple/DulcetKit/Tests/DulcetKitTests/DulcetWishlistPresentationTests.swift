@@ -153,6 +153,7 @@ import Testing
     var playlistListCompletions: [@MainActor (Result<DulcetDiscoverPlaylistList, DulcetDiscoverFailure>) -> Void] = []
     var pageCancellationCount = 0
     var homeRefreshCount = 0
+    func openHome() { refreshHome() }
     func refreshHome() { homeRefreshCount += 1 }
     func shelf(id: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverShelfPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable {
         shelfRequests.append((id, cursor)); shelfCompletions.append(completion)

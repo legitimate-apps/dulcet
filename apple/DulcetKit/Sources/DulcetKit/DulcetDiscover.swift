@@ -329,6 +329,7 @@ public struct DulcetWishEnqueued: Sendable, Hashable {
 }
 @MainActor public protocol DulcetDiscoverReading: AnyObject {
     func observe(_ listener: @escaping @MainActor (DulcetDiscoverPublication) -> Void) -> any DulcetLibraryReaderCancellable
+    func openHome()
     func refreshHome()
     @discardableResult func shelf(id: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverShelfPage, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable
     @discardableResult func playlists(query: String, cursor: String?, completion: @escaping @MainActor (Result<DulcetDiscoverPlaylistList, DulcetDiscoverFailure>) -> Void) -> any DulcetLibraryReaderCancellable

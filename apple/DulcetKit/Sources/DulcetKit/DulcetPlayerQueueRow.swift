@@ -188,7 +188,7 @@ struct DulcetPlayerQueueArtwork: View {
             guard requestGeneration == generation else { return }
             operation = nil
             switch outcome {
-            case let .loaded(data):
+            case let .loaded(data), let .loadedFromOtherSize(data, _):
                 decodedReference = reference
                 decodedImage = store.cachedArtwork(reference, sizeBucket: bucket, allowingOtherSizes: false)
                     ?? DulcetArtworkMemoryCache.decode(data, maximumPixelSize: bucket.rawValue)

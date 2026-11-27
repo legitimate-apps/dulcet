@@ -182,6 +182,11 @@ private struct DulcetListenNowPickCard: View {
     private var playButton: some View {
         let target = playTarget
         let playing = target.map { store.playsTarget($0) } ?? mixIsPlaying
+        let canStart: Bool
+        switch pick.content {
+        case .collection: canStart = true
+        case .mix: canStart = !pick.playableMixTracks.isEmpty
+        }
         return Button {
             DulcetHaptic.playPause.play()
             if playing {
@@ -200,6 +205,7 @@ private struct DulcetListenNowPickCard: View {
         .buttonStyle(DulcetPressedCardStyle(reduceMotion: reduceMotion))
         .accessibilityLabel(playing ? DulcetStrings.pause : DulcetStrings.homePlay(pick.title))
         .accessibilityIdentifier("dulcet.listenNow.hero.play.\(index)")
+        .disabled(!playing && !canStart)
     }
 
     /// A mix has no id the core records it by: it is the library source it was started as, under
@@ -222,8 +228,8 @@ private struct DulcetListenNowPickCard: View {
         switch pick.content {
         case let .collection(item):
             store.resolveAndPlay(item, shuffle: false)
-        case let .mix(_, tracks):
-            store.playReaderTracks(tracks.compactMap(\.playableTrack), sourceKind: .library, sourceID: nil,
+        case .mix:
+            store.playReaderTracks(pick.playableMixTracks, sourceKind: .library, sourceID: nil,
                                    sourceName: pick.title)
         }
     }

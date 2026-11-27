@@ -3,12 +3,18 @@ import SwiftUI
 
 struct DulcetDiscoverHomeView: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var model: DulcetDiscoverModel
+    @State private var showInitialProgress = false
     @Bindable var navigation: DulcetDiscoverNavigation
     init(reader: any DulcetDiscoverReading, navigation: DulcetDiscoverNavigation) {
         _model = State(initialValue: .init(reader: reader)); self.navigation = navigation
     }
     var body: some View {
+        let publication = model.publication
+        let connection = publication?.connection ?? "online"
+        let status = publication?.home.map { DulcetDiscoverStatus.home($0, connection: connection) }
+            ?? DulcetDiscoverStatus(age: nil, error: nil, connection: connection)
         ScrollView {
             LazyVStack(alignment: .leading, spacing: DulcetSpacing.lg) {
 #if os(macOS)
@@ -20,10 +26,6 @@ struct DulcetDiscoverHomeView: View {
                     refreshButton
                 }
 #endif
-                let publication = model.publication
-                let connection = publication?.connection ?? "online"
-                let status = publication?.home.map { DulcetDiscoverStatus.home($0, connection: connection) }
-                    ?? DulcetDiscoverStatus(age: nil, error: nil, connection: connection)
                 DulcetDiscoverStatusView(status: status, prefix: "discover.home") { model.reader.refreshHome() }
                 if let home = publication?.home {
                     let personal = home.shelves.first { $0.id == DulcetDiscoverShelf.similarArtists.rawValue }?
@@ -35,13 +37,16 @@ struct DulcetDiscoverHomeView: View {
                         }
                     }
                     if model.publication?.access.wishlistAvailable == true { wishes(home).id("recentWishes") }
-                } else { ProgressView(DulcetStrings.discoverLoading) }
+                } else if showInitialProgress {
+                    ProgressView(DulcetStrings.discoverLoading)
+                }
                 Text(DulcetStrings.discoverCredit).font(.caption).accessibilityIdentifier("discover.credit")
             }
             .padding(DulcetSpacing.md)
             .frame(maxWidth: .infinity, alignment: .leading)
             .scrollTargetLayout()
         }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.2), value: status.ageText != nil)
         .scrollPosition(id: $navigation.homeScroll, anchor: .top)
 #if os(iOS)
         // A refresh is pulled, as in every iOS list; the shelves keep what they show meanwhile.
@@ -51,7 +56,14 @@ struct DulcetDiscoverHomeView: View {
         .accessibilityIdentifier("discover.home")
         .navigationTitle(DulcetStrings.discoverTitle)
         .dulcetForeground(.primaryTextOnWindow)
-        .onAppear { model.open(); model.reader.refreshHome() }
+        .task(id: model.publication?.home == nil) {
+            // Give the local snapshot a frame to restore before drawing a cold-load spinner.
+            showInitialProgress = false
+            guard model.publication?.home == nil else { return }
+            try? await Task.sleep(for: .milliseconds(200))
+            if !Task.isCancelled { showInitialProgress = true }
+        }
+        .onAppear { model.open(); model.reader.openHome() }
         .onDisappear { model.close() }
     }
     private var refreshButton: some View {
@@ -100,7 +112,8 @@ struct DulcetDiscoverHomeView: View {
                     HStack(alignment: .top, spacing: DulcetSpacing.xs) {
                         ForEach(page.items, id: \.id) { item in
                             DulcetDiscoverShelfItem(model: model, item: item, source: presentation.source,
-                                identifier: prefix + ".item." + item.id, style: .tile, navigate: { navigation.path.append(.metadata($0, presentation.source)) }, openLibrary: store.openDiscoverLibrary)
+                                identifier: prefix + ".item." + item.id, style: .tile,
+                                refreshedAt: page.age.fromDeviceCache || page.refreshError != nil ? nil : page.age.receivedAt, navigate: { navigation.path.append(.metadata($0, presentation.source)) }, openLibrary: store.openDiscoverLibrary)
                         }
                         ForEach(page.playlists, id: \.id) { playlist in
                             playlistButton(playlist, prefix: prefix + ".playlist.")
@@ -167,6 +180,7 @@ struct DulcetDiscoverShelfItem: View {
     let source: DulcetWishSource
     let identifier: String
     var style: Style = .row
+    var refreshedAt: Date? = nil
     let navigate: (DulcetDiscoverDestination) -> Void
     let openLibrary: (DulcetDiscoverLibraryRef) -> Void
     private var row: DulcetWishRow? { model.row(for: item) }
@@ -215,7 +229,7 @@ struct DulcetDiscoverShelfItem: View {
                 Button(action: open) {
                     VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                         DulcetDiscoverArtworkView(reader: model.reader, artworkId: item.artworkId, size: side,
-                                                  shape: circle ? .circle : .rounded, title: item.title)
+                                                  shape: circle ? .circle : .rounded, title: item.title, refreshedAt: refreshedAt)
                         VStack(alignment: circle ? .center : .leading, spacing: DulcetDiscoverMetrics.captionLineSpacing) {
                             Text(verbatim: item.title).font(.subheadline.weight(.semibold)).lineLimit(1)
                                 .dulcetForeground(.primaryTextOnWindow)
