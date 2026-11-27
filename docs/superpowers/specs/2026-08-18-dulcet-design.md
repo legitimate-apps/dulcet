@@ -8138,8 +8138,11 @@ the same interval. Explicit identity and account failures stay visible. An unans
 read can request a shared foreground reconnect at the existing 1, 2, 4, 8 and 15-second backoff.
 An answer stops the backoff once the visible reads it started have no new transport failure.
 Older connection completions and older screen publications cannot replace a newer answer.
-The core retries unanswered reads on reconnect even if the cache is recent. Search renews a
-pending or failed request for the same query in place and fences its retired request and deadline.
+The core retries unanswered reads on reconnect even if the cache is recent. A waiting Search
+request keeps its deadline and may finish through an ordinary reconnect. When the platform
+reports a replacement path, Search renews a pending request only if it was sent on the retired
+path. A timed-out or failed query can still be retried in place. Each renewal fences its
+retired request and deadline.
 Unavailable album songs use “Unavailable offline” for a confirmed loss of the device path and
 “Streaming unavailable” when the device still has a path.
 

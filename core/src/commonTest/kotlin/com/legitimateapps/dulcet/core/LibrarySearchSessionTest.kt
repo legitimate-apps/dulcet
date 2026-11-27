@@ -366,7 +366,7 @@ class LibrarySearchSessionTest {
     }
 
     @Test
-    fun aReconnectReplacesAnUnansweredSearchWithoutChangingTheQueryOrShowingAnIntermediateScope() = sessionTest { env ->
+    fun aReconnectReplacesAnUnansweredSearchSentOnTheRetiredPathWithoutShowingAnIntermediateScope() = sessionTest { env ->
         val session = primed(env)
         val pubs = Recorder<LibrarySearchPublication>(env.server)
         val search = session.openSearch(listener = pubs)
@@ -379,8 +379,10 @@ class LibrarySearchSessionTest {
 
         env.server.holdBeforeApply.clear()
         val mark = pubs.all.size
+        session.reader.setOnline(true, newPath = true)
         session.reader.reconnect()
         runCurrent()
+        assertEquals(1, env.server.cancelledWhileHeld)
         assertEquals(2, env.server.count("search3"))
         assertEquals(listOf(SearchScope.ServerAndDevice), pubs.all.drop(mark).map { it.value.scope })
         assertEquals("Album 003", pubs.last.query)
