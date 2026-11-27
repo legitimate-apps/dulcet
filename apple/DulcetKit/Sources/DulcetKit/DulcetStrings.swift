@@ -222,6 +222,7 @@ enum DulcetStrings {
     static let offlineTitle = text("offline.title", "Browsing saved library metadata")
     static let offlineBody = text("offline.body", "Album and song details are available. Music remains on your server, so playback returns when the connection does.")
     static let offlineUnavailable = text("offline.unavailable", "Unavailable offline")
+    static let trackStreamingUnavailable = text("track.streamingUnavailable", "Streaming unavailable")
     static let lastSynced = text("offline.lastSynced", "Last synced")
     static let disc = text("album.disc", "Disc")
     static let duration = text("track.duration", "Duration")
@@ -496,7 +497,8 @@ enum DulcetStrings {
     static func unavailableTrackAccessibility(
         title: String,
         subtitle: String,
-        duration: String
+        duration: String,
+        availability: String
     ) -> String {
         formatted(
             "track.accessibility.unavailable",
@@ -504,7 +506,7 @@ enum DulcetStrings {
             title,
             subtitle,
             duration,
-            offlineUnavailable
+            availability
         )
     }
 

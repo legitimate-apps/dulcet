@@ -726,6 +726,107 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         shoot("search-top-result-playing", app)
     }
 
+    @MainActor
+    func testSearchClearsItsFailureAfterTheServerRestarts() throws {
+        let (app, control, compact) = try launchConnectionRecoveryFixture()
+        XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))
+        let field = dulcetSearchField(in: app)
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        field.tap()
+        if let text = field.value as? String, text != field.placeholderValue {
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: text.count))
+        }
+        XCTAssertTrue(setTourOutage(control, enabled: true))
+        field.typeText("Tide Lines\n")
+        try captureConnectionRecovery("search", control: control, in: app)
+        XCTAssertTrue(app.buttons["dulcet.search.topResult"].firstMatch.exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testOpenArtistClearsItsFailureAfterTheServerRestarts() throws {
+        let (app, control, compact) = try launchConnectionRecoveryFixture()
+        XCTAssertTrue(openSection("artists", in: app, compact: compact))
+        let artist = app.buttons.matching(identifier: "dulcet.library.artist")
+            .matching(NSPredicate(format: "label BEGINSWITH %@", "Velvet Harbor")).firstMatch
+        XCTAssertTrue(artist.waitForExistence(timeout: 20))
+        XCTAssertTrue(scrollIntoView(artist, in: app))
+        XCTAssertTrue(setTourOutage(control, enabled: true))
+        artist.tap()
+        try captureConnectionRecovery("artist", control: control, in: app)
+        XCTAssertTrue(app.buttons["dulcet.artist.play"].firstMatch.exists, app.debugDescription)
+    }
+
+    @MainActor
+    func testDiscoverClearsItsRefreshFailureAfterTheServerRestarts() throws {
+        let (app, control, compact) = try launchConnectionRecoveryFixture()
+        XCTAssertTrue(openDestination("Discover", sidebar: "dulcet.sidebar.discover", in: app, compact: compact))
+        let refresh = app.buttons["discover.home.refresh"].firstMatch
+        let shelfItem = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@",
+            "discover.shelf.trendingArtists.item.")).firstMatch
+        XCTAssertTrue(refresh.waitForExistence(timeout: 20))
+        XCTAssertTrue(shelfItem.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(setTourOutage(control, enabled: true))
+        refresh.tap()
+        try captureConnectionRecovery("discover", control: control, in: app)
+        XCTAssertTrue(shelfItem.exists, app.debugDescription)
+    }
+
+    @MainActor
+    private func launchConnectionRecoveryFixture() throws -> (XCUIApplication, String, Bool) {
+        continueAfterFailure = false
+        let environment = ProcessInfo.processInfo.environment
+        guard let control = environment["DULCET_CONNECTION_RECOVERY_CONTROL_URL"] else {
+            throw XCTSkip("Requires a disposable Dulcet Server and outage control")
+        }
+        let url = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        for endpoint in [url, control] {
+            XCTAssertEqual(URLComponents(string: endpoint)?.host, "127.0.0.1")
+        }
+
+        let app = XCUIApplication()
+        app.launchArguments += ["-dulcet-debug-connect-account",
+            "-dulcet-debug-account-server-url", url,
+            "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
+            "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
+        launchInInteractionScope(app)
+        let compact = try XCTUnwrap(settledWindowWidth(app.windows.firstMatch)) < 700
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
+        connectionWordsOutageControl = control
+        return (app, control, compact)
+    }
+
+    @MainActor
+    private func captureConnectionRecovery(_ screen: String, control: String, in app: XCUIApplication) throws {
+        let failure = app.staticTexts.matching(NSPredicate(format: "label == %@", "Can’t reach your server"))
+        let offline = app.staticTexts.matching(NSPredicate(format: "label == %@", "You’re offline"))
+        let retry = app.buttons.matching(NSPredicate(format: "label == %@", "Try Again"))
+        XCTAssertTrue(failure.firstMatch.waitForExistence(timeout: 30), app.debugDescription)
+        XCTAssertEqual(failure.count, 1, screen)
+        XCTAssertEqual(offline.count, 0, screen)
+        XCTAssertEqual(retry.count, 1, screen)
+        shoot(screen + "-server-stopped", app, includeMetadata: false)
+
+        XCTAssertTrue(setTourOutage(control, enabled: false))
+        connectionWordsOutageControl = nil
+        let restarted = ContinuousClock.now
+        print("DULCET RECOVERY screen=\(screen) restart answered")
+        shoot(screen + "-restart", app, includeMetadata: false)
+        print("DULCET RECOVERY screen=\(screen) restart shot=\(ContinuousClock.now - restarted)")
+        let untilProof = restarted + .seconds(5) - ContinuousClock.now
+        let parts = untilProof.components
+        if untilProof > .zero {
+            RunLoop.current.run(until: Date().addingTimeInterval(
+                Double(parts.seconds) + Double(parts.attoseconds) / 1e18))
+        }
+        shoot(screen + "-five-seconds", app, includeMetadata: false)
+        print("DULCET RECOVERY screen=\(screen) settled shot=\(ContinuousClock.now - restarted)")
+        XCTAssertEqual(failure.count, 0, screen)
+        XCTAssertEqual(offline.count, 0, screen)
+        XCTAssertEqual(retry.count, 0, screen)
+        XCTAssertFalse(app.staticTexts["discover.home.error"].firstMatch.exists)
+        XCTAssertFalse(app.staticTexts["discover.home.age"].firstMatch.exists)
+    }
+
     /// The server can disappear while the simulator still has a usable network path.
     @MainActor
     func testOneConnectionMessagePerDestination() throws {
@@ -2083,15 +2184,17 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
     }
 
     @MainActor
-    private func shoot(_ screen: String, _ app: XCUIApplication) {
+    private func shoot(_ screen: String, _ app: XCUIApplication, includeMetadata: Bool = true) {
         shotNumber += 1
         let requested = ProcessInfo.processInfo.environment["DULCET_DESIGN_TOUR_SCREENS"]?
             .split(separator: " ").map(String.init) ?? []
         guard requested.isEmpty || requested.contains(screen.replacingOccurrences(of: "-UNREACHED", with: "")) else { return }
         let name = String(format: "%02d-%@", shotNumber, screen)
-        let tabs = app.tabBars.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|")
-        let accessibility = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
-        print("DULCET CAPTURE META screen=\(screen) tabs=\(tabs) accessibility=\(accessibility.exists ? accessibility.label : "not-recorded")")
+        if includeMetadata {
+            let tabs = app.tabBars.buttons.allElementsBoundByIndex.map(\.label).joined(separator: "|")
+            let accessibility = app.staticTexts["dulcet.debug.ui-markers"].firstMatch
+            print("DULCET CAPTURE META screen=\(screen) tabs=\(tabs) accessibility=\(accessibility.exists ? accessibility.label : "not-recorded")")
+        }
         // Element screenshots use a stale crop rectangle after landscape rotation on Simulator.
         // The screen request preserves the whole iPad display and its orientation metadata.
         // Portrait uses the element request: whole-display capture has stalled after grid navigation.

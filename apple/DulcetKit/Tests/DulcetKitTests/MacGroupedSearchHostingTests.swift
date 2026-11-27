@@ -154,9 +154,10 @@ private final class GroupedSearchHostingReader: DulcetLibraryReaderMaking, Dulce
         onPublication: @escaping @MainActor (DulcetReaderSearchPublication) -> Void
     ) -> any DulcetLibrarySearchSubscribing {
         GroupedSearchHostingSubscription { [weak self] query in
-            self?.queries.append(query)
+            guard let self else { return }
+            queries.append(query)
             onPublication(DulcetReaderSearchPublication(
-                query: query, sequence: 1, scope: .serverAndDevice, rows: query.isEmpty ? [] : Self.rows
+                query: query, sequence: queries.count, scope: .serverAndDevice, rows: query.isEmpty ? [] : Self.rows
             ))
         }
     }

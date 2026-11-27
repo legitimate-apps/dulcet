@@ -296,6 +296,26 @@ class ReaderReachabilityTest {
         assertIs<SearchScope.DeviceOffline>(pubs.last.scope)
     }
 
+    @Test
+    fun aUsableReplacementPathRetiresAnInFlightReconnect() = sessionTest { env ->
+        val session = primed(env)
+        env.server.base.holdMatching = { it.endpoint == "getScanStatus" }
+        var retired: ReaderConnectionOutcome? = null
+        env.scope.launch { retired = session.reader.reconnect() }
+        runCurrent()
+        assertEquals(1, env.server.base.heldCount)
+
+        env.server.base.holdMatching = null
+        session.reader.setOnline(true, newPath = true)
+        val latest = session.reader.reconnect()
+        assertIs<ReaderConnectionOutcome.Read>(latest)
+        assertEquals(ReaderConnectionOutcome.Failed(DomainError.Transport.Unreachable), retired)
+        assertTrue(session.reader.online, "a handoff keeps the already-connected reader online")
+        env.server.base.release()
+        advanceUntilIdle()
+        assertTrue(session.reader.online)
+    }
+
     // ---- Order within the revalidation step --------------------------------------------------------------
 
     /**

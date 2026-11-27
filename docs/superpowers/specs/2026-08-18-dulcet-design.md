@@ -8169,6 +8169,24 @@ playlist and the whole library are played as source kind `library` with no id, s
 from each other and their Play keeps its label; Library Songs and Downloaded have a Shuffle button
 only. Android is not changed.
 
+**2026-11-27 — Visible reads settle after a network handoff (§16.14–15).**
+A restored Apple network path, including a handoff between two usable paths, starts the usual
+reconnect, retires any reconnect still waiting on the previous path, and gives transport failures
+five seconds of grace. Search retains its rows and omits
+its pending scope label during that grace. Discover holds its refresh notice and retry during
+the same interval. Explicit identity and account failures stay visible. An unanswered visible
+read can request a shared foreground reconnect with a 1, 2, then 3-second backoff. The cap
+leaves time to revalidate when the server comes back without a change to the device's path.
+An answer stops the backoff once the visible reads it started have no new transport failure.
+Older connection completions and older screen publications cannot replace a newer answer.
+The core retries unanswered reads on reconnect even if the cache is recent. A waiting Search
+request keeps its deadline and may finish through an ordinary reconnect. When the platform
+reports a replacement path, Search renews a pending request only if it was sent on the retired
+path. A timed-out or failed query can still be retried in place. Each renewal fences its
+retired request and deadline.
+Unavailable album songs use “Unavailable offline” for a confirmed loss of the device path and
+“Streaming unavailable” when the device still has a path.
+
 **2026-11-27 — Apple music screens share one connection message (§16.14–15).**
 Listen Now, Library, Browse, Search, Discover and server-backed reader destinations draw the same
 connection status. A sustained platform report of no path shows “You’re offline” with no action.

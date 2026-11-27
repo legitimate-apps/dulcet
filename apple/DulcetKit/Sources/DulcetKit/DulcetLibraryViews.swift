@@ -920,6 +920,10 @@ struct DulcetTrackRow<Trailing: View>: View {
         offline && (searchPresentation != nil || !track.downloadState.isLocallyPlayable)
     }
 
+    private var unavailabilityLabel: String {
+        DulcetReaderCopy.trackUnavailable(deviceOffline: store.librarySession?.isDeviceOffline ?? true)
+    }
+
     private var resolvedQueueAddition: DulcetQueueAddition {
         queueAddition ?? .track(track, in: store)
     }
@@ -1036,7 +1040,7 @@ struct DulcetTrackRow<Trailing: View>: View {
             rowContent
                 .dulcetForeground(surface.primaryPair)
                 .accessibilityLabel(rowAccessibilityLabel)
-                .accessibilityHint(DulcetStrings.offlineUnavailable)
+                .accessibilityHint(unavailabilityLabel)
         } else if onActivate == nil {
             rowContent
                 .dulcetForeground(surface.primaryPair)
@@ -1254,7 +1258,7 @@ struct DulcetTrackRow<Trailing: View>: View {
                     .dulcetForeground(surface.secondaryPair)
             }
             if unavailableOffline, dynamicTypeSize >= .xxLarge {
-                Text(DulcetStrings.offlineUnavailable)
+                Text(unavailabilityLabel)
                     .font(.caption.weight(.medium))
                     .dulcetForeground(surface.offlinePair)
                     .lineLimit(nil)
@@ -1312,7 +1316,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     private func durationText(fixedColumn: Bool) -> some View {
         if unavailableOffline {
             if dynamicTypeSize < .xxLarge {
-                Text(DulcetStrings.offlineUnavailable)
+                Text(unavailabilityLabel)
                     .font(.caption.weight(.medium))
                     .dulcetForeground(surface.offlinePair)
                     .lineLimit(nil)
@@ -1358,7 +1362,8 @@ struct DulcetTrackRow<Trailing: View>: View {
             return DulcetStrings.unavailableTrackAccessibility(
                 title: track.title,
                 subtitle: trackSubtitle,
-                duration: track.duration.dulcetDuration
+                duration: track.duration.dulcetDuration,
+                availability: unavailabilityLabel
             )
         }
         return DulcetStrings.trackAccessibility(
@@ -1375,7 +1380,7 @@ struct DulcetTrackRow<Trailing: View>: View {
 
     private var rowAccessibilityValue: String {
         guard let searchPresentation else { return downloadStateAccessibilityValue }
-        if unavailableOffline { return DulcetStrings.readerNotAvailableOffline }
+        if unavailableOffline { return unavailabilityLabel }
         return [
             track.duration == nil ? nil : track.duration.dulcetDuration,
             searchPresentation.deviceOnly ? DulcetStrings.readerSearchRowDevice : nil,

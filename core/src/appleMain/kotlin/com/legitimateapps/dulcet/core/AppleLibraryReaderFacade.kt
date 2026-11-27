@@ -328,6 +328,11 @@ public class AppleLibraryReaderClient internal constructor(
         onReader { composition?.session?.setOnline(reachable) }
     }
 
+    /** A restored transport path retires a reconnect still waiting on the previous path. */
+    public fun networkPathRestored() {
+        onReader { composition?.session?.reader?.setOnline(true, newPath = true) }
+    }
+
     /**
      * Foreground transitions after construction, whose `foreground` argument stated the first; call
      * it on every change. The epoch cadence and a reconnect's automatic retry run only in the

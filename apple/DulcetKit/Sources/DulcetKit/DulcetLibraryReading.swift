@@ -97,6 +97,7 @@ public protocol DulcetLibraryReading: AnyObject {
     func downloadsChanged()
     func rejectServerIdentity()
     func setOnline(_ reachable: Bool)
+    func networkPathRestored()
     func setForeground(_ foreground: Bool)
     func setNetworkConstrained(_ constrained: Bool)
     /// Whether this reader's setup failed -- its database or session could not be built -- said
@@ -111,6 +112,7 @@ public protocol DulcetLibraryReading: AnyObject {
 
 public extension DulcetLibraryReading {
     func downloadsChanged() {}
+    func networkPathRestored() { setOnline(true) }
     func rejectServerIdentity() { setOnline(false) }
 }
 
@@ -124,7 +126,7 @@ public protocol DulcetLibraryReaderMaking: AnyObject {
 @MainActor
 public protocol DulcetReachabilityMonitoring: AnyObject {
     /// Starts reporting; the handler receives the current state at once and every change after.
-    func start(_ handler: @escaping @MainActor (_ reachable: Bool, _ constrained: Bool) -> Void)
+    func start(_ handler: @escaping @MainActor (_ reachable: Bool, _ constrained: Bool, _ pathChanged: Bool) -> Void)
     func stop()
 }
 
@@ -202,12 +204,14 @@ public final class DulcetLibrarySession {
     @ObservationIgnored private let reachabilityLog: @MainActor (String) -> Void
     /// An unreachable report not yet acted on, and when it arrived (for the log only).
     private var heldUnreachable: (timer: any DulcetLibraryReaderCancellable, since: ContinuousClock.Instant)?
-    /// After the network returned and the server still did not answer: the next reconnect waits
-    /// here (1, 2, 4, 8 then 15 s), so a radio still coming up is found within seconds. The path's
-    /// return is the trigger; this only covers a server that is slow to answer behind it.
+    private var recoveryGrace: (any DulcetLibraryReaderCancellable)?
+    @ObservationIgnored private var connectionAttempt = 0
+    @ObservationIgnored private var serverAnswerRevision = 0
+    @ObservationIgnored private var surfaceFailureRevision = 0
+    @ObservationIgnored private var surfaceFailedDuringHeldLoss = false
+    /// After an unanswered request, share one foreground retry across the reader's open screens.
     @ObservationIgnored private var recoveryRetry: (any DulcetLibraryReaderCancellable)?
     @ObservationIgnored private var recoveryDelay: Duration = .seconds(1)
-    @ObservationIgnored private var recoveringFromOutage = false
     @ObservationIgnored private var noticeSequence = 0
     /// The reader to make once the previous one has closed.
     @ObservationIgnored private var awaitingOpen: OpenRequest?
@@ -311,16 +315,17 @@ public final class DulcetLibrarySession {
     /// offline.
     public var isDeviceOffline: Bool { lastReachable == false }
 
+    /// Presentations keep any rows they have while the path changes and the reader reconnects.
+    var isSettlingConnection: Bool { heldUnreachable != nil || recoveryGrace != nil }
+
     /// The one connection indicator every screen draws, or nil when there is nothing to say.
     /// `connecting` is the account's own reconnect in flight (the store knows it, the session does
     /// not).
     public func connectionIndicator(connecting: Bool = false, serverReadFailed: Bool = false) -> DulcetConnectionIndicator? {
-        // A read can fail before the path monitor's grace settles. Hold its message as well,
-        // so an airplane-mode transition never briefly puts the blame on the server.
-        if heldUnreachable != nil, connectionFailure != .serverIdentityChanged { return nil }
-        return DulcetConnectionIndicator.choose(
+        let indicator = DulcetConnectionIndicator.choose(
             mode: mode, deviceOffline: isDeviceOffline, connectionFailure: connectionFailure,
             connecting: connecting, serverReadFailed: serverReadFailed)
+        return isSettlingConnection && indicator?.cause == .serverUnreachable ? nil : indicator
     }
 
     /// Whether the reader may read the server now, as far as this session knows: connected, and
@@ -429,7 +434,12 @@ public final class DulcetLibrarySession {
             discoverSubscription = discover.observe { [weak self] publication in
                 guard let self, self.readerGeneration == generation,
                       self.account?.providerInstanceID == publication.providerInstanceId else { return }
+                guard publication.generation > (self.discoverPublication?.generation ?? -1) else { return }
                 self.discoverPublication = publication
+                if let home = publication.home,
+                   DulcetDiscoverStatus.home(home, connection: publication.connection).serverReadFailed {
+                    self.noteSurfaceTransportFailure()
+                }
             }
             // The child begins unresolved. Its first refresh negotiates extensions before any
             // feature endpoint; absent extensions stop in the core without a Wishlist request.
@@ -456,9 +466,7 @@ public final class DulcetLibrarySession {
         playlists = (made as? any DulcetPlaylistEditing).map { DulcetPlaylistEditor(editing: $0, session: self, carried: carried) }
         startReachability()
         if requested == .connected {
-            made.connect { [weak self] connection in
-                self?.receive(connection)
-            }
+            observeConnection(start: made.connect)
         }
         for window in windows.allObjects {
             window.readerChanged()
@@ -557,6 +565,8 @@ public final class DulcetLibrarySession {
         onConnectionEnvironmentChanged?(foreground, lastReachable != false)
         if foreground {
             reconnect()
+        } else {
+            endRecoveryRetries()
         }
     }
 
@@ -574,18 +584,34 @@ public final class DulcetLibrarySession {
             retrySetup()
             return
         }
-        reader.reconnect { [weak self] connection in
-            self?.receive(connection)
+        observeConnection(start: reader.reconnect)
+    }
+
+    private func observeConnection(
+        start: (@escaping @MainActor (DulcetReaderConnection) -> Void) -> any DulcetLibraryReaderCancellable,
+        completion: (@MainActor (DulcetReaderConnection) -> Void)? = nil
+    ) {
+        connectionAttempt += 1
+        let attempt = connectionAttempt
+        let generation = readerGeneration
+        let serverAnswer = serverAnswerRevision
+        let surfaceFailure = surfaceFailureRevision
+        _ = start { [weak self] connection in
+            if let self, self.readerGeneration == generation, self.connectionAttempt == attempt,
+               connection.error?.isTransportFailure != true || self.serverAnswerRevision == serverAnswer {
+                self.receive(connection, surfaceFailedDuringAttempt: self.surfaceFailureRevision != surfaceFailure)
+            }
+            completion?(connection)
         }
     }
 
     private func startReachability() {
         guard let reachability else { return }
         releaseHeldUnreachable()
-        reachability.start { [weak self] reachable, constrained in
+        reachability.start { [weak self] reachable, constrained, pathChanged in
             guard let self, self.mode != .none, let reader = self.reader else { return }
             reader.setNetworkConstrained(constrained)
-            self.receiveReachability(reachable, reader: reader)
+            self.receiveReachability(reachable, pathChanged: pathChanged, reader: reader)
         }
     }
 
@@ -593,49 +619,45 @@ public final class DulcetLibrarySession {
     /// has stood for `unreachableGrace`, and a "reachable" inside the grace withdraws it, so a blip
     /// leaves the reader — and every screen and Play — exactly as they were. A real loss is still
     /// told when the grace ends; a read made meanwhile fails and says so by itself.
-    private func receiveReachability(_ reachable: Bool, reader: any DulcetLibraryReading) {
+    private func receiveReachability(_ reachable: Bool, pathChanged: Bool, reader: any DulcetLibraryReading) {
         if reachable {
+            let regained = lastReachable == false
+            let returningFromBlip = heldUnreachable != nil
             if let held = heldUnreachable {
                 releaseHeldUnreachable()
                 reachabilityLog(
                     "reachable again after \(Self.milliseconds(since: held.since)) ms unreachable; the reader stayed online")
-                return
             }
-            guard lastReachable != true else { return }
-            let regained = lastReachable == false
+            let recovers = regained || (pathChanged && lastReachable == true)
+                || (returningFromBlip && (surfaceFailedDuringHeldLoss || recoveryRetry != nil
+                    || connectionFailure?.isTransportFailure == true))
+            guard lastReachable != true || recovers else { return }
+            lastReachable = true
             if regained, readerSetupFailed {
-                // The network came back; the reconnect it would request is a new reader. Only a
-                // regained network retries: the first report after a setup is not a change, and
-                // retrying on it would make readers in a loop while the setup keeps failing.
                 reachabilityLog("reachable; the reader's setup failed, so it is made again")
-                lastReachable = true
                 retrySetup()
                 return
             }
-            reachabilityLog(regained ? "reachable; the reader is told and reconnects" : "reachable")
-            lastReachable = true
+            if !returningFromBlip {
+                reachabilityLog(recovers ? "reachable; the reader is told and reconnects" : "reachable")
+            }
             onConnectionEnvironmentChanged?(foreground, true)
             if mode == .deviceOnly {
-                if regained { onSavedReconnectRequested?() }
+                if recovers { onSavedReconnectRequested?() }
             } else {
-                reader.setOnline(true)
-                if regained {
-                    // The network's return is the trigger, not a retry timer: a transport failure
-                    // recorded while it was gone is stale the moment a path exists, so the screens
-                    // stop saying it at once, and the reconnect this report starts (joined, not
-                    // doubled, by the core) reports back what is true now.
-                    if connectionFailure == .unreachable || connectionFailure == .timeout { connectionFailure = nil }
-                    recoveringFromOutage = true
-                    recoveryDelay = .seconds(1)
-                    recoveryRetry?.cancel()
-                    recoveryRetry = nil
-                    if !serverIdentityRejected { reconnect() }
+                if recovers, !serverIdentityRejected {
+                    beginRecoveryGrace()
+                    reader.networkPathRestored()
+                    reconnect()
+                } else {
+                    reader.setOnline(true)
                 }
             }
             return
         }
         guard lastReachable != false, heldUnreachable == nil else { return }
         reachabilityLog("unreachable reported; held for \(Self.milliseconds(unreachableGrace)) ms before the reader is told")
+        surfaceFailedDuringHeldLoss = false
         let generation = readerGeneration
         let timer = delays.schedule(after: unreachableGrace) { [weak self] in
             guard let self, let held = self.heldUnreachable else { return }
@@ -644,6 +666,8 @@ public final class DulcetLibrarySession {
             self.reachabilityLog(
                 "unreachable for \(Self.milliseconds(since: held.since)) ms; the reader is told and goes offline")
             self.lastReachable = false
+            self.connectionAttempt += 1
+            self.releaseRecoveryGrace()
             self.endRecoveryRetries()
             self.onConnectionEnvironmentChanged?(self.foreground, false)
             reader.setOnline(false)
@@ -655,6 +679,22 @@ public final class DulcetLibrarySession {
         heldUnreachable?.timer.cancel()
         heldUnreachable = nil
     }
+
+    private func beginRecoveryGrace() {
+        releaseRecoveryGrace()
+        endRecoveryRetries()
+        if connectionFailure?.isTransportFailure == true { connectionFailure = nil }
+        recoveryGrace = delays.schedule(after: Self.defaultRecoveryGrace) { [weak self] in
+            self?.recoveryGrace = nil
+        }
+    }
+
+    private func releaseRecoveryGrace() {
+        recoveryGrace?.cancel()
+        recoveryGrace = nil
+    }
+
+    nonisolated static let defaultRecoveryGrace: Duration = .seconds(5)
 
     private static func milliseconds(since instant: ContinuousClock.Instant) -> Int64 {
         milliseconds(ContinuousClock.now - instant)
@@ -668,6 +708,7 @@ public final class DulcetLibrarySession {
     private func stopReachability() {
         reachability?.stop()
         releaseHeldUnreachable()
+        releaseRecoveryGrace()
         endRecoveryRetries()
         lastReachable = nil
     }
@@ -675,24 +716,38 @@ public final class DulcetLibrarySession {
     private func endRecoveryRetries() {
         recoveryRetry?.cancel()
         recoveryRetry = nil
-        recoveringFromOutage = false
         recoveryDelay = .seconds(1)
     }
 
-    /// A reconnect the network's return started found no server: try again soon, while the path
-    /// stays up, and stop at the first answer (or any other failure, which is not a transport one).
+    func noteSurfaceTransportFailure() {
+        if heldUnreachable != nil { surfaceFailedDuringHeldLoss = true }
+        surfaceFailureRevision += 1
+        scheduleRecoveryRetry()
+    }
+
+    /// A new server answer retires transport failures from older connection attempts.
+    func noteFreshServerAnswer() {
+        serverAnswerRevision += 1
+        if connectionFailure?.isTransportFailure == true {
+            connectionFailure = nil
+            onServerConnectionChanged?(true)
+        }
+    }
+
     private func scheduleRecoveryRetry() {
-        guard recoveringFromOutage, recoveryRetry == nil, lastReachable == true, mode == .connected,
-              !serverIdentityRejected else { return }
+        guard recoveryRetry == nil, foreground, lastReachable == true, heldUnreachable == nil,
+              mode == .connected, !serverIdentityRejected else { return }
         let generation = readerGeneration
         let wait = recoveryDelay
-        recoveryDelay = min(recoveryDelay * 2, .seconds(15))
+        // A server can restart on the same path. Leave time within the five-second recovery
+        // target for the reconnect and revalidation even when earlier retries all failed.
+        recoveryDelay = min(recoveryDelay * 2, .seconds(3))
         recoveryRetry = delays.schedule(after: wait) { [weak self] in
             guard let self else { return }
             self.recoveryRetry = nil
-            guard self.readerGeneration == generation, self.recoveringFromOutage,
-                  self.lastReachable == true, self.mode == .connected else { return }
-            self.reachabilityLog("the server did not answer after the network returned; reconnecting again")
+            guard self.readerGeneration == generation, self.foreground,
+                  self.lastReachable == true, self.heldUnreachable == nil, self.mode == .connected else { return }
+            self.reachabilityLog("a server read did not answer; reconnecting again")
             self.reconnect()
         }
     }
@@ -706,7 +761,7 @@ public final class DulcetLibrarySession {
         onServerConnectionChanged?(false)
     }
 
-    private func receive(_ connection: DulcetReaderConnection) {
+    private func receive(_ connection: DulcetReaderConnection, surfaceFailedDuringAttempt: Bool) {
         guard !serverIdentityRejected || connection.error == .serverIdentityChanged else { return }
         onServerConnectionChanged?(connection.error == nil && !serverIdentityRejected)
         if connection.error == .serverIdentityChanged {
@@ -717,10 +772,10 @@ public final class DulcetLibrarySession {
         if connection.epochKnown {
             connectionFailure = nil
             serverReportsNoEpoch = connection.serverReportsNoEpoch
-            endRecoveryRetries()
+            if !surfaceFailedDuringAttempt { endRecoveryRetries() }
         } else if let error = connection.error, error != .cancelled, error != .closed {
             connectionFailure = error
-            if error == .unreachable || error == .timeout {
+            if error.isTransportFailure {
                 scheduleRecoveryRetry()
             } else {
                 endRecoveryRetries()
@@ -768,8 +823,13 @@ public final class DulcetLibrarySession {
     public func subscribeSearch(
         onPublication: @escaping @MainActor (DulcetReaderSearchPublication) -> Void
     ) -> (any DulcetLibrarySearchSubscribing)? {
-        reader?.subscribeSearch { [weak self] publication in
-            self?.observe(publication.rows)
+        let generation = readerGeneration
+        var lastSequence: Int?
+        return reader?.subscribeSearch { [weak self] publication in
+            guard let self, self.readerGeneration == generation,
+                  lastSequence.map({ publication.sequence > $0 }) ?? true else { return }
+            lastSequence = publication.sequence
+            self.observe(publication.rows)
             onPublication(publication)
         }
     }
@@ -992,8 +1052,7 @@ public final class DulcetLibrarySession {
             completion(false)
             return
         }
-        reader.reconnect { [weak self] connection in
-            self?.receive(connection)
+        observeConnection(start: reader.reconnect) { connection in
             completion(connection.epochKnown)
         }
     }
@@ -1086,6 +1145,8 @@ public final class DulcetLibraryWindowModel {
     @ObservationIgnored private weak var session: DulcetLibrarySession?
     @ObservationIgnored private var subscription: (any DulcetLibraryWindowSubscribing)?
     @ObservationIgnored private var subscribedGeneration: Int?
+    @ObservationIgnored private var subscriptionRevision = 0
+    @ObservationIgnored private var lastWindowSequence: Int?
     @ObservationIgnored private var visible = Set<Int>()
     @ObservationIgnored private var viewportScheduled = false
     @ObservationIgnored private var lastViewport: (Int, Int)?
@@ -1102,8 +1163,8 @@ public final class DulcetLibraryWindowModel {
         if self.session !== session {
             self.session?.unregister(self)
             self.session = session
-            session.register(self)
         }
+        session.register(self)
         subscribe()
     }
 
@@ -1121,6 +1182,8 @@ public final class DulcetLibraryWindowModel {
     }
 
     func dropSubscription() {
+        subscriptionRevision += 1
+        lastWindowSequence = nil
         subscription?.close()
         subscription = nil
         subscribedGeneration = nil
@@ -1133,14 +1196,23 @@ public final class DulcetLibraryWindowModel {
     private func subscribe() {
         guard let session, let reader = session.reader else { return }
         guard subscription == nil || subscribedGeneration != session.readerGeneration else { return }
-        subscription?.close()
-        subscribedGeneration = session.readerGeneration
+        dropSubscription()
+        let generation = session.readerGeneration
+        let revision = subscriptionRevision
+        subscribedGeneration = generation
         subscription = reader.subscribeWindow(query) { [weak self] window in
-            self?.receive(window)
+            guard let self, self.subscriptionRevision == revision,
+                  self.session?.readerGeneration == generation else { return }
+            self.receive(window)
         }
     }
 
     private func receive(_ window: DulcetLibraryWindow) {
+        if let lastWindowSequence, window.sequence < lastWindowSequence { return }
+        lastWindowSequence = window.sequence
+        if window.freshness.isConnectionFailure {
+            session?.noteSurfaceTransportFailure()
+        }
         session?.observe(window.items)
         if let header = window.header { session?.observe([header]) }
         if let anchorID = window.anchorID,
@@ -1224,6 +1296,7 @@ public final class DulcetReaderSearchModel {
     @ObservationIgnored private weak var session: DulcetLibrarySession?
     @ObservationIgnored private var subscription: (any DulcetLibrarySearchSubscribing)?
     @ObservationIgnored private var subscribedGeneration: Int?
+    @ObservationIgnored private var subscriptionRevision = 0
 
     public init() {}
 
@@ -1231,11 +1304,19 @@ public final class DulcetReaderSearchModel {
         self.session = session
         self.query = query
         if subscription == nil || subscribedGeneration != session.readerGeneration {
-            subscription?.close()
+            close()
+            let revision = subscriptionRevision
             publication = nil
             subscribedGeneration = session.readerGeneration
-            subscription = session.subscribeSearch { [weak self] publication in
-                self?.publication = publication
+            subscription = session.subscribeSearch { [weak self, weak session] publication in
+                guard let self, let session, self.subscriptionRevision == revision,
+                      publication.query == self.query else { return }
+                if publication.scope.isConnectionFailure {
+                    session.noteSurfaceTransportFailure()
+                } else if publication.scope == .serverAndDevice, self.current?.scope != .serverAndDevice {
+                    session.noteFreshServerAnswer()
+                }
+                self.publication = publication
             }
         }
         subscription?.updateQuery(query)
@@ -1257,6 +1338,7 @@ public final class DulcetReaderSearchModel {
     }
 
     public func close() {
+        subscriptionRevision += 1
         subscription?.close()
         subscription = nil
         subscribedGeneration = nil

@@ -134,6 +134,10 @@ enum DulcetReaderCopy {
         return window.freshness.isOffline ? DulcetStrings.readerAvailableOffline : DulcetStrings.libraryLocalOrder
     }
 
+    static func trackUnavailable(deviceOffline: Bool) -> String {
+        deviceOffline ? DulcetStrings.offlineUnavailable : DulcetStrings.trackStreamingUnavailable
+    }
+
     /// A scope describes where rows came from. The screen's connection status describes why.
     static func searchScopeLabel(_ scope: DulcetReaderSearchScope?) -> String? {
         switch scope {

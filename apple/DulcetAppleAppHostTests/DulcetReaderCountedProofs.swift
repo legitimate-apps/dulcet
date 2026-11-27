@@ -504,19 +504,19 @@ private final class HomeRows {
 /// The platform's network reports, made by hand.
 @MainActor
 private final class ManualReachability: DulcetReachabilityMonitoring {
-    private var handler: (@MainActor (Bool, Bool) -> Void)?
+    private var handler: (@MainActor (Bool, Bool, Bool) -> Void)?
     private var reachable = true
 
-    func start(_ handler: @escaping @MainActor (Bool, Bool) -> Void) {
+    func start(_ handler: @escaping @MainActor (Bool, Bool, Bool) -> Void) {
         self.handler = handler
-        handler(reachable, false)
+        handler(reachable, false, false)
     }
 
     func stop() { handler = nil }
 
     func report(reachable: Bool) {
         self.reachable = reachable
-        handler?(reachable, false)
+        handler?(reachable, false, false)
     }
 }
 

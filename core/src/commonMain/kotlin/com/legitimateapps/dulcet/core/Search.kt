@@ -319,6 +319,7 @@ internal class LibrarySearchSession(
     private var text = ""
     private var generation = 0L
     private var serverJob: Job? = null
+    private var issuedOnPath: Long? = null
 
     /** Says `deviceServerFailed(timeout)` if [serverJob]'s answer is not in by the deadline. */
     private var deadlineJob: Job? = null
@@ -392,6 +393,7 @@ internal class LibrarySearchSession(
     private fun cancelServerRead() {
         serverJob?.cancel()
         serverJob = null
+        issuedOnPath = null
         deadlineJob?.cancel()
         deadlineJob = null
     }
@@ -463,10 +465,10 @@ internal class LibrarySearchSession(
      *   shown keep their positions; the answer replaces in place and appends, as within one query
      *   (§18.1), and a row that neither the server nor the device still matches is dropped. A
      *   failure keeps the rows shown and names itself in the scope.
-     * - **Offline or failed label while online:** the query re-runs, as if retyped.
-     * - **Waiting for the server's answer** (or too short to ask): left to it — for no longer than
-     *   [LibrarySearchConfig.serverAnswerDeadlineMillis], after which it says it timed out and, as
-     *   a failed label, re-runs here.
+     * - **Offline or failed while online:** retry the current query in place.
+     * - **Waiting:** leave the current request and its deadline alone unless it was sent on a
+     *   path the platform has since replaced. Reissue that request without changing the scope
+     *   or rows. A query still in debounce or waiting for a slot can use the new path itself.
      */
     fun revalidate() {
         reader.checkConfined()
@@ -475,8 +477,11 @@ internal class LibrarySearchSession(
             when {
                 !reader.online -> query(text)
                 scope == SearchScope.ServerAndDevice -> if (!serverAnswerIsCurrent()) reReadQuietly()
-                scope == SearchScope.DeviceWhileServerPending -> Unit
-                else -> query(text)
+                scope == SearchScope.DeviceWhileServerPending -> {
+                    val issued = issuedOnPath
+                    if (issued != null && issued != reader.networkPathRevision) reReadQuietly()
+                }
+                else -> reReadQuietly()
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -493,11 +498,18 @@ internal class LibrarySearchSession(
 
     private fun reReadQuietly() {
         val trimmed = text.trim()
-        val submitted = generation
+        if (normalizeSearchText(trimmed).isEmpty() || trimmed.length < config.minimumServerQueryLength) {
+            if (scope != SearchScope.DeviceWhileServerPending) query(text)
+            return
+        }
+        val submitted = ++generation
         cancelServerRead()
         serverJob = reader.scope.launch {
+            if (scope == SearchScope.DeviceWhileServerPending) startDeadline(submitted)
             val outcome = readServer(trimmed)
             if (submitted != generation || closed) return@launch
+            deadlineJob?.cancel()
+            deadlineJob = null
             adopt(outcome) { server -> keepPositions(local.search(trimmed), server) }
             publish()
         }
@@ -551,15 +563,15 @@ internal class LibrarySearchSession(
             val size = config.serverPageSize.toString()
             // The issue sequence is taken as the request is SENT (LibraryReader.send), so a slower
             // answer never overwrites a newer read.
-            val sent = reader.sendChecked(
-                "search3",
-                linkedMapOf(
-                    "query" to query,
-                    "artistCount" to size, "artistOffset" to "0",
-                    "albumCount" to size, "albumOffset" to "0",
-                    "songCount" to size, "songOffset" to "0",
-                ),
+            val parameters = linkedMapOf(
+                "query" to query,
+                "artistCount" to size, "artistOffset" to "0",
+                "albumCount" to size, "albumOffset" to "0",
+                "songCount" to size, "songOffset" to "0",
             )
+            val sent = reader.send(
+                "search3", parameters, issued = { issuedOnPath = reader.networkPathRevision },
+            ).requireOk("search3", parameters)
             val entities = parseReaderSearch3(sent.response.body)
             cache.writeEntities(CacheWriteStamp(sent.issueSeq, cache.now(), epochKey), CacheEntitySource.Search, entities)
             cache.evictIfNeeded()

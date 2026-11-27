@@ -1258,6 +1258,12 @@ final class DulcetCoreLibraryReader: DulcetLibraryReading {
         myLibraryClient?.refreshLocal()
     }
 
+    func networkPathRestored() {
+        attemptedOfflineHydration = []
+        client.networkPathRestored()
+        myLibraryClient?.refreshLocal()
+    }
+
     func setForeground(_ foreground: Bool) {
         client.setForeground(foreground: foreground)
     }
@@ -1476,21 +1482,23 @@ final class DulcetNetworkReachability: DulcetReachabilityMonitoring {
     private var monitor: NWPathMonitor?
     private var previousPath: NWPath?
 
-    func start(_ handler: @escaping @MainActor (Bool, Bool) -> Void) {
+    func start(_ handler: @escaping @MainActor (Bool, Bool, Bool) -> Void) {
         stop()
         let monitor = NWPathMonitor()
-        monitor.pathUpdateHandler = { [weak self] path in
+        monitor.pathUpdateHandler = { [weak self, weak monitor] path in
             let reachable = path.status == .satisfied
             let constrained = path.isConstrained || path.isExpensive
             let report = Self.describe(path)
-            Task { @MainActor in
-                guard let self else { return }
-                if self.previousPath != path {
+            MainActor.assumeIsolated {
+                guard let self, let monitor, self.monitor === monitor else { return }
+                let changed = self.previousPath != path
+                let handoff = changed && self.previousPath?.status == .satisfied && reachable
+                if changed {
                     self.previousPath = path
                     ConnectionNetworkEvents.shared.topologyChanged()
                 }
                 DulcetReachabilityLog.write("path \(report)")
-                handler(reachable, constrained)
+                handler(reachable, constrained, handoff)
             }
         }
         monitor.start(queue: .main)

@@ -246,6 +246,10 @@ internal class LibraryReader(
     var reachable: Boolean = true
         private set
 
+    /** Changes only when the platform replaces the usable route (§16.14). */
+    var networkPathRevision = 0L
+        private set
+
     /**
      * Whether the outbox may send now: the platform last reported the server [reachable], or the
      * reader is [online] (a successful reconnect made it so), or a reconnect is running — its flush
@@ -682,12 +686,21 @@ internal class LibraryReader(
      *   itself. The reconnect's flush, epoch read and revalidation run in §16.14's order, and a
      *   reconnect already running is joined — so a shell may report reachability and call
      *   [reconnect] in either order, or do only one of them, and nothing is read before the flush.
-     * - **Reachable, while online:** no effect.
+     * - **Reachable, while online:** a repeat report has no effect. A replacement path retires
+     *   work waiting on the old route so the shell's next reconnect can use the new one.
      */
-    fun setOnline(reachable: Boolean) {
+    fun setOnline(reachable: Boolean, newPath: Boolean = false) {
         checkConfined()
         this.reachable = reachable
         if (reachable) {
+            if (newPath) {
+                networkPathRevision += 1
+                inFlightReconnect?.cancel()
+                inFlightReconnect = null
+                // A partially completed offline-to-online sequence belongs to the retired path.
+                if (completingReconnect) goOffline()
+                breaker.reset()
+            }
             if (!online) startReconnect()
             return
         }
@@ -1131,6 +1144,7 @@ internal class LibraryReader(
         } catch (failure: Throwable) {
             return ReaderConnectionOutcome.Failed(failure.asReaderError())
         }
+        currentCoroutineContext().ensureActive()
         adoptEpoch(epoch)
         return ReaderConnectionOutcome.Read(epoch)
     }
