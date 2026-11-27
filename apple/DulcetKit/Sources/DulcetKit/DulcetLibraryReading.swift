@@ -739,7 +739,9 @@ public final class DulcetLibrarySession {
               mode == .connected, !serverIdentityRejected else { return }
         let generation = readerGeneration
         let wait = recoveryDelay
-        recoveryDelay = min(recoveryDelay * 2, .seconds(15))
+        // A server can restart on the same path. Leave time within the five-second recovery
+        // target for the reconnect and revalidation even when earlier retries all failed.
+        recoveryDelay = min(recoveryDelay * 2, .seconds(3))
         recoveryRetry = delays.schedule(after: wait) { [weak self] in
             guard let self else { return }
             self.recoveryRetry = nil

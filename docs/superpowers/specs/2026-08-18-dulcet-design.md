@@ -8135,7 +8135,8 @@ reconnect, retires any reconnect still waiting on the previous path, and gives t
 five seconds of grace. Search retains its rows and omits
 its pending scope label during that grace. Discover holds its refresh notice and retry during
 the same interval. Explicit identity and account failures stay visible. An unanswered visible
-read can request a shared foreground reconnect at the existing 1, 2, 4, 8 and 15-second backoff.
+read can request a shared foreground reconnect with a 1, 2, then 3-second backoff. The cap
+leaves time to revalidate when the server comes back without a change to the device's path.
 An answer stops the backoff once the visible reads it started have no new transport failure.
 Older connection completions and older screen publications cannot replace a newer answer.
 The core retries unanswered reads on reconnect even if the cache is recent. A waiting Search

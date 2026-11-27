@@ -3256,6 +3256,41 @@ func aServerSlowBehindTheReturnedNetworkIsRetriedSoonAndStopsAtTheFirstAnswer() 
 }
 
 @Test @MainActor
+func prolongedServerOutageKeepsTheNextForegroundRetryWithinTheRecoveryBudget() throws {
+    let factory = RecordingReaderFactory()
+    let reachability = ManualReachability()
+    let delays = ManualDelays()
+    let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    let up = DulcetReaderConnection(epochKnown: true, serverReportsNoEpoch: false,
+                                    discardedPendingChanges: 0, errorKind: nil)
+    let down = DulcetReaderConnection(epochKnown: false, serverReportsNoEpoch: false,
+                                      discardedPendingChanges: 0, errorKind: "unreachable")
+    reader.answerConnections(up)
+    reachability.report(reachable: true)
+    func reconnects() -> Int { reader.events.filter { $0 == "reconnect" }.count }
+    session.noteSurfaceTransportFailure()
+    for milliseconds in [1000, 2000, 3000, 3000, 3000] {
+        let before = reconnects()
+        delays.advance(by: .milliseconds(milliseconds - 100))
+        #expect(reconnects() == before)
+        delays.advance(by: .milliseconds(100))
+        #expect(reconnects() == before + 1)
+        reader.answerConnections(down)
+    }
+    #expect(session.connectionIndicator()?.cause == .serverUnreachable)
+
+    let beforeRecovery = reconnects()
+    delays.advance(by: .seconds(3))
+    #expect(reconnects() == beforeRecovery + 1,
+            "the same path can serve again without a reachability event")
+    reader.answerConnections(up)
+    #expect(session.connectionIndicator() == nil)
+    #expect(delays.pending == 0)
+}
+
+@Test @MainActor
 func aRefusalIsNotClearedByTheNetworksReturn() throws {
     let factory = RecordingReaderFactory()
     let reachability = ManualReachability()
