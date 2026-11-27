@@ -65,6 +65,29 @@ class LibrarySearchSessionTest {
     }
 
     @Test
+    fun theServersListenFigureDecidesTheTopResultBetweenSongsThatTieOnTheirTitle() = sessionTest { env ->
+        val session = primed(env)
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val search = session.openSearch(listener = pubs)
+        // Control: the server states no figure, so the two tied songs keep the server's order and the first leads.
+        search.updateQuery("album-0042-track")
+        advanceUntilIdle()
+        val before = pubs.last
+        assertEquals(listOf("album-0042-track-0", "album-0042-track-1"), before.rows.filter { it.item.type == SearchResultType.Track }.ids())
+        assertEquals("album-0042-track-0", before.rows[before.topResultIndex!!].item.id.rawId)
+        // The server now says the second one is the song people play.
+        env.server.songListens["album-0042-track-1"] = 2_400_000
+        search.updateQuery("album-0042-trac")
+        advanceUntilIdle()
+        search.updateQuery("album-0042-track")
+        advanceUntilIdle()
+        val after = pubs.last
+        assertEquals(2_400_000L, after.rows.single { it.item.id.rawId == "album-0042-track-1" }.listens)
+        assertEquals(null, after.rows.single { it.item.id.rawId == "album-0042-track-0" }.listens, "no figure is null, not zero")
+        assertEquals("album-0042-track-1", after.rows[after.topResultIndex!!].item.id.rawId)
+    }
+
+    @Test
     fun conf79ServerAndDeviceMarksEachRowsSourceAndKeepsLocalOnlyRows() = sessionTest { env ->
         val session = primed(env)
         env.server.searchExcludes += albumId(5) // the server's matcher does not return it

@@ -253,6 +253,11 @@ internal data class LibrarySearchRow(
     val playability: LibraryPlayability? = null,
     /** How often this person has played it, from the seen-cache; breaks ties for the Top Result. */
     val playCount: Long? = null,
+    /**
+     * Worldwide listens, when the server states them (Dulcet Server's `dulcetListens`); null when it does not, which is
+     * every other server. After the person's own listening, breaks ties for the Top Result.
+     */
+    val listens: Long? = null,
 )
 
 internal data class LibrarySearchPublication(
@@ -322,6 +327,8 @@ internal class LibrarySearchSession(
     private var scope: SearchScope = SearchScope.DeviceWhileServerPending
     private var items: List<SearchResultItem> = emptyList()
     private var serverIds: Set<ProviderItemId> = emptySet()
+    /** Worldwide listens by song id, from the server's last answers (see [LibrarySearchRow.listens]). */
+    private val listens = HashMap<String, Long>()
 
     /** The last `search3` failed as unreachable, and none has succeeded since. */
     private var serverUnreachable = false
@@ -418,6 +425,9 @@ internal class LibrarySearchSession(
             is ServerOutcome.Read -> {
                 serverUnreachable = false
                 serverIds = outcome.items.mapTo(mutableSetOf()) { it.id }
+                // Kept across keystrokes (a later local-only publication still knows which song is the hit), bounded.
+                if (listens.size > MAX_REMEMBERED_LISTENS) listens.clear()
+                listens.putAll(outcome.listens)
                 items = merge(outcome.items)
                 serverReadAt = outcome.readAt
                 serverReadEpoch = outcome.epochKey
@@ -531,7 +541,7 @@ internal class LibrarySearchSession(
     }
 
     private sealed interface ServerOutcome {
-        data class Read(val items: List<SearchResultItem>, val readAt: Long, val epochKey: String?) : ServerOutcome
+        data class Read(val items: List<SearchResultItem>, val readAt: Long, val epochKey: String?, val listens: Map<String, Long> = emptyMap()) : ServerOutcome
         data class Failed(val error: DomainError) : ServerOutcome
     }
 
@@ -563,6 +573,7 @@ internal class LibrarySearchSession(
                 ),
                 readAt = cache.now(),
                 epochKey = epochKey,
+                listens = parseReaderSearch3Listens(sent.response.body),
             )
         } catch (failure: CancellationException) {
             throw failure
@@ -605,6 +616,7 @@ internal class LibrarySearchSession(
                 favourite = overlay?.starred ?: state?.starred,
                 rating = overlay?.userRating ?: state?.userRating,
                 playCount = state?.playCount,
+                listens = if (item.type == SearchResultType.Track) listens[item.id.rawId] else null,
                 playability = when {
                     item.type == SearchResultType.Track -> reader.trackPlayability(item.id.rawId, downloaded)
                     local == null -> null
@@ -826,10 +838,19 @@ private fun matchRank(query: String, result: SearchResultItem): Int {
  * The row that should lead a search, as a place in [rows], or null when none is a good enough
  * answer to lead. The best match wins: [matchRank] first, so a row named by the query beats rows
  * that merely carry the name. Among equal matches an artist leads an album and an album leads a
- * song (the opposite of the list's own order, which is for scanning, not for leading), then what
- * the person has favourited, then what they have played most -- so "gold soundz" leads with the
- * version they listen to, not whichever shares its title. A tie after that keeps the list's order.
- * A match that only starts a later word or sits inside one (`matchRank` above 5) leads nothing.
+ * song (the opposite of the list's own order, which is for scanning, not for leading). Songs that
+ * share a title (the original, covers, a live session) then go, in this order, to:
+ *
+ * 1. what the person favourited;
+ * 2. the one they play most, once they play it at all often ([OFTEN_PLAYED] plays; one or two stray
+ *    plays are not a choice and must not outvote what everyone plays);
+ * 3. the one more people play worldwide ([LibrarySearchRow.listens], the signal artist Top Songs
+ *    use), so "gold soundz" leads with Pavement's song, not a cover of it;
+ * 4. the one not marked as another version of the song (live, session, remix, acoustic, demo,
+ *    cover, ...) in its own title or its album's, which is all a server without the figure can say.
+ *
+ * A tie after that keeps the list's order. A match that only starts a later word or sits inside
+ * one (`matchRank` above 5) leads nothing.
  */
 internal fun topResultIndex(query: String, rows: List<LibrarySearchRow>): Int? {
     val normalizedQuery = normalizeSearchText(query)
@@ -839,14 +860,28 @@ internal fun topResultIndex(query: String, rows: List<LibrarySearchRow>): Int? {
             { matchRank(normalizedQuery, it.value.item) },
             { leadRank(it.value.item.type) },
             { if (it.value.favourite == true) 0 else 1 },
-            { -(it.value.playCount ?: 0L) },
+            { (it.value.playCount ?: 0L).takeIf { plays -> plays >= OFTEN_PLAYED }?.let { plays -> -plays } ?: 0L },
+            { -(it.value.listens ?: 0L) },
+            { if (isOtherVersion(it.value.item)) 1 else 0 },
             { it.index },
         ),
     ) ?: return null
     return if (matchRank(normalizedQuery, best.value.item) <= TOP_RESULT_WORST_RANK) best.index else null
 }
 
+/** Plays after which a version counts as the person's choice rather than a try. */
+private const val OFTEN_PLAYED = 3L
+
+private val OTHER_VERSION_WORDS = Regex("""\b(live|session|sessions|version|remix|acoustic|demo|instrumental|cover|tribute|karaoke|unplugged|rehearsal)\b""", RegexOption.IGNORE_CASE)
+
+/** A song whose own title or whose album's title says it is another take on a song: "(triple j Like a Version)", "Live at ...". */
+private fun isOtherVersion(item: SearchResultItem): Boolean {
+    if (item.type != SearchResultType.Track) return false
+    return OTHER_VERSION_WORDS.containsMatchIn(item.title) || item.albumTitle?.let(OTHER_VERSION_WORDS::containsMatchIn) == true
+}
+
 private const val TOP_RESULT_WORST_RANK = 5
+private const val MAX_REMEMBERED_LISTENS = 2_000
 
 private fun leadRank(type: SearchResultType): Int = when (type) {
     SearchResultType.Artist -> 0

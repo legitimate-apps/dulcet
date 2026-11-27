@@ -111,6 +111,59 @@ class DiscoverPagesTest {
         assertTrue(DiscoverRoutePolicy.safeLink("https://example.test/buy"))
         pages.close()
     }
+    @Test fun aCoverThatFailedForAPassingReasonIsAskedForAgainAndAFinalAnswerIsNot() = discoverStoreTest { env ->
+        // The server's artist-photo source was briefly down: the wire code for that is retryable. The first two answers
+        // fail that way, the third is the picture. A tile still on screen must end up with it.
+        val wire=DiscoverTestTransport().apply {
+            onArtwork={_,attempt -> if(attempt<3) DiscoverResult.Failed(DiscoverFailure("invalid-response",null,true)) else DiscoverResult.Value(byteArrayOf(-1,-40,-1))}
+        }
+        val pages=DiscoverPages(this,wire,env.store(),{true})
+        var result:DiscoverResult<ByteArray>?=null
+        pages.artwork("da_photo"){result=it}
+        runCurrent();assertNull(result,"the first failure is not the answer: a retry is waiting")
+        advanceUntilIdle()
+        assertContentEquals(byteArrayOf(-1,-40,-1),assertIs<DiscoverResult.Value<ByteArray>>(result).value)
+        assertEquals(3,wire.artworkRequests.size)
+        // Control: a cover the server does not have (its "unsupported" answer) is final on the first reply, so a
+        // retry loop cannot be what made the case above pass.
+        wire.artworkRequests.clear()
+        wire.onArtwork={_,_ -> DiscoverResult.Failed(DiscoverFailure("unsupported",null,false))}
+        var missing:DiscoverResult<ByteArray>?=null
+        pages.artwork("da_none"){missing=it};advanceUntilIdle()
+        assertEquals("unsupported",assertIs<DiscoverResult.Failed>(missing).error.code)
+        assertEquals(1,wire.artworkRequests.size)
+        // And a cover that keeps failing stops after the bounded number of tries rather than looping.
+        wire.artworkRequests.clear()
+        wire.onArtwork={_,_ -> DiscoverResult.Failed(DiscoverFailure("invalid-response",null,true))}
+        var stuck:DiscoverResult<ByteArray>?=null
+        pages.artwork("da_down"){stuck=it};advanceUntilIdle()
+        assertIs<DiscoverResult.Failed>(stuck)
+        assertEquals(3,wire.artworkRequests.size)
+        pages.close()
+    }
+    @Test fun aRefreshedShelfSavesItsCoversSoTheSnapshotHasPicturesOffline() = discoverStoreTest { env ->
+        val wire=DiscoverTestTransport();val store=env.store()
+        var online=true
+        val pages=DiscoverPages(this,wire,store,{online})
+        // Three tiles, one never visible on screen; none asked for by a view. A refresh names them all.
+        pages.prefetchArtwork(listOf("da_a","da_b","da_a","da_c"))
+        advanceUntilIdle()
+        assertEquals(listOf("da_a","da_b","da_c"),wire.artworkRequests,"each cover once, in shelf order")
+        pages.close()
+        // Offline, a later run of the app reads the saved bytes for every one of them with no server request.
+        online=false
+        val later=DiscoverPages(this,wire,store,{online})
+        for(id in listOf("da_a","da_b","da_c")) {
+            var got:DiscoverResult<ByteArray>?=null
+            later.artwork(id){got=it};advanceUntilIdle()
+            assertContentEquals(byteArrayOf(-1,-40,-1),assertIs<DiscoverResult.Value<ByteArray>>(got).value,id)
+        }
+        assertEquals(3,wire.artworkRequests.size)
+        // Control: offline, the prefetch asks for nothing.
+        later.prefetchArtwork(listOf("da_d"));advanceUntilIdle()
+        assertEquals(3,wire.artworkRequests.size)
+        later.close()
+    }
     @Test fun savedArtworkAnswersWithoutAnotherServerRequestEvenWhenOnline() = discoverStoreTest { env ->
         val wire=DiscoverTestTransport();val store=env.store()
         val first=DiscoverPages(this,wire,store,{true})

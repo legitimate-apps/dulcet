@@ -79,6 +79,29 @@ object TopSongs {
         return places
     }
 
+    /** A held song as search sees it: enough to match it to an outside popularity answer. */
+    class SongRef(val id: String, val title: String, val recordingMbid: String?)
+
+    /**
+     * Worldwide listens for each of [songs] (one artist's), from that artist's [popular] recordings: a recording matches
+     * the songs tagged with its MBID, failing that the songs of the same title and version (the rule of
+     * [popularityPlaces]). A song several recordings could match takes the best-listened one, and a song none matches is
+     * left out, so "no figure" is never confused with "few listens". Search uses this to lead with the version of a title
+     * people actually play: the original has a figure, a live session or a cover does not.
+     */
+    fun listensFor(songs: List<SongRef>, popular: List<PopularRecording>): Map<String, Long> {
+        val listens = HashMap<String, Long>()
+        for (recording in popular.sortedByDescending { it.listens }) {
+            val wanted = recording.recordingMbid?.let(::mbidOrNull)
+            val open = songs.filter { it.id !in listens }
+            val byMbid = if (wanted == null) emptyList() else open.filter { mbidOrNull(it.recordingMbid) == wanted && SongTitles.sameVersion(it.title, recording.title) }
+            val name = SongTitles.normalizeName(recording.title)
+            val matched = byMbid.ifEmpty { open.filter { name.isNotEmpty() && SongTitles.normalizeName(it.title) == name && SongTitles.sameVersion(it.title, recording.title) } }
+            matched.forEach { listens[it.id] = recording.listens }
+        }
+        return listens
+    }
+
     fun withPopularity(candidates: List<Candidate>, popular: List<PopularRecording>?): List<Candidate> {
         if (popular.isNullOrEmpty()) return candidates
         val places = popularityPlaces(candidates, popular)

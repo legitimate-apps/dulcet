@@ -19,5 +19,7 @@ internal open class DiscoverTestTransport : DiscoverTransport {
     override suspend fun shelf(id:String,cursor:String?,limit:Int)=onShelf(id,cursor,limit)
     override suspend fun playlists(query:String,cursor:String?,limit:Int)=onPlaylists(query,cursor)
     override suspend fun playlist(mbid:String,cursor:String?,limit:Int)=onPlaylist(mbid,cursor)
-    override suspend fun artwork(artworkId:String):DiscoverResult<ByteArray> { artworkRequests += artworkId; return DiscoverResult.Value(byteArrayOf(-1,-40,-1)) }
+    /** Answers each cover request; the default is a small JPEG signature. Override to fail some or all. */
+    var onArtwork: suspend (String,Int)->DiscoverResult<ByteArray> = {_,_ -> DiscoverResult.Value(byteArrayOf(-1,-40,-1))}
+    override suspend fun artwork(artworkId:String):DiscoverResult<ByteArray> { artworkRequests += artworkId; return onArtwork(artworkId,artworkRequests.count {it==artworkId}) }
 }

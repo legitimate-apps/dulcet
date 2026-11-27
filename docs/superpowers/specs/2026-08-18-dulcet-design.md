@@ -8073,6 +8073,42 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-27 — Search leads with the version people play; Discover artist photos survive a busy source and reach the device (§18.1, §16.14, §29, Search and Discover).**
+OBSERVED on an iPhone against the household server, 2026-11-27: searching "gold soundz" led with Soccer
+Mommy's "Gold Soundz" from a *triple j Like a Version* single, ahead of Pavement's original. Both songs
+carry the same title, so they tie on every earlier rule of the Top Result (§18.1: match, artist over album
+over song, favourite) and the tie fell to this account's own play counts, two plays of the cover against
+one of the original. Rule now, after the favourite: **(a)** the version the person plays most, counted once
+they have played it three times (one or two plays are a try, not a choice, and do not outvote what everyone
+plays); **(b)** the version more people play worldwide; **(c)** the version not marked as another take
+(live, session, version, remix, acoustic, demo, cover, tribute, karaoke, unplugged, rehearsal, in its own
+title or its album's); **(d)** the list's order. (b) needs a figure the client cannot compute: Dulcet Server
+now adds `dulcetListens` to each `search3` song, the listens of the best-listened recording of that
+artist's stored ListenBrainz popularity (the signal `getTopSongs` uses) that matches it by recording MBID,
+else by title and version (a live take does not take the studio song's figure). The figure is absent, never
+zero, when no stored answer names the song, when there is no token, Discover is off or ListenBrainz is down;
+it is the same for every account (it is not anyone's listening). It is read from the stored answer only,
+after the catalog read and outside the database lock, so no search waits on an outside service; a miss
+queues the artist's background fetch as `getTopSongs` does. Clients read it as an optional attribute; every
+other server, and an older Dulcet Server, leaves it out and the rule falls to (c). The shared core keeps
+the figure beside the search's rows and never stores it. **The Dulcet API's `/search` is unchanged**:
+no client reads it yet and it reads its pages under the database lock, so it neither carries the figure nor
+orders by it (open: add `listens` to its track resource and sort by relevance when a client adopts it).
+Grey tiles, traced: the three the use test saw are albums with no art anywhere (OBSERVED 2026-11-27,
+household: 148 of 3,809 albums have none; the server's placeholder is what it serves; the Cover Art
+Archive answered 404 for all 22 sampled, and Jellyfin held none), so the designed placeholder is correct
+and no fallback was added. Discover artist tiles stayed letter circles though the server served their photos
+(OBSERVED: 7 of 8 artists on the trending shelf returned a JPEG; "Jin" and two rows with no MusicBrainz id
+have none). ASSUMED cause, not seen on the phone: the first requests for artists whose photo the server had
+not fetched yet came back as the retryable "source temporarily unavailable" while the server's source was
+busy or skipped for a minute after one timeout; the client treated that as final, so the tile kept its
+letter and offline had no saved picture. **Shared core:** a cover that fails with a retryable failure is
+asked for again twice (after 2 s and 8 s) while its tile is wanted; "not found" and every final failure are not
+retried. After a shelf refresh the core saves the shelf's covers, one at a time and behind covers a visible
+tile asks for, while online, so the same shelf read from the snapshot offline has its pictures. Tests:
+`TopResultTest`, `LibrarySearchSessionTest.theServersListenFigure...`, `TopSongsPopularityTest` (search
+figures and `listensFor`), `DiscoverPagesTest` (retry and prefetch, each with its control).
+
 **2026-11-26 — A page's Play shows Pause while its own music plays; Play and Shuffle intents pinned (§14.1, §14.2, Queue and Search).**
 OBSERVED on the iPhone 18 Pro simulator against a disposable Dulcet Server fixture, 2026-11-26: the
 reported "Shuffle stays on and applies to later Play presses" does not reproduce. The core's

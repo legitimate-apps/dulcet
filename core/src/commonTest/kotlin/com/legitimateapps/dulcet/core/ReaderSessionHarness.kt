@@ -38,6 +38,8 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
 
     /** Ids `search3` never returns: the server's matcher disagreeing with the local one (CONF-43). */
     val searchExcludes = mutableSetOf<String>()
+    /** Songs for which `search3` states worldwide listens (`dulcetListens`), as Dulcet Server does. */
+    val songListens = mutableMapOf<String, Long>()
 
     /** Endpoint -> the Subsonic error code it answers with. */
     val failWithCode = mutableMapOf<String, Int>()
@@ -153,7 +155,7 @@ internal class SessionTestServer(val base: FakeReaderServer = FakeReaderServer()
             """{"id":"${it.id}","name":"${it.name}","artist":"Artist One","artistId":"artist-1","songCount":${it.songs.size},"duration":120${if (it.starred) ",\"starred\":\"2026-09-22T10:00:00Z\"" else ""}}"""
         }
         val songJson = songs.joinToString(",") { (album, song) ->
-            """{"id":"$song","title":"Song $song","album":"${album.name}","albumId":"${album.id}","artist":"Artist One","artistId":"artist-1","duration":60,"suffix":"flac"}"""
+            """{"id":"$song","title":"Song $song","album":"${album.name}","albumId":"${album.id}","artist":"Artist One","artistId":"artist-1","duration":60,"suffix":"flac"${songListens[song]?.let { ",\"dulcetListens\":$it" } ?: ""}}"""
         }
         return inject(envelope(""""searchResult3":{"album":[$albumJson],"song":[$songJson]}"""))
     }
