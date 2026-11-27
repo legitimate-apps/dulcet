@@ -1,86 +1,82 @@
 import Foundation
 
-/// The one thing a screen says about the connection, chosen once for every screen (spec §16.14).
-///
-/// Two different facts are kept apart, because each has its own cure:
-///  - **the device is offline** (the platform reports no network path): nothing to retry, the
-///    network's return is what brings Dulcet back, so no Try Again is offered;
-///  - **the server is unreachable** (a path exists, the server does not answer): Try Again asks
-///    the reconnect again.
-/// A screen draws at most this one indicator, in one style, and never also a freshness line that
-/// says the same thing.
+/// The one message a screen can show for a connection problem (spec §16.14).
 public struct DulcetConnectionIndicator: Equatable, Sendable {
     public enum Cause: Equatable, Sendable {
-        /// No network path. "You're offline."
         case deviceOffline
-        /// A path exists and the server does not answer. "Can't reach your server."
         case serverUnreachable
-        /// The server answered with a refusal or something unusable.
         case connectionFailed
-        /// The account is reconnecting while the device's music shows.
-        case reconnecting
     }
 
     public let cause: Cause
 
-    /// The wording over a whole screen (Library home, Listen Now): states what shows.
-    public var bannerTitle: String {
-        switch cause {
-        case .deviceOffline: DulcetStrings.readerOfflineNotice
-        case .serverUnreachable: DulcetStrings.connectionsUnreachableNotice
-        case .connectionFailed: DulcetStrings.connectionFailed
-        case .reconnecting: DulcetStrings.readerOfflineConnectingNotice
-        }
-    }
-
-    /// The short wording over a page of content.
-    public var pageTitle: String {
+    public var title: String {
         switch cause {
         case .deviceOffline: DulcetStrings.readerPageOffline
         case .serverUnreachable: DulcetStrings.readerPageServerUnreachable
         case .connectionFailed: DulcetStrings.connectionFailed
-        case .reconnecting: DulcetStrings.readerOfflineConnectingNotice
         }
     }
 
-    public var symbol: String {
-        switch cause {
-        case .deviceOffline: "wifi.slash"
-        case .serverUnreachable, .connectionFailed: "exclamationmark.circle"
-        case .reconnecting: "arrow.triangle.2.circlepath"
-        }
-    }
+    public var symbol: String { cause == .deviceOffline ? "wifi.slash" : "exclamationmark.circle" }
+    public var offersRetry: Bool { cause != .deviceOffline }
 
-    /// Try Again is offered only where asking again can change something.
-    public var offersRetry: Bool {
-        switch cause {
-        case .deviceOffline: false
-        case .serverUnreachable, .connectionFailed, .reconnecting: true
-        }
-    }
+    /// The path monitor has its own grace. Wait for unanswered requests too, so a
+    /// handoff or a delayed response that clears the failure does not flash a message.
+    var presentationDelay: Duration { cause == .serverUnreachable ? .seconds(3) : .zero }
 
-    /// Whether the retry is pressable now: not while the reconnect it would start is running.
-    public var retryEnabled: Bool { cause != .reconnecting }
-
-    /// What to say, or nil for nothing.
-    /// - `deviceOffline`: the platform's report, after the unreachable grace.
-    /// - `connectionFailure`: why the last reconnect could not read the server, while that keeps
-    ///   the reader offline.
-    /// - `connecting`: the saved account's own reconnect is running.
+    /// A read can fail while the broader session is still connected. Its fallback is
+    /// evidence about the server, while only the platform can establish no network path.
     public static func choose(
         mode: DulcetLibraryReaderMode,
         deviceOffline: Bool,
         connectionFailure: DulcetReaderErrorKind?,
-        connecting: Bool
+        connecting: Bool,
+        serverReadFailed: Bool = false
     ) -> DulcetConnectionIndicator? {
         guard mode != .none else { return nil }
-        // No path outranks everything else: a failure recorded while the network was gone says
-        // nothing about the server.
-        if deviceOffline, connectionFailure != .serverIdentityChanged { return .init(cause: .deviceOffline) }
-        if mode == .deviceOnly {
-            return .init(cause: connecting ? .reconnecting : .serverUnreachable)
+        if connectionFailure == .serverIdentityChanged { return .init(cause: .connectionFailed) }
+        if deviceOffline { return .init(cause: .deviceOffline) }
+        if let connectionFailure {
+            return .init(cause: connectionFailure.isTransportFailure ? .serverUnreachable : .connectionFailed)
         }
-        guard let failure = connectionFailure else { return nil }
-        return .init(cause: failure == .unreachable ? .serverUnreachable : .connectionFailed)
+        if connecting { return nil }
+        if mode == .deviceOnly || serverReadFailed { return .init(cause: .serverUnreachable) }
+        return nil
+    }
+}
+
+extension DulcetReaderErrorKind {
+    var isTransportFailure: Bool { self == .unreachable || self == .timeout }
+}
+
+extension DulcetReaderUnavailableReason {
+    var isConnectionFailure: Bool {
+        switch self {
+        case .notCachedOffline: true
+        case let .failed(kind): kind.isTransportFailure
+        default: false
+        }
+    }
+}
+
+extension DulcetReaderFreshness {
+    var isConnectionFailure: Bool {
+        switch self {
+        case .cached(.offline, _): true
+        case let .cached(.failed(kind), _): kind.isTransportFailure
+        case let .unavailable(reason): reason.isConnectionFailure
+        default: false
+        }
+    }
+}
+
+extension DulcetReaderSearchScope {
+    var isConnectionFailure: Bool {
+        switch self {
+        case .deviceOffline: true
+        case let .deviceServerFailed(kind, _): kind.isTransportFailure
+        default: false
+        }
     }
 }

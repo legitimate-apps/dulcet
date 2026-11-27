@@ -20,7 +20,12 @@ struct DulcetDiscoverHomeView: View {
                     refreshButton
                 }
 #endif
-                if let home = model.publication?.home {
+                let publication = model.publication
+                let connection = publication?.connection ?? "online"
+                let status = publication?.home.map { DulcetDiscoverStatus.home($0, connection: connection) }
+                    ?? DulcetDiscoverStatus(age: nil, error: nil, connection: connection)
+                DulcetDiscoverStatusView(status: status, prefix: "discover.home") { model.reader.refreshHome() }
+                if let home = publication?.home {
                     ForEach(DulcetDiscoverShelf.allCases, id: \.rawValue) { shelf in
                         if let state = home.shelves.first(where: { $0.id == shelf.rawValue }) {
                             shelfView(shelf, state)
@@ -82,11 +87,8 @@ struct DulcetDiscoverHomeView: View {
             if shelf == .similarArtists {
                 Text(DulcetStrings.discoverSuggestionsCredit).font(.caption).accessibilityIdentifier("discover.suggestionsCredit")
             }
-            DulcetDiscoverShelfStatus(age: state.page?.age, error: state.error ?? state.page?.refreshError,
-                                     loading: state.loading, empty: presentation.isEmpty,
-                                     emptyText: shelf.emptyText, connection: model.publication?.connection ?? "online", prefix: prefix) {
-                model.reader.refreshHome()
-            }
+            DulcetDiscoverShelfPlaceholder(loading: state.loading && state.page == nil,
+                empty: presentation.isEmpty, emptyText: shelf.emptyText, prefix: prefix)
             if let page = state.page {
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: DulcetSpacing.xs) {
@@ -114,10 +116,9 @@ struct DulcetDiscoverHomeView: View {
                 Spacer()
                 Button(DulcetStrings.discoverSeeAll) { store.openWishlist() }.accessibilityLabel(DulcetStrings.discoverSeeAllRecentWishes).accessibilityIdentifier("discover.recentWishes.all")
             }
-            DulcetDiscoverShelfStatus(age: nil, error: home.wishesError, loading: home.wishesLoading,
-                hasContent: !home.recentWishes.isEmpty,
+            DulcetDiscoverShelfPlaceholder(loading: home.wishesLoading && home.recentWishes.isEmpty,
                 empty: home.wishesSettled && home.recentWishes.isEmpty && home.wishesError == nil,
-                emptyText: DulcetStrings.discoverRecentWishesEmpty, connection: model.publication?.connection ?? "online", prefix: "discover.recentWishes") { model.reader.refreshHome() }
+                emptyText: DulcetStrings.discoverRecentWishesEmpty, prefix: "discover.recentWishes")
             ForEach(home.recentWishes, id: \.key) { row in
                 let value = DulcetWishlistRowPresentation(row: row)
                 Button { store.openWishlist(rowKey: row.key) } label: {
@@ -134,59 +135,17 @@ struct DulcetDiscoverHomeView: View {
     }
 }
 
-struct DulcetDiscoverShelfStatus: View {
-    let age: DulcetDiscoverAge?
-    let error: DulcetDiscoverFailure?
+private struct DulcetDiscoverShelfPlaceholder: View {
     let loading: Bool
-    /// Whether the shelf shows rows; by default, whether it has an answer with an age.
-    var hasContent: Bool? = nil
     let empty: Bool
     let emptyText: String
-    let connection: String
     let prefix: String
-    let retry: () -> Void
-    @State private var retryNow = Date.distantPast
-    private var status: DulcetDiscoverStatus { .init(age: age, error: error, connection: connection, now: max(retryNow, .now)) }
-    private var failureNotice: String {
-        if error?.code == "rate-limited" { return status.notice ?? DulcetStrings.discoverUnavailable }
-        if connection == "offline" || error?.code == "offline" { return DulcetStrings.discoverConnect }
-        return DulcetStrings.discoverUnavailable
-    }
-    private var showsRows: Bool { hasContent ?? (age != nil) }
-    private var failed: Bool { error.map { $0.code != "cancelled" } ?? false }
-    private var rateLimited: Bool { error?.code == "rate-limited" }
-    // A shelf with its answer says nothing while that answer is current or refreshing (§28,
-    // 2026-11-24). Offline, a stale answer or a failed refresh is one plain line with its age;
-    // a failure without an answer to show is stated in its place.
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-            if age != nil, let line = status.ageText {
-                Text(line).font(.caption)
-                    .accessibilityIdentifier(prefix + (failed && !rateLimited ? ".error" : ".age"))
-            }
-            if failed {
-                if age == nil || rateLimited {
-                    Text(failureNotice)
-                        .accessibilityIdentifier(prefix + ".error")
-                }
-                if error?.retryable == true {
-                    if let deadline = error?.retryAt, !status.canRetry, connection != "offline" {
-                        Text(DulcetStrings.discoverRetryAt(deadline.formatted(date: .omitted, time: .shortened))).font(.caption)
-                    }
-                    Button(DulcetStrings.discoverRetry, action: retry).disabled(!status.canRetry).accessibilityIdentifier(prefix + ".retry")
-                }
-            }
-            // A refresh over rows already shown is quiet; only a shelf with nothing yet shows progress.
-            if loading && !showsRows { ProgressView(DulcetStrings.discoverLoading).accessibilityIdentifier(prefix + ".loading") }
-            if empty { Text(emptyText).accessibilityIdentifier(prefix + ".empty") }
-        }
-        .dulcetForeground(.secondaryTextOnWindow)
-        .fixedSize(horizontal: false, vertical: true)
-        .task(id: error?.retryAt) {
-            retryNow = .distantPast
-            guard let deadline = error?.retryAt else { return }
-            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
-            if !Task.isCancelled { retryNow = .now }
+        if loading { ProgressView(DulcetStrings.discoverLoading).accessibilityIdentifier(prefix + ".loading") }
+        if empty {
+            Text(emptyText).accessibilityIdentifier(prefix + ".empty")
+                .dulcetForeground(.secondaryTextOnWindow)
         }
     }
 }
@@ -386,8 +345,10 @@ struct DulcetDiscoverListView: View {
                         Text(page.answerQuery.isEmpty ? DulcetStrings.discoverShowingAllPlaylists : DulcetStrings.discoverShowingResults(page.answerQuery)).font(.caption)
                     }
                     if let summary = page.playlist?.summary { DulcetDiscoverPlaylistLabel(summary: summary) }
-                    DulcetDiscoverShelfStatus(age: page.age, error: page.error, loading: page.loading, empty: empty,
-                        emptyText: emptyText, connection: model.publication?.connection ?? "online", prefix: prefix) { page.load() }
+                    DulcetDiscoverStatusView(status: .init(age: page.age, error: page.error,
+                        connection: model.publication?.connection ?? "online"), prefix: prefix) { page.load() }
+                    DulcetDiscoverShelfPlaceholder(loading: page.loading && !page.hasPage,
+                        empty: empty, emptyText: emptyText, prefix: prefix)
                     ForEach(page.shelf?.items ?? [], id: \.id) { item in
                         itemView(item, id: prefix + ".item." + item.id).id(item.id)
                     }
@@ -411,6 +372,9 @@ struct DulcetDiscoverListView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier(prefix).navigationTitle(title).dulcetForeground(.primaryTextOnWindow)
         .onAppear { model.open(); page.open() }.onDisappear { page.close(); model.close() }
+        .onChange(of: store.librarySession?.isOnline) { _, online in
+            if online == true, page.error?.code == "offline" { page.load() }
+        }
     }
     private func itemView(_ item: DulcetDiscoverItem, id: String) -> some View {
         DulcetDiscoverShelfItem(model: model, item: item, source: page.source, identifier: id,

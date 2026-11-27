@@ -29,7 +29,7 @@ func accountConnectRootLoadsForIOS() {
 
 @Test @MainActor
 func libraryRefreshStatusLeavesRoomForContentAtLargestText() {
-    let library = DulcetMyLibrarySnapshot(availability: .available, syncState: "cached", error: .unreachable)
+    let library = DulcetMyLibrarySnapshot(availability: .available, syncState: "cached", error: .serverBusy)
     let status = DulcetMyLibraryStatusLines(library: library, onRetry: {})
         .dynamicTypeSize(.accessibility5)
     let controller = UIHostingController(rootView: status)

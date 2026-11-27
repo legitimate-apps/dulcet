@@ -4548,7 +4548,7 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | freshness | meaning | presented as |
 |---|---|---|
 | `live` | read from the server in this session under the current epoch | nothing extra |
-| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line, the reason first: "Couldn't reach your server. Last updated 3 days ago", with no age under a minute (Android), or with no `asOf`, "Couldn't reach your server. Showing what this device had saved, age unknown". Apple shows a line only where it helps the listener: "You're offline", or "Couldn't refresh · <reason>" with Try Again after a failed read; `revalidating`, `stale` and `owed` show nothing, the age stays in the accessibility value, and Downloaded never shows one (§28, 2026-11-24) |
+| `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line, the reason first: "Couldn't reach your server. Last updated 3 days ago", with no age under a minute (Android), or with no `asOf`, "Couldn't reach your server. Showing what this device had saved, age unknown". Apple draws one connection status per screen when a read cannot reach the server or the device has no network path. A non-transport refresh error can still say "Couldn't refresh · <reason>" with Try Again. `revalidating`, `stale` and `owed` show nothing, the age stays in the accessibility value, and Downloaded never shows a connection status (§28, 2026-11-27) |
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
 | `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
 
@@ -4792,8 +4792,8 @@ than a committed generation. What changes is that **the result carries an honest
 |---|---|---|
 | `serverAndDevice` | the server search completed and local rows were merged | none needed, or "Your server" |
 | `deviceWhileServerPending` | fewer than two characters, or the server request is in flight | "On this device" until replaced |
-| `deviceOffline` | the server is unreachable | Android: "Searching what's available offline — 1,204 albums and 9,870 tracks on this device". Apple: "You're offline · downloaded music plays now", because most of what is searched is only remembered, not downloaded; each row says whether it plays (§28, 2026-11-24) |
-| `deviceServerFailed(kind)` | the server search failed | the device label plus the §18.12 kind |
+| `deviceOffline` | the server is unreachable | Android: "Searching what's available offline — 1,204 albums and 9,870 tracks on this device". Apple: the shared connection status names the confirmed cause, and each row says whether it plays (§28, 2026-11-27) |
+| `deviceServerFailed(kind)` | the server search failed | Android: the device label plus the §18.12 kind. Apple: transport failures use the same connection status as `deviceOffline`. Other failures are stated when there are no matches to show. |
 
 The counts in the offline label are the seen-cache's own, so the person can tell "no match" from "no
 match *among what this device has seen*". A local-only row — one the server's autocomplete matcher
@@ -8128,6 +8128,17 @@ enters the test: a collection played shuffled is still that collection. Not cove
 playlist and the whole library are played as source kind `library` with no id, so they cannot be told
 from each other and their Play keeps its label; Library Songs and Downloaded have a Shuffle button
 only. Android is not changed.
+
+**2026-11-27 — Apple music screens share one connection message (§16.14–15).**
+Listen Now, Library, Browse, Search, Discover and server-backed reader destinations draw the same
+connection status. A sustained platform report of no path shows “You’re offline” with no action.
+A transport failure on a usable or unknown path shows “Can’t reach your server” with Try Again
+after the failure has stood for three seconds. A normal sign-in or automatic reconnect in progress
+needs no line. Search's `deviceOffline` scope and Discover's transport `offline` code describe
+the reader's ability to make a request. The platform's path state chooses the wording. Discover
+Home chooses one status across its shelves and keeps individual result ages in accessibility.
+When a source supplies old results, the screen can state their freshness once. Android retains
+its existing presentation.
 
 **2026-11-26 — An artist's photo replaces its stand-in on devices that saved it (§16.14, §29, Discover).**
 OBSERVED on the household server and a DEV build, 2026-11-26: Pavement's and Peach Pit's artist pages

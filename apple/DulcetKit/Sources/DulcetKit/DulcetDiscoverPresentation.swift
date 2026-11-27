@@ -52,12 +52,28 @@ public struct DulcetDiscoverStatus: Sendable {
     public init(age: DulcetDiscoverAge?, error: DulcetDiscoverFailure?, connection: String, now: Date = .now) {
         self.age = age; self.error = error; self.connection = connection; self.now = now
     }
+    /// The Discover transport uses this code for an unanswered server, as well as
+    /// reads the library reader cannot send. The device's path comes from the session.
+    var serverReadFailed: Bool { error?.code == "offline" }
+
+    static func home(_ home: DulcetDiscoverHome, connection: String) -> Self {
+        let shelves = home.shelves.map {
+            Self(age: $0.page?.age, error: $0.error ?? $0.page?.refreshError, connection: connection)
+        }
+        let statuses = shelves + [Self(age: nil, error: home.wishesError, connection: connection)]
+        return statuses.first(where: \.serverReadFailed)
+            ?? statuses.first(where: { $0.error?.code == "rate-limited" })
+            ?? statuses.first(where: { $0.error != nil && $0.error?.code != "cancelled" && $0.age == nil })
+            ?? statuses.first(where: { $0.refreshFailed })
+            ?? Self(age: nil, error: nil, connection: connection)
+    }
+
     public var canRetry: Bool {
         guard connection != "offline", error?.retryable == true else { return false }
         return error?.retryAt.map { $0 <= now } ?? true
     }
     public var notice: String? {
-        guard let error else { return nil }
+        guard let error, !serverReadFailed else { return nil }
         if error.code == "rate-limited" {
             let seconds = max(0, Int(ceil(error.retryAt?.timeIntervalSince(now) ?? 60)))
             return DulcetStrings.discoverBusy(seconds)
@@ -65,7 +81,7 @@ public struct DulcetDiscoverStatus: Sendable {
         if error.code == "cancelled" { return nil }
         // An answer still on screen already says the refresh failed, with its age (`ageText`).
         if age != nil { return nil }
-        return connection == "offline" || error.code == "offline" ? DulcetStrings.discoverOffline : DulcetStrings.discoverReadFailed
+        return DulcetStrings.discoverReadFailed
     }
     /// Whether the answer on screen is older than it should be: the server served a stale copy
     /// because its source was unreachable, or this device's refresh failed.
@@ -83,17 +99,11 @@ public struct DulcetDiscoverStatus: Sendable {
         return age.sourceAgeSeconds.map { max(0, $0) + Int64(elapsed) }
             ?? age.fetchedAt.map { Int64(max(0, now.timeIntervalSince($0))) }
     }
-    /// The one visible line about an answer on screen (§28, 2026-11-24). A current answer, and
-    /// one this device kept from earlier while it refreshes, say nothing: that is how a music app
-    /// behaves, and the age stays available to accessibility (`accessibleAge`). Offline, or a
-    /// refresh that failed, say so in plain words with how old the answer is.
+    /// An older answer can carry one freshness note. The connection has its own status.
     public var ageText: String? {
-        guard age != nil else { return connection == "offline" ? DulcetStrings.discoverOffline : nil }
-        let offline = connection == "offline" || error?.code == "offline"
-        guard offline || refreshFailed else { return nil }
+        guard age != nil, refreshFailed, !serverReadFailed, connection != "offline" else { return nil }
         let since = ageSeconds.flatMap { $0 >= 60 ? Self.relative($0, now: now) : nil }
-        if offline { return since.map(DulcetStrings.discoverOfflineShowing) ?? DulcetStrings.discoverOfflineShowingEarlier }
-        return since.map(DulcetStrings.discoverRefreshFailedShowing) ?? DulcetStrings.discoverRefreshFailedShowingEarlier
+        return since.map(DulcetStrings.discoverShowingOlderResults) ?? DulcetStrings.discoverShowingEarlierResults
     }
     /// The answer's age for accessibility, whether or not a line is drawn.
     public var accessibleAge: String? {

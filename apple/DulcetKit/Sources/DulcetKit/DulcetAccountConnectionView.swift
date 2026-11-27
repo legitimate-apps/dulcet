@@ -498,7 +498,7 @@ struct DulcetAccountConnectionView: View {
 #if os(tvOS)
             if store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
                 Section {
-                    Label(DulcetStrings.connectionsUnreachableNotice, systemImage: "wifi.slash")
+                    Label(DulcetStrings.readerPageServerUnreachable, systemImage: "wifi.slash")
                         .font(.callout)
                         .dulcetForeground(.secondaryTextOnWindow)
                         .focusable(false)
@@ -1307,7 +1307,7 @@ struct DulcetAccountConnectionView: View {
                         VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                             if savedServerName != nil,
                                store.librarySession?.mode == .deviceOnly || store.librarySession?.connectionFailure != nil {
-                                Label(DulcetStrings.connectionsUnreachableNotice, systemImage: "wifi.slash")
+                                Label(DulcetStrings.readerPageServerUnreachable, systemImage: "wifi.slash")
                                     .textCase(nil)
                                     .accessibilityIdentifier("dulcet.account.unreachable")
                             }

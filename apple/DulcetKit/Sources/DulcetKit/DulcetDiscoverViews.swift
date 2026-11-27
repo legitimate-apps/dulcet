@@ -26,13 +26,18 @@ public struct DulcetDiscoverSearchView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: DulcetSpacing.md) {
                         if let publication = model.publication {
+                            let statuses = publication.groups.map {
+                                DulcetDiscoverStatus(age: $0.page?.age, error: $0.error, connection: publication.connection)
+                            }
+                            let status = statuses.first(where: \.serverReadFailed)
+                                ?? statuses.first(where: { $0.error?.code == "rate-limited" })
+                                ?? statuses.first(where: { $0.notice != nil || $0.ageText != nil })
+                                ?? DulcetDiscoverStatus(age: nil, error: nil, connection: publication.connection)
+                            DulcetDiscoverStatusView(status: status) { model.reader.setQuery(query) }
                             ForEach(publication.groups, id: \.kind) { group in
                                 VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
                                     Text(groupTitle(group.kind)).font(.title2.weight(.semibold)).accessibilityAddTraits(.isHeader)
                                         .accessibilityIdentifier("discover.group.\(group.kind)")
-                                    DulcetDiscoverStatusView(status: .init(age: group.page?.age, error: group.error, connection: publication.connection)) {
-                                        model.reader.setQuery(query)
-                                    }
                                     if let page = group.page {
                                         ForEach(page.items, id: \.id) { item in
                                             metadataLink(item)
@@ -122,27 +127,45 @@ struct DulcetDiscoverItemRow: View {
 }
 
 struct DulcetDiscoverStatusView: View {
+    @Environment(DulcetPresentationStore.self) private var store: DulcetPresentationStore?
     let status: DulcetDiscoverStatus
+    var prefix = "discover"
     var retry: () -> Void
     @State private var clock = Date.distantPast
+
     private var current: DulcetDiscoverStatus {
         .init(age: status.age, error: status.error, connection: status.connection, now: max(clock, status.now))
     }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
-            if let age = current.ageText { Text(age).font(.caption).accessibilityIdentifier("discover.age") }
-            if let notice = current.notice { Text(notice).font(.callout).accessibilityIdentifier("discover.notice") }
-            if status.error?.retryable == true {
-                Button(DulcetStrings.readerTryAgain, action: retry).disabled(!current.canRetry).accessibilityIdentifier("discover.retry")
+        if let store, let indicator = store.readerConnectionIndicator(serverReadFailed: status.serverReadFailed) {
+            DulcetConnectionStatus(indicator: indicator, identifier: prefix + ".connection",
+                retryIdentifier: prefix + ".retry", retry: {
+                    if store.readerConnectionIndicator() != nil {
+                        dulcetReaderRetry(store)
+                    } else { retry() }
+                })
+        } else if !status.serverReadFailed, status.connection != "offline",
+                  current.ageText != nil || current.notice != nil || status.error?.retryable == true {
+            VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                if let notice = current.notice {
+                    Text(notice).font(.callout).accessibilityIdentifier(prefix + ".error")
+                } else if let age = current.ageText {
+                    DulcetConnectionStatus(indicator: nil, identifier: prefix + ".age", retry: retry, freshness: age)
+                }
+                if status.error?.retryable == true {
+                    Button(DulcetStrings.readerTryAgain, action: retry)
+                        .disabled(!current.canRetry).accessibilityIdentifier(prefix + ".retry")
+                }
             }
-        }
-        .dulcetForeground(.secondaryTextOnWindow)
-        .fixedSize(horizontal: false, vertical: true)
-        .task(id: status.error?.retryAt) {
-            guard let deadline = status.error?.retryAt else { return }
-            // Wake only at the server deadline. No animation/polling keeps native input idle.
-            try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
-            if !Task.isCancelled { clock = .now }
+            .dulcetForeground(.secondaryTextOnWindow)
+            .fixedSize(horizontal: false, vertical: true)
+            .task(id: status.error?.retryAt) {
+                guard let deadline = status.error?.retryAt else { return }
+                // Wake only at the server deadline. No animation/polling keeps native input idle.
+                try? await Task.sleep(for: .seconds(max(0, deadline.timeIntervalSinceNow)))
+                if !Task.isCancelled { clock = .now }
+            }
         }
     }
 }
@@ -168,6 +191,8 @@ struct DulcetDiscoverDetailView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: DulcetSpacing.md) {
+                DulcetDiscoverStatusView(status: .init(age: detail.artist?.albums.age ?? detail.album?.tracks.age,
+                    error: detail.error, connection: model.publication?.connection ?? "online")) { detail.load(destination) }
                 if let item {
                     DulcetDiscoverArtworkView(reader: model.reader, artworkId: item.artworkId, size: 160)
                     Text(verbatim: item.title).font(.largeTitle.bold()).accessibilityAddTraits(.isHeader)
@@ -183,7 +208,6 @@ struct DulcetDiscoverDetailView: View {
                     }
                 }
                 if let artist = detail.artist {
-                    DulcetDiscoverStatusView(status: .init(age: artist.albums.age, error: detail.error, connection: model.publication?.connection ?? "online")) { detail.load(destination) }
                     ForEach(artist.albums.items, id: \.id) { album in detailLink(album) }
                     if artist.albums.nextCursor != nil, case let .artist(mbid) = destination {
                         Button(DulcetStrings.libraryLoadMore) { detail.loadMoreArtist(mbid) }.disabled(detail.loading)
@@ -195,7 +219,6 @@ struct DulcetDiscoverDetailView: View {
                             .accessibilityIdentifier("discover.edition")
                             .accessibilityValue(editionTitle(album, releaseId: album.selectedReleaseId))
                     }
-                    DulcetDiscoverStatusView(status: .init(age: album.tracks.age, error: detail.error, connection: model.publication?.connection ?? "online")) { detail.load(destination) }
                     if detail.requestedReleaseId == nil || album.selectedReleaseId == detail.requestedReleaseId {
                         ForEach(album.tracks.items, id: \.id) { track in detailLink(track) }
                         if album.tracks.nextCursor != nil, case let .album(mbid, _) = destination {
@@ -204,9 +227,6 @@ struct DulcetDiscoverDetailView: View {
                     }
                 }
                 if detail.loading { ProgressView() }
-                if item == nil, let error = detail.error {
-                    DulcetDiscoverStatusView(status: .init(age: nil, error: error, connection: model.publication?.connection ?? "online")) { detail.load(destination) }
-                }
                 Text(DulcetStrings.discoverCredit).font(.caption).dulcetForeground(.secondaryTextOnWindow)
             }
             .padding(DulcetSpacing.md).frame(maxWidth: .infinity, alignment: .leading)
@@ -216,6 +236,9 @@ struct DulcetDiscoverDetailView: View {
             DulcetUIProofMarkers.record("discover-player-bar-required:\(required == true)")
         }
         .onAppear { model.open(); detail.load(destination) }
+        .onChange(of: presentationStore?.librarySession?.isOnline) { _, online in
+            if online == true, detail.error?.code == "offline" { detail.load(destination) }
+        }
         .onDisappear { model.close(); detail.close() }
     }
     @ViewBuilder

@@ -72,21 +72,14 @@ struct DulcetMyLibraryStatusLines: View {
     let onRetry: () -> Void
 
     var body: some View {
-        if library.syncState == "offline" {
-            // Offline the lists are this device's music, downloads included: say offline, never
-            // "Couldn't refresh" (§16.14). The session's one connection indicator words it, so
-            // "the device has no network" and "the server does not answer" read differently, and
-            // a reconnect just starting says nothing.
-            if let store, let indicator = store.librarySession?.connectionIndicator(
-                connecting: store.snapshot.accountConnection == .connecting) {
-                DulcetDestinationStatus(title: indicator.pageTitle, symbol: indicator.symbol,
-                    identifier: "dulcet.myLibrary.offline",
-                    retryEnabled: indicator.retryEnabled,
-                    retry: indicator.offersRetry ? { dulcetReaderRetry(store) } : nil)
-                    .dulcetContentMarginPadding()
-                    .background(.background, ignoresSafeAreaEdges: [])
-            }
-        } else if let error = library.error {
+        if let store, let indicator = store.readerConnectionIndicator(
+            serverReadFailed: library.syncState == "offline" || library.error?.isTransportFailure == true) {
+            let deviceOnly = store.librarySession?.mode == .deviceOnly
+            DulcetConnectionStatus(indicator: indicator,
+                identifier: deviceOnly ? "dulcet.reader.deviceOnly" : "dulcet.myLibrary.offline",
+                retryIdentifier: deviceOnly ? "dulcet.reader.reconnect" : "dulcet.reader.retry",
+                retry: { dulcetReaderRetry(store) }, accountBannerOpaque: true)
+        } else if let error = library.error, library.syncState != "offline", !error.isTransportFailure {
             DulcetDestinationStatus(title: DulcetStrings.myLibraryRefreshFailedTitle,
                 symbol: "exclamationmark.circle", retry: onRetry)
                 .accessibilityLabel(DulcetStrings.myLibraryRefreshFailed(DulcetStrings.readerErrorPhrase(error)))
@@ -96,12 +89,6 @@ struct DulcetMyLibraryStatusLines: View {
             ProgressView()
                 .dulcetContentMarginPadding()
                 .background(.background, ignoresSafeAreaEdges: [])
-        } else if library.syncState == "cached", let date = library.lastReadAt, Date().timeIntervalSince(date) > 86_400 {
-            if let detail = DulcetReaderCopy.visibleFreshnessLine(.cached(.stale, asOf: date)) {
-                DulcetDestinationStatus(title: detail)
-                    .dulcetContentMarginPadding()
-                    .background(.background, ignoresSafeAreaEdges: [])
-            }
         }
     }
 }
@@ -410,13 +397,7 @@ struct DulcetMyLibraryView: View {
             .dulcetNavigationTitle(DulcetStrings.library, keepsTVNavigationBar: true)
             .accessibilityIdentifier("dulcet.myLibrary")
             .safeAreaInset(edge: .top, spacing: 0) {
-                if store.librarySession?.ownsConnectionMessage == true {
-                    DulcetReaderAccountBanner()
-                }
-            }
-            .safeAreaInset(edge: .top, spacing: 0) {
-                if let library = store.librarySession?.myLibrary,
-                   store.librarySession?.ownsConnectionMessage != true {
+                if let library = store.librarySession?.myLibrary {
                     DulcetMyLibraryStatusLines(library: library, onRetry: refresh)
                 }
             }

@@ -325,7 +325,6 @@
 "reader.sort.favorites" = "Favorites";
 "reader.age.justNow" = "just now";
 "reader.seen.unknownAge" = "Showing what this device had saved, age unknown";
-"reader.reason.offline" = "you’re offline";
 "reader.reason.revalidating" = "checking your server";
 "reader.reason.stale" = "your library has changed since";
 "reader.reason.owed" = "more is still to load";
@@ -339,9 +338,9 @@
 "reader.error.tls" = "your server’s certificate isn’t trusted";
 "reader.error.accessRefused" = "your server refused access";
 "reader.error.server" = "your server couldn’t answer";
-"reader.unavailable.album" = "You haven’t opened this album on this device. Connect to your server to see it.";
-"reader.unavailable.list" = "You haven’t opened this on this device. Connect to your server to see it.";
-"reader.unavailable.albumTracks" = "This album’s songs aren’t on this device. Connect to your server to see them.";
+"reader.unavailable.album" = "You haven’t opened this album on this device.";
+"reader.unavailable.list" = "You haven’t opened this on this device.";
+"reader.unavailable.albumTracks" = "This album’s songs aren’t on this device.";
 "reader.unavailable.gone" = "This is no longer on your server.";
 "reader.unavailable.internal" = "Couldn’t load this · something went wrong on this device.";
 "reader.unavailable.closed" = "This screen has closed.";
@@ -394,8 +393,6 @@
 "reader.deviceOnly.body" = "Dulcet reconnects to %@ automatically when it is reachable.";
 "reader.change.notSaved" = "Couldn’t save that change · %@";
 "reader.change.heldRefused" = "That change isn’t sent yet · %@. It’s kept, and will be sent once your server accepts it.";
-"reader.search.scope.offline" = "You’re offline · downloaded music plays now";
-"reader.search.scope.failed" = "On this device · %@";
 "reader.search.failed.body" = "Nothing on this device matches, and %@.";
 "reader.favorite.accessibility" = "%@, Favorite";
 "reader.seeAll" = "See All";
@@ -519,7 +516,6 @@
 "discover.discoverHeld" = "In your library";
 "discover.discoverNotHeld" = "Not in your library";
 "discover.discoverUnknown" = "Library match unknown";
-"discover.discoverOffline" = "Offline";
 "discover.discoverReadFailed" = "Could not refresh. Your last results are still here.";
 "discover.discoverWaiting" = "Not synced yet";
 "discover.discoverNotSaved" = "Not saved";
@@ -544,10 +540,8 @@
 "discover.discoverLookupUnavailable" = "This item is not available in the current Library view. Open its album in Library to play it.";
 "discover.discoverPartial" = "%ld of %ld in your library";
 "discover.discoverBusy" = "Server is busy. Try again in %ld seconds.";
-"discover.discoverRefreshFailedShowing" = "Couldn’t refresh · showing results from %@";
-"discover.discoverRefreshFailedShowingEarlier" = "Couldn’t refresh · showing earlier results";
-"discover.discoverOfflineShowing" = "Offline · showing results from %@";
-"discover.discoverOfflineShowingEarlier" = "Offline · showing earlier results";
+"discover.discoverShowingOlderResults" = "Showing results from %@";
+"discover.discoverShowingEarlierResults" = "Showing earlier results";
 "discover.discoverUpdated" = "Updated %@";
 "discover.discoverOpenLink" = "Open %@";
 "discover.discoverEditionTitle" = "%1$@ · %2$@";
@@ -594,8 +588,6 @@
 "discover.discoverRecentWishesEmpty" = "Your recent wishes will appear here.";
 "discover.discoverAgeUnavailable" = "Age unavailable";
 "discover.discoverUnavailable" = "Discovery is temporarily unavailable.";
-"discover.discoverConnect" = "Connect to your server to explore music.";
-"discover.discoverRetry" = "Try Again";
 "discover.discoverLoading" = "Loading";
 "discover.discoverRecordingUnavailable" = "Recording Information Unavailable";
 "discover.discoverPlaylistSearchPrompt" = "Search public playlists";
@@ -603,7 +595,6 @@
 "discover.discoverLoadMore" = "Load More";
 "discover.discoverDone" = "Done";
 "discover.discoverSeeAllNamed" = "See All %@";
-"discover.discoverRetryAt" = "Retry available at %@";
 "discover.discoverWishedFor" = "Wished for %@";
 "discover.discoverListens" = "%@ listens";
 "discover.discoverWishFor" = "Wish for %@";
@@ -625,9 +616,4 @@
 
 "reader.page.offline" = "You’re offline";
 "reader.page.serverUnreachable" = "Can’t reach your server";
-"reader.offline.device.title" = "You’re Offline";
-"reader.offline.device.message" = "Dulcet comes back as soon as your device is online again. Your downloaded music plays meanwhile.";
 "reader.page.refreshFailed" = "Couldn’t refresh · %@";
-"reader.offlineNotice" = "You're offline. Showing music on this device.";
-"reader.offlineConnectingNotice" = "Showing what's on this device while Dulcet reconnects…";
-"connections.unreachableNotice" = "Can't reach your server. Showing music on this device.";

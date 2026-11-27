@@ -10,9 +10,7 @@ struct DulcetSearchView: View {
 #if os(iOS) || os(tvOS)
     @FocusState private var searchFieldFocused: Bool
 #endif
-#if os(iOS) || os(macOS)
     @Environment(DulcetPresentationStore.self) private var store
-#endif
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var selectedGroup: DulcetSearchResultKind?
     var recentSearches: [String] = []
@@ -246,7 +244,7 @@ struct DulcetSearchView: View {
                 body: DulcetStrings.searchErrorBody,
                 retry: true
             )
-        case let .readerFailed(kind):
+        case let .readerFailed(kind) where !kind.isTransportFailure && store.readerConnectionIndicator() == nil:
             // A failure is never drawn as "no matches": the server was not heard from.
             searchMessage(
                 symbol: "exclamationmark.magnifyingglass",
@@ -255,12 +253,8 @@ struct DulcetSearchView: View {
                 retry: true,
                 identifier: "dulcet.search.failed"
             )
-        case let .readerOffline(seen):
-            searchMessage(
-                symbol: "wifi.slash",
-                title: DulcetStrings.readerSearchOfflineEmptyTitle,
-                body: DulcetReaderCopy.searchScopeLabel(.deviceOffline(seen)) ?? DulcetStrings.readerSearchScopeDevice
-            )
+        case .readerOffline, .readerFailed:
+            DulcetStateMessage(symbol: "magnifyingglass", title: DulcetStrings.readerSearchOfflineEmptyTitle)
         case .idle:
             if recentSearches.isEmpty {
                 searchMessage(
