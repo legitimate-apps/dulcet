@@ -26,14 +26,24 @@ struct DulcetListenNowView: View {
     @State private var recentItems: [DulcetProviderItemID] = []
     @State private var shownShelves: Set<DulcetListenNowShelf> = []
     @State private var showsUnreachable = false
+    /// What each shown shelf drew, from which the Top Picks are chosen.
+    @State private var shownItems: [DulcetListenNowShelf: [DulcetReaderItem]] = [:]
     var body: some View {
+        let picks = DulcetListenNowPicks.plan(shownItems)
         DulcetReaderPage(title: DulcetStrings.listenNow, sectionSpacing: 0) { width in
+#if !os(tvOS)
+            // Apple TV keeps its shelves first: its remote arrives on the first shelf's first tile.
+            DulcetListenNowHero(picks: picks, width: width)
+#endif
             ForEach(DulcetListenNowShelf.allCases) { shelf in
                 DulcetListenNowShelfView(shelf: shelf, width: width, recentItems: recentItems,
-                    takesArrivalFocus: shelf == arrivalShelf)
+                    takesArrivalFocus: shelf == arrivalShelf, heroRoutes: Set(picks.compactMap(\.route)))
             }
         }
         .onPreferenceChange(DulcetRecentlyPlayedItems.self) { recentItems = $0 }
+        .onPreferenceChange(DulcetListenNowShelfItems.self) { items in
+            if items != shownItems { shownItems = items }
+        }
         .onPreferenceChange(DulcetShownListenNowShelves.self) { shownShelves = $0 }
         .task(id: isOfflineWithNothingShown) {
             // A grace period: shelves read from the device answer well within it, so a cached
@@ -110,6 +120,15 @@ struct DulcetListenNowView: View {
     /// the page instead.
     private var arrivalShelf: DulcetListenNowShelf? {
         DulcetListenNowShelf.allCases.first(where: shownShelves.contains)
+    }
+}
+
+/// The items each shelf drew, for the Top Picks over them.
+struct DulcetListenNowShelfItems: PreferenceKey {
+    static let defaultValue: [DulcetListenNowShelf: [DulcetReaderItem]] = [:]
+    static func reduce(value: inout [DulcetListenNowShelf: [DulcetReaderItem]],
+                       nextValue: () -> [DulcetListenNowShelf: [DulcetReaderItem]]) {
+        value.merge(nextValue()) { _, next in next }
     }
 }
 
@@ -220,10 +239,13 @@ private struct DulcetRecentlyPlayedItems: PreferenceKey {
 private struct DulcetListenNowShelfView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.dynamicTypeSize) private var textSize
+    @Environment(\.dulcetListenNowZoom) private var zoom
     let shelf: DulcetListenNowShelf
     let width: CGFloat
     let recentItems: [DulcetProviderItemID]
     var takesArrivalFocus = false
+    /// Pages a Top Pick already zooms out of; a tile for the same page leaves the zoom to it.
+    var heroRoutes: Set<DulcetReaderRoute> = []
     var body: some View {
         DulcetReaderScreen(query: .listenNow(shelf)) { model in
             // Keep a concrete view alive before the first publication. An EmptyView does not
@@ -234,7 +256,7 @@ private struct DulcetListenNowShelfView: View {
                 // and Explore remain useful for an account without history.
                 if shows(window) {
                     VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
-                        DulcetShelfHeader(title: shelf.title, identifier: "dulcet.listenNow.\(shelf.rawValue).all") {
+                        DulcetShelfHeader(title: DulcetListenNowPicks.shelfTitle(shelf, items: window.items), identifier: "dulcet.listenNow.\(shelf.rawValue).all") {
                             store.pushReaderPage(.listenNowShelf(shelf))
                         }
                         ScrollView(.horizontal, showsIndicators: false) {
@@ -257,6 +279,7 @@ private struct DulcetListenNowShelfView: View {
                                         .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                     } else {
                                         DulcetReaderTile(item: item, width: tileWidth)
+                                            .dulcetZoomSource(item.route.flatMap { heroRoutes.contains($0) ? nil : $0 }, in: zoom)
                                             .modifier(DulcetListenNowArrivalFocus(active: takesArrivalFocus && index == 0))
                                             .dulcetReaderRow(index, in: model)
                                     }
@@ -292,6 +315,8 @@ private struct DulcetListenNowShelfView: View {
                 value: shelf == .recent ? model.window?.items.map(\.id) ?? [] : [])
             .preference(key: DulcetShownListenNowShelves.self,
                 value: model.window.map(shows) == true ? [shelf] : [])
+            .preference(key: DulcetListenNowShelfItems.self,
+                value: model.window.flatMap { shows($0) ? [shelf: $0.items] : nil } ?? [:])
         }
     }
     private func shows(_ window: DulcetLibraryWindow) -> Bool {
@@ -311,13 +336,22 @@ private struct DulcetListenNowShelfView: View {
 }
 struct DulcetListenNowShelfPage: View {
     @Environment(DulcetPresentationStore.self) private var store
+    @Environment(\.dulcetListenNowShown) private var shown
     let shelf: DulcetListenNowShelf
     var body: some View {
         DulcetReaderScreen(query: .listenNow(shelf), showsDestinationStatus: true) { model in
-            DulcetReaderListPage(title: shelf.title, freshness: model.window?.freshness) { width in
+            DulcetReaderListPage(title: DulcetListenNowPicks.shelfTitle(shelf, items: model.window?.items ?? handedOver),
+                                 freshness: model.window?.freshness) { width in
 #if os(iOS)
-                DulcetReaderListRows(model: model) { window in
-                    shelfRows(window, model: model, width: width)
+                if model.window == nil, !handedOver.isEmpty {
+                    // The page opens as it zooms out of its card: the tracks Listen Now already
+                    // drew stand in for the few frames its own window takes to open, rather than
+                    // a spinner on an empty page.
+                    handedOverRows
+                } else {
+                    DulcetReaderListRows(model: model) { window in
+                        shelfRows(window, model: model, width: width)
+                    }
                 }
 #else
                 DulcetReaderListBody(model: model) { window in
@@ -327,6 +361,25 @@ struct DulcetListenNowShelfPage: View {
             }
         }
     }
+
+    /// What Listen Now showed of this shelf, when it is tracks.
+    private var handedOver: [DulcetReaderItem] {
+        let items = shown[shelf] ?? []
+        return items.first?.kind == .track ? items : []
+    }
+
+#if os(iOS)
+    private var handedOverRows: some View {
+        let items = handedOver
+        return ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+            DulcetReaderTrackRow(item: item, index: index + 1) { track in
+                store.playReaderTracks(items.compactMap(\.playableTrack), startingAt: track,
+                    sourceKind: .library, sourceID: nil, sourceName: shelf.title)
+            }
+            .dulcetSongRowSeparator(above: index > 0, songRowShowingIndex: true, artwork: true)
+        }
+    }
+#endif
 
     @ViewBuilder
     private func shelfRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel, width: CGFloat) -> some View {
