@@ -3,7 +3,7 @@ set -euo pipefail
 out="$R7_ART_EVIDENCE"
 dd="$RUNNER_TEMP/r7-art-dd"
 mkdir -p "$out/screens"
-udid=
+udid="${R7_ART_IPHONE_UDID:?Select and settle the proof simulator first}"
 server_pid=
 fixture_pid=
 cleanup() {
@@ -32,12 +32,6 @@ for i in {1..50}; do
     if [ "$i" = 50 ]; then cat "$out/seed.log"; exit 3; fi
     sleep 2
 done
-udid=$(xcrun simctl list devices booted -j | jq -r '.devices[][] | select(.name=="iPhone 18 Pro" and .state=="Booted") | .udid' | head -n 1)
-if [ -z "$udid" ]; then
-    udid=$(xcrun simctl list devices available -j | jq -r '.devices | to_entries[] | select(.key|contains("iOS-27")) | .value[] | select(.name=="iPhone 18 Pro") | .udid' | head -n 1)
-fi
-test -n "$udid"
-xcrun simctl bootstatus "$udid" -b 2>&1 | tee "$out/simulator.log"
 plan=$(find "$dd/Build/Products" -maxdepth 1 -name 'DulcetiOS_*iphonesimulator*.xctestrun' -print -quit)
 test -f "$plan"
 export TEST_RUNNER_DULCET_UI_TEST_SERVER_URL=http://127.0.0.1:4914

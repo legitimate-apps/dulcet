@@ -14,7 +14,7 @@ concurrency:
 jobs:
   iphone-artwork:
     runs-on: xcode-27
-    timeout-minutes: 65
+    timeout-minutes: 95
     env:
       TZ: UTC
       HOMEBREW_NO_AUTO_UPDATE: "1"
@@ -51,6 +51,18 @@ jobs:
               tail -150 "$R7_ART_EVIDENCE/build.log"
               exit 1
             }
+      - name: Boot the iPhone and settle its services
+        timeout-minutes: 23
+        run: |
+          set -o pipefail
+          python3 tools/ci/isolate-simulator --phase r7-artwork --keep-name 'iPhone 18 Pro' \
+            --settle --require-settle --require-isolation | tee "$R7_ART_EVIDENCE/simulator.log"
+          udid=$(sed -nE 's/^SIMULATOR ISOLATION phase=r7-artwork keep=([0-9A-Fa-f-]{36}) .* isolated=true .*/\1/p' "$R7_ART_EVIDENCE/simulator.log")
+          test -n "$udid"
+          echo "R7_ART_IPHONE_UDID=$udid" >> "$GITHUB_ENV"
+      - name: Settle host pressure before starting the test runner
+        timeout-minutes: 17
+        run: python3 tools/ci/host-pressure settle --phase r7-artwork --output "$R7_ART_EVIDENCE/host-pressure.log"
       - name: Drive the iPhone against the disposable server
         timeout-minutes: 25
         run: bash tools/r7-art-proof/run.sh
