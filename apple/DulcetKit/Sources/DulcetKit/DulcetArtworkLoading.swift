@@ -40,9 +40,17 @@ public struct DulcetArtworkFetchRequest: Sendable,
 
 public enum DulcetArtworkFetchOutcome: Sendable {
     case loaded(Data)
+    case loadedFromOtherSize(Data, DulcetArtworkSizeBucket)
     case unavailable
     case failed
     case cancelled
+
+    var imageData: Data? {
+        switch self {
+        case let .loaded(data), let .loadedFromOtherSize(data, _): data
+        case .unavailable, .failed, .cancelled: nil
+        }
+    }
 }
 
 @MainActor

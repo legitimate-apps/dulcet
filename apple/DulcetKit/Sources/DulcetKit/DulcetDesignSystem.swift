@@ -707,7 +707,8 @@ struct DulcetArtworkView: View {
         artwork.remoteReference.map {
             // Connection arrival retries a placeholder through this identity, using the same
             // loading path as reference/size changes and avoiding a second connection observer.
-            DulcetArtworkLoadIdentity(reference: $0, sizeBucket: sizeBucket, connected: store.snapshot.accountConnected)
+            DulcetArtworkLoadIdentity(reference: $0, sizeBucket: sizeBucket,
+                connected: store.snapshot.accountConnected && store.librarySession?.isDeviceOffline != true)
         }
     }
 
@@ -723,7 +724,7 @@ struct DulcetArtworkView: View {
 
     private func startLoading() {
         cancelLoading()
-        decodedImage = nil
+        if decodedReference != artwork.remoteReference { decodedImage = nil }
         decodedReference = artwork.remoteReference
         if let reference = artwork.remoteReference,
            let cached = store.cachedArtwork(reference, sizeBucket: sizeBucket, allowingOtherSizes: false) {
@@ -741,7 +742,7 @@ struct DulcetArtworkView: View {
             guard generation == loadGeneration else { return }
             operation = nil
             switch outcome {
-            case let .loaded(data):
+            case let .loaded(data), let .loadedFromOtherSize(data, _):
                 decodedReference = reference
                 decodedImage = store.cachedArtwork(reference, sizeBucket: sizeBucket, allowingOtherSizes: false)
                     ?? DulcetArtworkMemoryCache.decode(data, maximumPixelSize: sizeBucket.rawValue)

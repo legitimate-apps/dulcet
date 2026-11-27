@@ -36,6 +36,7 @@ internal class DiscoverStore(
         check(old.last_action_time < Long.MAX_VALUE)
         maxOf(wall(),old.last_action_time + 1).also { wishes.updateClock(it,old.last_sequence,serverId) }
     }
+    fun hasRead(key: String): Boolean = cache.hasRead(serverId,key).executeAsOneOrNull() != null
     fun read(key: String): ByteArray? = database.transactionWithResult {
         val row = cache.selectRead(serverId,key).executeAsOneOrNull() ?: return@transactionWithResult null
         cache.touchRead(nextIssue(),serverId,key)

@@ -5279,7 +5279,10 @@ A saved or connecting account reads cached artwork from the device without waiti
 negotiation and without sending an artwork request. Only a connected account may fetch a cache
 miss. Connecting does not refetch a cached cover. A bounded decoded-image memory cache supplies
 an already seen cover on the first paint, including another size bucket while the requested size
-loads. Disk cache accounting is incremental after one inventory; eviction may remove a small
+loads. A saved larger size can satisfy a smaller request. If the requested size is unavailable
+from the server, the same account and artwork key can use another size from disk. The alternative
+is recorded under its own size in memory. Disk cache accounting is incremental after one inventory;
+eviction may remove a small
 batch while keeping the byte and entry bounds. Sign-out cancels pending artwork work and removes
 both memory and disk entries for that server, so late completion cannot restore them.
 
@@ -8099,6 +8102,16 @@ its attempt as a paused start, so an automatic skip past it stays paused until P
 shows a reorder handle on every row, as the system player's queue does: dragging it moves the row at
 once with a haptic on pickup and on drop, and the row keeps its tap, swipe and context menu because the
 list never enters edit mode. Edit remains for its Remove and Move buttons.
+
+**2026-11-27 — Apple Discover revalidates stale snapshots and Listen Now keeps seen covers offline (§18.2, §29.10).**
+Discover Home restores saved shelves immediately. It reads a shelf in the background when the
+reader is online and the snapshot is missing, is at least 30 minutes past receipt, is marked stale
+by the server, failed a refresh, or is missing artwork. A live shelf answer lets a visible unresolved
+tile try its artwork again, including when the artwork ID is unchanged. Photos use the existing
+32 MiB per-account Discover LRU. Listen Now uses the saved mix order for cover selection and
+independently limits Play to available tracks. The Apple artwork disk reader can use a saved image
+of the same identity at a different size, without writing a duplicate file. The existing 128 MiB
+and 2,048-entry LRU targets, shared media budget, and downloaded-cover protection apply.
 
 **2026-11-27 — Search leads with the version people play; Discover artist photos survive a busy source and reach the device (§18.1, §16.14, §29, Search and Discover).**
 OBSERVED on an iPhone against the household server, 2026-11-27: searching "gold soundz" led with Soccer

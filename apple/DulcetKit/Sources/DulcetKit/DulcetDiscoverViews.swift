@@ -379,10 +379,22 @@ struct DulcetDiscoverArtworkView: View {
     var shape: Shape = .rounded
     /// Names the placeholder: an artist without a cover shows their initial.
     var title = ""
+    let refreshedAt: Date?
     @State private var image: DulcetDiscoverImageMemory.Platform?
     @State private var operation: (any DulcetLibraryReaderCancellable)?
-    init(reader: any DulcetDiscoverReading, artworkId: String?, size: CGFloat = DulcetDiscoverMetrics.rowArtworkSide, shape: Shape = .rounded, title: String = "") {
-        self.reader = reader; self.artworkId = artworkId; self.size = size; self.shape = shape; self.title = title
+    @State private var loadGeneration = 0
+    @State private var retryAfterLoad = false
+
+    private struct LoadKey: Equatable {
+        let artworkId: String?
+        let refreshedAt: Date?
+    }
+    private var loadKey: LoadKey { LoadKey(artworkId: artworkId, refreshedAt: refreshedAt) }
+
+    init(reader: any DulcetDiscoverReading, artworkId: String?, size: CGFloat = DulcetDiscoverMetrics.rowArtworkSide,
+         shape: Shape = .rounded, title: String = "", refreshedAt: Date? = nil) {
+        self.reader = reader; self.artworkId = artworkId; self.size = size; self.shape = shape
+        self.title = title; self.refreshedAt = refreshedAt
         _image = State(initialValue: artworkId.flatMap { DulcetDiscoverImageMemory.image(for: $0) })
     }
     var body: some View {
@@ -397,25 +409,44 @@ struct DulcetDiscoverArtworkView: View {
         }
         .frame(width: size, height: size).clipped().clipShape(outline).accessibilityHidden(true)
         .onAppear(perform: load)
-        // A shelf that refreshes in place (its first answer had no art yet, or named another image) keeps this
-        // view on screen, so onAppear never runs again; without this the tile kept its letter circle.
-        .onChange(of: artworkId) { _, newId in
-            operation?.cancel(); operation = nil
-            image = newId.flatMap { DulcetDiscoverImageMemory.image(for: $0) }
-            load()
+        .onChange(of: loadKey) { old, new in
+            if old.artworkId != new.artworkId {
+                cancelLoad()
+                image = new.artworkId.flatMap { DulcetDiscoverImageMemory.image(for: $0) }
+                load()
+            } else if new.refreshedAt != nil, image == nil {
+                // The refreshed page may name the same image that failed on the cached page.
+                if operation == nil { load() }
+                else { retryAfterLoad = true }
+            }
         }
-        .onDisappear { operation?.cancel(); operation = nil }
+        .onDisappear(perform: cancelLoad)
     }
     private var outline: AnyShape {
         shape == .circle ? AnyShape(Circle()) : AnyShape(RoundedRectangle(cornerRadius: DulcetDiscoverMetrics.artworkCornerRadius(forSize: size), style: .continuous))
     }
     private func load() {
         guard image == nil, operation == nil, let artworkId else { return }
-        operation = reader.artwork(artworkId: artworkId) { result in
-            // Finished either way: a tile that scrolls away and back asks again after a failure.
+        loadGeneration += 1
+        let generation = loadGeneration
+        var finished = false
+        let started = reader.artwork(artworkId: artworkId) { result in
+            finished = true
+            guard generation == loadGeneration else { return }
             operation = nil
             if case let .success(value) = result { image = DulcetDiscoverImageMemory.store(value, for: artworkId) }
+            if retryAfterLoad {
+                retryAfterLoad = false
+                load()
+            }
         }
+        if !finished { operation = started }
+    }
+    private func cancelLoad() {
+        loadGeneration += 1
+        retryAfterLoad = false
+        operation?.cancel()
+        operation = nil
     }
     @ViewBuilder private var placeholder: some View {
         if shape == .circle, let initial = title.first(where: { $0.isLetter || $0.isNumber }) {

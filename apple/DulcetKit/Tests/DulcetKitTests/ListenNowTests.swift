@@ -116,16 +116,20 @@ struct ListenNowTopPicksTests {
         #expect(DulcetListenNowPicks.plan([.random: [album("r1", "Random")]]).isEmpty)
     }
 
-    /// Offline, a mix keeps only what can play; with too little left it is no card.
-    @Test func aMixOnlyCountsTracksThatCanPlay() {
-        let offline = [track("1", playability: "downloaded"), track("2", playability: "unavailableOffline"),
-                       track("3", playability: "downloaded"), track("4", playability: "unavailableOffline")]
-        #expect(DulcetListenNowPicks.plan([.dailyMix: offline]).isEmpty)
-        let enough = offline + [track("5", playability: "downloaded")]
-        guard case let .mix(_, tracks)? = DulcetListenNowPicks.plan([.dailyMix: enough]).first?.content else {
-            Issue.record("three playable tracks make a mix"); return
+    @Test func offlineMixKeepsItsCollageAndOnlyPlaysAvailableTracks() throws {
+        let online = (1...4).map { track("\($0)", albumID: "album\($0)") }
+        let offline = (1...4).map {
+            track("\($0)", albumID: "album\($0)", playability: $0 == 3 ? "downloaded" : "unavailableOffline")
         }
-        #expect(tracks.map(\.id.rawID) == ["1", "3", "5"])
+        let onlinePick = try #require(DulcetListenNowPicks.plan([.dailyMix: online]).first)
+        let offlinePick = try #require(DulcetListenNowPicks.plan([.dailyMix: offline]).first)
+        #expect(onlinePick.artworks.count == 4)
+        #expect(offlinePick.artworks == onlinePick.artworks)
+        #expect(offlinePick.playableMixTracks.map(\.id.rawID) == ["3"])
+        let noneAvailable = (1...4).map { track("\($0)", albumID: "album\($0)", playability: "unavailableOffline") }
+        let coldPick = try #require(DulcetListenNowPicks.plan([.dailyMix: noneAvailable]).first)
+        #expect(coldPick.artworks == onlinePick.artworks)
+        #expect(coldPick.playableMixTracks.isEmpty)
     }
 
     /// A recently played playlist stands in for Jump Back In when no album has been played.

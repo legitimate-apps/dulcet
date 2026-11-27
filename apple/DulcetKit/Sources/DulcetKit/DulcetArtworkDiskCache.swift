@@ -94,6 +94,19 @@ public actor DulcetArtworkDiskCache {
         return Saved(data: data, isStale: isStale)
     }
 
+    /// Try the closest larger representation first, then the largest smaller one. Only the
+    /// selected file is touched in the LRU, and reads never create aliases or duplicate bytes.
+    public func alternate(for key: DulcetArtworkCacheKey) -> (bucket: DulcetArtworkSizeBucket, saved: Saved)? {
+        let buckets = DulcetArtworkSizeBucket.allCases
+        let candidates = buckets.filter { $0.rawValue > key.sizeBucket.rawValue }
+            + buckets.reversed().filter { $0.rawValue < key.sizeBucket.rawValue }
+        for bucket in candidates {
+            let alternate = DulcetArtworkCacheKey(serverID: key.serverID, artworkKey: key.artworkKey, sizeBucket: bucket)
+            if let saved = saved(for: alternate) { return (bucket, saved) }
+        }
+        return nil
+    }
+
     /// `freshFor` is the server's short lifetime for the image in seconds (see `AppleArtworkFetchOutcome`),
     /// or nil for an image kept as long as its id. The file stays in the cache either way, so a stale image
     /// still shows offline; only its freshness is recorded beside it.

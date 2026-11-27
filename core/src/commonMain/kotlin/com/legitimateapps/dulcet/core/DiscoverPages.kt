@@ -6,6 +6,8 @@ import kotlinx.serialization.KSerializer
 import kotlinx.serialization.json.Json
 import kotlin.time.Clock
 
+private const val HOME_SNAPSHOT_MAX_AGE_MILLIS = 30 * 60 * 1000L
+
 internal object DiscoverRoutePolicy {
     fun libraryTarget(item: DiscoverItem): DiscoverLibraryRef? {
         if (item.availability.status != "held") return null
@@ -66,6 +68,15 @@ internal class DiscoverPages(
     fun cachedShelf(id: String): DiscoverShelfPage? = store.read(shelfKey(id, null, 12))?.let {
         runCatching { Json.decodeFromString(DiscoverShelfPage.serializer(), it.decodeToString()).let { page -> page.copy(age=page.age.copy(fromDeviceCache=true)) } }.getOrNull()
     }
+    fun needsHomeRefresh(page: DiscoverShelfPage?, nowMillis: Long): Boolean =
+        page == null || page.age.stale || page.refreshError != null ||
+            nowMillis - page.age.receivedAtMillis >= HOME_SNAPSHOT_MAX_AGE_MILLIS ||
+            page.items.any { item ->
+                val artworkId = item.artworkId
+                if (artworkId != null) !store.hasRead("artwork:$artworkId")
+                else item.kind == "artist" && item.target != null
+            }
+
     private fun shelfKey(id: String, cursor: String?, limit: Int) = "shelf:${id.length}:$id:${cursor?.let { "${it.length}:$it" } ?: "null"}:$limit"
     private fun listKey(type: String, id: String, cursor: String?) = shelfKey("$type:$id", cursor, 20)
     fun shelf(id: String, cursor: String?, completion: (DiscoverResult<DiscoverShelfPage>)->Unit, limit: Int = 20): DiscoverOperation = json(
