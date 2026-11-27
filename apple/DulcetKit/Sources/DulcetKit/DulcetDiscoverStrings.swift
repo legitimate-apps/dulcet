@@ -58,6 +58,7 @@ extension DulcetStrings {
     static let discoverTitle = dynamicText("discover.discoverTitle", fallback: "Discover")
     static let discoverSeeAll = dynamicText("discover.discoverSeeAll", fallback: "See All")
     static let discoverTrending = dynamicText("discover.discoverTrending", fallback: "Trending on ListenBrainz")
+    static let discoverForYou = dynamicText("discover.discoverForYou", fallback: "For You")
     static let discoverSuggestionsCredit = dynamicText("discover.discoverSuggestionsCredit", fallback: "Suggestions use ListenBrainz")
     static let discoverRecentWishes = dynamicText("discover.discoverRecentWishes", fallback: "Recent wishes")
     static let discoverSeeAllRecentWishes = dynamicText("discover.discoverSeeAllRecentWishes", fallback: "See All Recent Wishes")

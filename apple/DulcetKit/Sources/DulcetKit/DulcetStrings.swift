@@ -64,6 +64,29 @@ enum DulcetStrings {
     static let homeGenreStation = text("home.genreStation", "From Your Genres")
     static let homeRandom = text("home.random", "Explore Your Server")
     static func homePlay(_ title: String) -> String { formatted("home.play", "Play %@", title) }
+    static let homeTopPicks = text("home.topPicks", "Top Picks for You")
+    static let homePickMadeForYou = text("home.pick.madeForYou", "Made for You")
+    static let homePickJumpBackIn = text("home.pick.jumpBackIn", "Jump Back In")
+    static func homePickBecauseYouPlay(_ artist: String) -> String {
+        formatted("home.pick.becauseYouPlay", "Because You Listen to %@", artist)
+    }
+    static func homePickBecauseYouLove(_ genre: String) -> String {
+        formatted("home.pick.becauseYouLove", "Because You Love %@", genre)
+    }
+    static let homePickRediscover = text("home.pick.rediscover", "Rediscover")
+    static let homePickOnRepeat = text("home.pick.onRepeat", "On Repeat")
+    static let homePickJustAdded = text("home.pick.justAdded", "Just Added")
+    static func homeArtistMix(_ artist: String) -> String { formatted("home.artistMix", "%@ Mix", artist) }
+    static func homeGenreMix(_ genre: String) -> String { formatted("home.genreMix", "%@ Mix", genre) }
+    static let homeFavouritesMix = text("home.favouritesMix", "Favorites Mix")
+    static func homeMoreFrom(_ artist: String) -> String { formatted("home.moreFrom", "More from %@", artist) }
+    static func homeMoreGenre(_ genre: String) -> String { formatted("home.moreGenre", "More %@", genre) }
+    static func homeArtistsAndMore(_ artists: String) -> String {
+        formatted("home.artistsAndMore", "%@ and more", artists)
+    }
+    static func homePickOpen(_ reason: String, _ title: String, _ subtitle: String) -> String {
+        formatted("home.pick.open", "%@: %@, %@", reason, title, subtitle)
+    }
     static let library = text("sidebar.library", "Library")
     static let search = text("sidebar.search", "Search")
     static let nowPlaying = text("sidebar.nowPlaying", "Now Playing")

@@ -25,6 +25,16 @@ public enum DulcetDiscoverShelf: String, CaseIterable, Sendable {
     }
 }
 
+extension DulcetDiscoverShelf {
+    /// The order Discover's shelves are drawn in. Artists like the ones this listener plays come
+    /// first once there are any, ahead of what is trending for everyone; until then, trending
+    /// leads and the personal shelf keeps its place further down, saying how to fill it.
+    public static func homeOrder(personalHasItems: Bool) -> [DulcetDiscoverShelf] {
+        guard personalHasItems else { return allCases }
+        return [.similarArtists] + allCases.filter { $0 != .similarArtists }
+    }
+}
+
 public struct DulcetDiscoverShelfPresentation {
     public let state: DulcetDiscoverShelfState
     public init(_ state: DulcetDiscoverShelfState) { self.state = state }

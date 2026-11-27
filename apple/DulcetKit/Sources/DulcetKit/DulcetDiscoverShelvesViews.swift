@@ -26,9 +26,11 @@ struct DulcetDiscoverHomeView: View {
                     ?? DulcetDiscoverStatus(age: nil, error: nil, connection: connection)
                 DulcetDiscoverStatusView(status: status, prefix: "discover.home") { model.reader.refreshHome() }
                 if let home = publication?.home {
-                    ForEach(DulcetDiscoverShelf.allCases, id: \.rawValue) { shelf in
+                    let personal = home.shelves.first { $0.id == DulcetDiscoverShelf.similarArtists.rawValue }?
+                        .page.map { !$0.items.isEmpty } == true
+                    ForEach(DulcetDiscoverShelf.homeOrder(personalHasItems: personal), id: \.rawValue) { shelf in
                         if let state = home.shelves.first(where: { $0.id == shelf.rawValue }) {
-                            shelfView(shelf, state)
+                            shelfView(shelf, state, leadsAsPersonal: personal && shelf == .similarArtists)
                                 .id(shelf.rawValue)
                         }
                     }
@@ -66,7 +68,8 @@ struct DulcetDiscoverHomeView: View {
             try? await Task.sleep(for: .milliseconds(150))
         }
     }
-    private func shelfView(_ shelf: DulcetDiscoverShelf, _ state: DulcetDiscoverShelfState) -> some View {
+    private func shelfView(_ shelf: DulcetDiscoverShelf, _ state: DulcetDiscoverShelfState,
+                           leadsAsPersonal: Bool = false) -> some View {
         let presentation = DulcetDiscoverShelfPresentation(state)
         let prefix = "discover.shelf.\(shelf.rawValue)"
         // The shelf's age is read with its heading rather than printed under it.
@@ -74,6 +77,9 @@ struct DulcetDiscoverHomeView: View {
         return VStack(alignment: .leading, spacing: DulcetSpacing.sm) {
             if shelf == .trendingArtists {
                 Text(DulcetStrings.discoverTrending).font(.title2.bold()).accessibilityAddTraits(.isHeader)
+            } else if leadsAsPersonal {
+                Text(DulcetStrings.discoverForYou).font(.title2.bold()).accessibilityAddTraits(.isHeader)
+                    .accessibilityIdentifier("discover.forYou")
             }
             HStack {
                 Text(shelf.title).font(.title3.bold()).accessibilityAddTraits(.isHeader)

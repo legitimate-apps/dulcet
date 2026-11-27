@@ -4,6 +4,12 @@ import CoreGraphics
 /// An opaque field of distinct cover colours, shared by artwork, queue and lyrics modes.
 /// White controls keep their contrast in both appearances without a grey or pastel scrim.
 struct DulcetPlayerBackdrop: View {
+    /// The brightest relative luminance a sampled colour may keep, so white text on it holds 4.5:1.
+    static let maximumLuminance = 0.14
+    /// The neutral grey at that ceiling: the brightest field the backdrop can draw, the worst case
+    /// the registered artwork-tint contrast pairs are measured against.
+    static let brightestField = Color(.sRGB, white: 0.41, opacity: 1)
+
     let artwork: DulcetArtwork
     @Environment(DulcetPresentationStore.self) private var store
     @State private var colours: [Color] = []
@@ -87,7 +93,8 @@ struct DulcetPlayerBackdrop: View {
             func linear(_ value: Double) -> Double {
                 value <= 0.04045 ? value / 12.92 : pow((value + 0.055) / 1.055, 2.4)
             }
-            while 0.2126 * linear(values[0]) + 0.7152 * linear(values[1]) + 0.0722 * linear(values[2]) > 0.14 {
+            while 0.2126 * linear(values[0]) + 0.7152 * linear(values[1]) + 0.0722 * linear(values[2])
+                > maximumLuminance {
                 values = values.map { $0 * 0.97 }
             }
             return Color(.sRGB, red: values[0], green: values[1], blue: values[2], opacity: 1)
