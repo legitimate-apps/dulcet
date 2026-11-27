@@ -46,6 +46,9 @@ public struct DulcetUpNextSection: View {
     var showsEmptyState = true
 #if os(iOS)
     @Environment(\.editMode) private var editMode
+    /// The drag a row's handle is making, and every row's frame for it to measure against.
+    @State private var handleDrag: DulcetQueueHandleDrag?
+    @State private var rowFrames: [DulcetQueueEntryID: CGRect] = [:]
 #endif
 
     public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void, autoplay: DulcetAutoplayToggle? = nil) {
@@ -107,7 +110,73 @@ public struct DulcetUpNextSection: View {
         #endif
     }
 
+    @ViewBuilder
     private func row(_ entry: DulcetQueueEntry, offset: Int) -> some View {
+#if os(iOS)
+        let lifted = handleDrag?.source == offset
+        baseRow(entry, offset: offset)
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rowFrames[entry.id] = $0 }
+            .background {
+                if lifted {
+                    RoundedRectangle(cornerRadius: DulcetMetrics.liftedRowCornerRadius, style: .continuous)
+                        .fill(.regularMaterial)
+                        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+                        .padding(.horizontal, -DulcetUpNextList.rowInset / 2)
+                }
+            }
+            .scaleEffect(lifted ? 1.03 : 1)
+            .offset(y: lifted ? handleDrag?.translation ?? 0 : handleDrag?.displacement(of: offset) ?? 0)
+            .zIndex(lifted ? 1 : 0)
+#else
+        baseRow(entry, offset: offset)
+#endif
+    }
+
+#if os(iOS)
+    /// The handle shows wherever a row can move by dragging: not while Edit's own controls are up,
+    /// and not at accessibility sizes, where the row stacks and moves by its named actions.
+    private var showsReorderHandle: Bool {
+        !isEditing && !dynamicTypeSize.isAccessibilitySize && model.upcoming.count > 1
+    }
+
+    private func reorderHandle(offset: Int) -> AnyView? {
+        guard showsReorderHandle else { return nil }
+        return AnyView(DulcetQueueReorderHandle(
+            onChanged: { translation in
+                if handleDrag == nil {
+                    let frames = model.upcoming.map { rowFrames[$0.id] ?? .zero }
+                    guard let drag = DulcetQueueHandleDrag(source: offset, frames: frames) else { return }
+                    DulcetHaptic.reorderLift.play()
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { handleDrag = drag }
+                }
+                withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.86)) {
+                    handleDrag?.translation = translation
+                }
+            },
+            onEnded: { endHandleDrag() }
+        ))
+    }
+
+    private func endHandleDrag() {
+        guard let drag = handleDrag else { return }
+        if let destination = drag.moveDestination,
+           let intent = model.moveIntent(fromOffsets: IndexSet(integer: drag.source), toOffset: destination) {
+            DulcetHaptic.reorder.play()
+            // The queue reorders in this same update, so the rows take their new places without
+            // first springing back to the old ones.
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                onEdit(intent)
+                handleDrag = nil
+            }
+        } else {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { handleDrag = nil }
+        }
+    }
+#endif
+
+    private func baseRow(_ entry: DulcetQueueEntry, offset: Int) -> some View {
         DulcetPlayerQueueRow(
             track: entry.track,
             sourceDisplayName: model.sourceDisplayName,
@@ -143,7 +212,8 @@ public struct DulcetUpNextSection: View {
                 .font(.subheadline)
                 .buttonStyle(.borderless)
                 .frame(minHeight: 44)
-            }
+            },
+            reorderHandle: platformReorderHandle(offset: offset)
         )
         // Reordering is a drag, which VoiceOver and Switch Control cannot perform on a row, so
         // Move Up and Move Down are named actions. Removal needs one only where the platform does
@@ -171,6 +241,14 @@ public struct DulcetUpNextSection: View {
             #endif
         }
         .contextMenu { rowActions(entry, offset: offset) }
+    }
+
+    private func platformReorderHandle(offset: Int) -> AnyView? {
+#if os(iOS)
+        reorderHandle(offset: offset)
+#else
+        nil
+#endif
     }
 
     private var isEditing: Bool {

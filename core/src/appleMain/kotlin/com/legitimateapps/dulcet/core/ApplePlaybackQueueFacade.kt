@@ -598,22 +598,27 @@ public class ApplePlaybackQueueClient private constructor(
         controllerOrThrow().discardPreload(AttemptId(attemptId))
     }
 
-    public fun next(): ApplePlaybackQueueTransitionDto = runClosed {
-        controllerOrThrow().next()
+    /**
+     * Skips keep the play state the person sees (§14.1): pass `shouldAutoPlay` false while paused
+     * and the reached entry starts paused. Every skip -- in-app, lock screen, Control Center --
+     * passes it, so none of them can start sound the person did not ask for.
+     */
+    public fun next(shouldAutoPlay: Boolean): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().next(shouldAutoPlay)
     }
 
-    public fun previous(): ApplePlaybackQueueTransitionDto = runClosed {
-        controllerOrThrow().previous()
+    public fun previous(shouldAutoPlay: Boolean): ApplePlaybackQueueTransitionDto = runClosed {
+        controllerOrThrow().previous(shouldAutoPlay)
     }
 
-    public fun nextForSession(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
+    public fun nextForSession(playbackSessionId: String, shouldAutoPlay: Boolean): ApplePlaybackQueueTransitionDto =
         runClosed {
-            controllerOrThrow().nextForSession(PlaybackSessionId(playbackSessionId))
+            controllerOrThrow().nextForSession(PlaybackSessionId(playbackSessionId), shouldAutoPlay)
         }
 
-    public fun previousForSession(playbackSessionId: String): ApplePlaybackQueueTransitionDto =
+    public fun previousForSession(playbackSessionId: String, shouldAutoPlay: Boolean): ApplePlaybackQueueTransitionDto =
         runClosed {
-            controllerOrThrow().previousForSession(PlaybackSessionId(playbackSessionId))
+            controllerOrThrow().previousForSession(PlaybackSessionId(playbackSessionId), shouldAutoPlay)
         }
 
     /** Available IDs indicate present resolvability, not authoritative library membership. */

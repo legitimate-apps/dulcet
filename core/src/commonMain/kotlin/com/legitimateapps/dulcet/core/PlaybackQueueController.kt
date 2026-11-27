@@ -607,9 +607,16 @@ internal class PlaybackQueueController(
         return resumeHeldEnd(discarded) ?: emptyTransition().copy(discardedPreloadAttemptId = discarded)
     }
 
-    fun next(): PlaybackQueueTransition = moveBy(1)
+    /**
+     * A skip changes the song, never whether it sounds (§14.1): [shouldAutoPlay] is the play state
+     * the owner shows the person as they skip. False starts the reached entry paused, and Play
+     * starts it, exactly as a restored entry does; a skip past that entry's failure stays paused
+     * too. The lock screen, Control Center, a headset and the app's own controls all pass it the
+     * same way. The default plays, for the owners whose engine keeps its own play intent.
+     */
+    fun next(shouldAutoPlay: Boolean = true): PlaybackQueueTransition = moveBy(1, shouldAutoPlay)
 
-    fun previous(): PlaybackQueueTransition = moveBy(-1)
+    fun previous(shouldAutoPlay: Boolean = true): PlaybackQueueTransition = moveBy(-1, shouldAutoPlay)
 
     /**
      * Starts the entry the user picked from Up Next — a next-item boundary, so the outgoing session
@@ -712,11 +719,18 @@ internal class PlaybackQueueController(
         )
     }
 
-    fun nextForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
-        if (acceptsCommand(playbackSessionId)) moveBy(1) else emptyTransition()
+    /** [next] addressed to a session: a stale session's skip changes nothing. */
+    fun nextForSession(
+        playbackSessionId: PlaybackSessionId,
+        shouldAutoPlay: Boolean = true,
+    ): PlaybackQueueTransition =
+        if (acceptsCommand(playbackSessionId)) moveBy(1, shouldAutoPlay) else emptyTransition()
 
-    fun previousForSession(playbackSessionId: PlaybackSessionId): PlaybackQueueTransition =
-        if (acceptsCommand(playbackSessionId)) moveBy(-1) else emptyTransition()
+    fun previousForSession(
+        playbackSessionId: PlaybackSessionId,
+        shouldAutoPlay: Boolean = true,
+    ): PlaybackQueueTransition =
+        if (acceptsCommand(playbackSessionId)) moveBy(-1, shouldAutoPlay) else emptyTransition()
 
     fun restoreCurrentPausedWithCatalog(
         serverId: ServerId,
@@ -1004,7 +1018,7 @@ internal class PlaybackQueueController(
      * the entry from the start, as after any finished queue ([startCurrent]), and a relaunch does
      * not restore the position either.
      */
-    private fun moveBy(delta: Int): PlaybackQueueTransition {
+    private fun moveBy(delta: Int, shouldAutoPlay: Boolean): PlaybackQueueTransition {
         skippedPastFailures.clear()
         val serverId = queues.activeServerId() ?: return emptyTransition()
         val state = queues.load(serverId)
@@ -1016,7 +1030,12 @@ internal class PlaybackQueueController(
                     PlaybackCoreEffect.ClearResumePosition(state.entries[current].providerItemId),
             )
         }
-        return startAt(state, target, travel = direction)
+        val started = startAt(state, target, travel = direction)
+        if (shouldAutoPlay) return started
+        // A paused skip is a paused start: the mark makes a skip past its failure stay paused,
+        // and the person's Play, or the engine's first progress, clears it.
+        pausedStartAttempt = started.startDirective?.attemptId
+        return started.copy(startDirective = started.startDirective?.copy(shouldAutoPlay = false))
     }
 
     /**

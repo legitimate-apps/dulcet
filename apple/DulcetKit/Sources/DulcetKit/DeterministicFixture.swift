@@ -367,7 +367,8 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
         _ tracks: [DulcetTrack],
         at index: Int,
         source: String,
-        shuffle: Bool
+        shuffle: Bool,
+        isPlaying: Bool = true
     ) {
         guard tracks.indices.contains(index) else { return }
         if failingTrackTitles.contains(tracks[index].title) {
@@ -382,7 +383,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
             currentIndex: index,
             sourceDisplayName: source,
             elapsed: .zero,
-            isPlaying: true,
+            isPlaying: isPlaying,
             outputName: DulcetPlaybackStrings.thisDevice,
             volume: 1,
             audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1),
@@ -424,14 +425,18 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
                 current.queue,
                 at: current.currentIndex + 1,
                 source: current.sourceDisplayName ?? "",
-                shuffle: current.shuffleEnabled
+                shuffle: current.shuffleEnabled,
+                // A skip keeps the play state, as the real controller's does (spec §14.1).
+                isPlaying: current.isPlaying
             )
         case .previous where current.currentIndex > 0:
             startPlaying(
                 current.queue,
                 at: current.currentIndex - 1,
                 source: current.sourceDisplayName ?? "",
-                shuffle: current.shuffleEnabled
+                shuffle: current.shuffleEnabled,
+                // A skip keeps the play state, as the real controller's does (spec §14.1).
+                isPlaying: current.isPlaying
             )
         case let .seek(position):
             playing = current.replacing(isPlaying: current.isPlaying, elapsed: min(current.duration ?? position, max(.zero, position)))

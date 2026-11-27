@@ -20,6 +20,8 @@ enum DulcetHaptic: String {
     case swipeSkip
     /// A song queued from a row swipe: Play Next or Add to Queue.
     case queue
+    /// A queue row picked up by its handle.
+    case reorderLift
     /// A queue row dropped in a new place.
     case reorder
     /// A queue row removed.
@@ -36,6 +38,8 @@ enum DulcetHaptic: String {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
         case .swipeSkip:
             UIImpactFeedbackGenerator(style: .medium).impactOccurred(intensity: 0.7)
+        case .reorderLift:
+            UIImpactFeedbackGenerator(style: .light).impactOccurred(intensity: 0.8)
         case .reorder:
             UIImpactFeedbackGenerator(style: .rigid).impactOccurred(intensity: 0.6)
         case .remove:
