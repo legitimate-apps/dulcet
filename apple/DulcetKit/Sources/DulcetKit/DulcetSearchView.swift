@@ -346,7 +346,7 @@ struct DulcetSearchView: View {
         ScrollView {
             // Tight enough that the first row under a second heading shows on the first screen.
             VStack(alignment: .leading, spacing: DulcetSpacing.xs) {
-                if let label = DulcetReaderCopy.searchScopeLabel(reader?.publication?.scope) {
+                if let label = reader?.scopeLabel {
                     Label(label, systemImage: "wifi.slash")
                         .font(.caption.weight(.medium))
                         .dulcetForeground(.secondaryTextOnWindow)
@@ -478,7 +478,7 @@ struct DulcetSearchView: View {
                     .dulcetForeground(.secondaryTextOnWindow)
                     .accessibilityIdentifier("dulcet.search.resultCount")
             }
-            if let label = DulcetReaderCopy.searchScopeLabel(reader?.publication?.scope) {
+            if let label = reader?.scopeLabel {
                 Label(label, systemImage: "iphone")
                     .font(.caption.weight(.medium))
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -595,7 +595,7 @@ struct DulcetSearchView: View {
                         .accessibilityIdentifier("dulcet.search.resultCount")
                 }
             }
-            if let label = DulcetReaderCopy.searchScopeLabel(reader?.publication?.scope) {
+            if let label = reader?.scopeLabel {
                 Label(label, systemImage: "iphone")
                     .font(.caption.weight(.medium))
                     .dulcetForeground(.secondaryTextOnWindow)
@@ -1062,7 +1062,12 @@ private struct DulcetSearchResultIdentity: View {
 struct DulcetReaderSearchContent {
     let query: String
     let publication: DulcetReaderSearchPublication?
+    var isSettlingConnection = false
     let onActivate: (DulcetReaderSearchRow) -> Void
+
+    var scopeLabel: String? {
+        isSettlingConnection ? nil : DulcetReaderCopy.searchScopeLabel(publication?.scope)
+    }
 
     /// What the screen says for the reader's search (§16.15).
     enum Presentation: Equatable {
@@ -1085,6 +1090,7 @@ struct DulcetReaderSearchContent {
         if trimmed.isEmpty { return .idle }
         guard let publication else { return .waiting }
         if !publication.rows.isEmpty { return .rows }
+        if isSettlingConnection, publication.scope.isConnectionFailure { return .waiting }
         switch publication.scope {
         case .deviceWhileServerPending:
             // Nothing on the device yet; the server's answer is still coming for a query it is

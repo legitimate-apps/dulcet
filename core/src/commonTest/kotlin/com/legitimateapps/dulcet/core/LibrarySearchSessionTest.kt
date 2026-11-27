@@ -366,6 +366,31 @@ class LibrarySearchSessionTest {
     }
 
     @Test
+    fun aReconnectReplacesAnUnansweredSearchWithoutChangingTheQueryOrShowingAnIntermediateScope() = sessionTest { env ->
+        val session = primed(env)
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val search = session.openSearch(listener = pubs)
+        env.server.holdBeforeApply += "search3"
+        search.updateQuery("Album 003")
+        advanceTimeBy(config.debounceMillis + 1)
+        runCurrent()
+        assertEquals(1, env.server.heldCount)
+        assertEquals(SearchScope.DeviceWhileServerPending, pubs.last.scope)
+
+        env.server.holdBeforeApply.clear()
+        val mark = pubs.all.size
+        session.reader.reconnect()
+        runCurrent()
+        assertEquals(2, env.server.count("search3"))
+        assertEquals(listOf(SearchScope.ServerAndDevice), pubs.all.drop(mark).map { it.value.scope })
+        assertEquals("Album 003", pubs.last.query)
+        val settled = pubs.all.size
+        env.server.release()
+        advanceUntilIdle()
+        assertEquals(settled, pubs.all.size, "the retired read and its deadline have no publication")
+    }
+
+    @Test
     fun aQueryWaitingForASlotBehindAStalledReadStillEndsItsWait() = sessionTest { env ->
         val session = env.session(config = LibraryReaderConfig(lookAheadMaxPerViewport = 0, serverConcurrency = 1, lookAheadInFlight = 1))
         session.reader.connect()

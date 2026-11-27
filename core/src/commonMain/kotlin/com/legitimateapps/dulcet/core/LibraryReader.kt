@@ -684,10 +684,17 @@ internal class LibraryReader(
      *   [reconnect] in either order, or do only one of them, and nothing is read before the flush.
      * - **Reachable, while online:** no effect.
      */
-    fun setOnline(reachable: Boolean) {
+    fun setOnline(reachable: Boolean, newPath: Boolean = false) {
         checkConfined()
         this.reachable = reachable
         if (reachable) {
+            if (newPath) {
+                inFlightReconnect?.cancel()
+                inFlightReconnect = null
+                // A partially completed offline-to-online sequence belongs to the retired path.
+                if (completingReconnect) goOffline()
+                breaker.reset()
+            }
             if (!online) startReconnect()
             return
         }
@@ -1131,6 +1138,7 @@ internal class LibraryReader(
         } catch (failure: Throwable) {
             return ReaderConnectionOutcome.Failed(failure.asReaderError())
         }
+        currentCoroutineContext().ensureActive()
         adoptEpoch(epoch)
         return ReaderConnectionOutcome.Read(epoch)
     }

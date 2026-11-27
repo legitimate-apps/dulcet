@@ -68,6 +68,11 @@ public struct DulcetDiscoverStatus: Sendable {
             ?? Self(age: nil, error: nil, connection: connection)
     }
 
+    func showsRefreshStatus(isSettlingConnection: Bool) -> Bool {
+        !isSettlingConnection && !serverReadFailed && connection != "offline"
+            && (ageText != nil || notice != nil || error?.retryable == true)
+    }
+
     public var canRetry: Bool {
         guard connection != "offline", error?.retryable == true else { return false }
         return error?.retryAt.map { $0 <= now } ?? true

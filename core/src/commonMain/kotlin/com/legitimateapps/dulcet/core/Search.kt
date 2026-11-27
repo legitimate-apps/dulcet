@@ -463,10 +463,9 @@ internal class LibrarySearchSession(
      *   shown keep their positions; the answer replaces in place and appends, as within one query
      *   (§18.1), and a row that neither the server nor the device still matches is dropped. A
      *   failure keeps the rows shown and names itself in the scope.
-     * - **Offline or failed label while online:** the query re-runs, as if retyped.
-     * - **Waiting for the server's answer** (or too short to ask): left to it — for no longer than
-     *   [LibrarySearchConfig.serverAnswerDeadlineMillis], after which it says it timed out and, as
-     *   a failed label, re-runs here.
+     * - **Offline, failed or waiting while online:** retry the current query in place. A request
+     *   started before the reconnect may still be waiting for its old path. Keep existing rows
+     *   and their scope until a reply from this attempt, and never ask for a too-short query.
      */
     fun revalidate() {
         reader.checkConfined()
@@ -475,8 +474,7 @@ internal class LibrarySearchSession(
             when {
                 !reader.online -> query(text)
                 scope == SearchScope.ServerAndDevice -> if (!serverAnswerIsCurrent()) reReadQuietly()
-                scope == SearchScope.DeviceWhileServerPending -> Unit
-                else -> query(text)
+                else -> reReadQuietly()
             }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -493,11 +491,18 @@ internal class LibrarySearchSession(
 
     private fun reReadQuietly() {
         val trimmed = text.trim()
-        val submitted = generation
+        if (normalizeSearchText(trimmed).isEmpty() || trimmed.length < config.minimumServerQueryLength) {
+            if (scope != SearchScope.DeviceWhileServerPending) query(text)
+            return
+        }
+        val submitted = ++generation
         cancelServerRead()
         serverJob = reader.scope.launch {
+            if (scope == SearchScope.DeviceWhileServerPending) startDeadline(submitted)
             val outcome = readServer(trimmed)
             if (submitted != generation || closed) return@launch
+            deadlineJob?.cancel()
+            deadlineJob = null
             adopt(outcome) { server -> keepPositions(local.search(trimmed), server) }
             publish()
         }

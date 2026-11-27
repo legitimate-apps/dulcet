@@ -250,17 +250,17 @@ private final class PlaylistEditingReader: RecordingReader, DulcetPlaylistEditin
 @MainActor
 private final class ManualReachability: DulcetReachabilityMonitoring {
     private(set) var started = 0
-    private var handler: (@MainActor (Bool, Bool) -> Void)?
+    private var handler: (@MainActor (Bool, Bool, Bool) -> Void)?
 
-    func start(_ handler: @escaping @MainActor (Bool, Bool) -> Void) {
+    func start(_ handler: @escaping @MainActor (Bool, Bool, Bool) -> Void) {
         started += 1
         self.handler = handler
     }
 
     func stop() { handler = nil }
 
-    func report(reachable: Bool, constrained: Bool = false) {
-        handler?(reachable, constrained)
+    func report(reachable: Bool, constrained: Bool = false, pathChanged: Bool = false) {
+        handler?(reachable, constrained, pathChanged)
     }
 }
 
@@ -3190,14 +3190,15 @@ func theNetworksReturnClearsAnOutagesFailureAtOnceAndReconnectsWithoutATimer() t
     let mark = reader.events.count
     reachability.report(reachable: true)
     // No timer ran: the one report did all of it.
-    #expect(delays.pending == 0)
+    #expect(delays.pending == 1, "only the grace timer is pending")
     #expect(Array(reader.events.dropFirst(mark).filter { !$0.hasPrefix("setNetworkConstrained") }) == ["setOnline(true)", "reconnect"])
     #expect(session.connectionFailure == nil, "the outage's failure is stale the moment a path exists")
     #expect(session.connectionIndicator() == nil, "nothing is said while the reconnect runs")
-    // Still no server: the reconnect's own answer says so again.
+    // The path can be up before the server answers. No line appears during the grace.
     reader.answerConnections(DulcetReaderConnection(
         epochKnown: false, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: "unreachable"))
-    #expect(session.connectionIndicator()?.cause == .serverUnreachable)
+    #expect(session.connectionIndicator() == nil)
+    #expect(session.connectionIndicator(serverReadFailed: true) == nil)
 }
 
 /// The radio can be up a moment before the server answers: the first reconnect after the path
@@ -3221,8 +3222,8 @@ func aServerSlowBehindTheReturnedNetworkIsRetriedSoonAndStopsAtTheFirstAnswer() 
     #expect(reconnects() == 1)
     let down = DulcetReaderConnection(epochKnown: false, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: "unreachable")
     reader.answerConnections(down)
-    #expect(session.connectionIndicator()?.cause == .serverUnreachable)
-    #expect(delays.pending == 1)
+    #expect(session.connectionIndicator() == nil)
+    #expect(delays.pending == 2, "a retry and the grace timer")
     delays.advance(by: .milliseconds(900))
     #expect(reconnects() == 1, "not before its time")
     delays.advance(by: .milliseconds(100))
@@ -3236,7 +3237,7 @@ func aServerSlowBehindTheReturnedNetworkIsRetriedSoonAndStopsAtTheFirstAnswer() 
         epochKnown: true, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: nil))
     #expect(session.connectionFailure == nil)
     #expect(session.connectionIndicator() == nil)
-    #expect(delays.pending == 0, "an answer ends the retries")
+    #expect(delays.pending == 1, "an answer ends the retries; the grace still covers the screens' own reads")
     delays.advance(by: .seconds(60))
     #expect(reconnects() == 3)
 
@@ -3245,7 +3246,7 @@ func aServerSlowBehindTheReturnedNetworkIsRetriedSoonAndStopsAtTheFirstAnswer() 
     delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
     reachability.report(reachable: true)
     reader.answerConnections(down)
-    #expect(delays.pending == 1)
+    #expect(delays.pending == 2)
     reachability.report(reachable: false)
     delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
     let before = reconnects()
@@ -3269,4 +3270,75 @@ func aRefusalIsNotClearedByTheNetworksReturn() throws {
     delays.advance(by: DulcetLibrarySession.defaultUnreachableGrace)
     reachability.report(reachable: true)
     #expect(session.connectionFailure == .invalidCredentials, "a sign-in the server refused is not a network failure")
+}
+
+
+@Test @MainActor
+func aSatisfiedPathHandoffMutesFailuresForFiveSecondsAndKeepsIdentityErrorsVisible() throws {
+    let factory = RecordingReaderFactory()
+    let reachability = ManualReachability()
+    let delays = ManualDelays()
+    let session = DulcetLibrarySession(factory: factory, reachability: reachability, delays: delays)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    reachability.report(reachable: true)
+    reachability.report(reachable: true, pathChanged: true)
+    #expect(reader.events.filter { $0 == "reconnect" }.count == 1)
+    #expect(!reader.events.contains("setOnline(false)"))
+    reader.answerConnections(DulcetReaderConnection(
+        epochKnown: false, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: "timeout"))
+    delays.advance(by: .milliseconds(4_999))
+    #expect(session.isSettlingConnection)
+    #expect(session.connectionIndicator(serverReadFailed: true) == nil)
+    let pending = DulcetReaderSearchContent(
+        query: "pavement", publication: .init(query: "pavement", sequence: 1, scope: .deviceWhileServerPending, rows: []),
+        isSettlingConnection: session.isSettlingConnection, onActivate: { _ in })
+    #expect(pending.scopeLabel == nil)
+    let discover = DulcetDiscoverStatus(
+        age: nil, error: .init(code: "upstream-unavailable", retryAt: nil, retryable: true), connection: "online")
+    #expect(!discover.showsRefreshStatus(isSettlingConnection: session.isSettlingConnection))
+    #expect(discover.showsRefreshStatus(isSettlingConnection: false))
+    session.rejectServerIdentity()
+    #expect(session.connectionIndicator()?.cause == .connectionFailed)
+    delays.advance(by: .milliseconds(1))
+    #expect(!session.isSettlingConnection)
+}
+
+@Test @MainActor
+func aLateFailedConnectionOrScreenPublicationCannotOverwriteANewerAnswer() throws {
+    let factory = RecordingReaderFactory()
+    let session = DulcetLibrarySession(factory: factory)
+    session.open(account: readerAccount, mode: .connected)
+    let reader = try #require(factory.made.first)
+    session.reconnect()
+    let callbacks = reader.connectCompletions
+    #expect(callbacks.count == 2)
+    let failure = DulcetReaderConnection(
+        epochKnown: false, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: "unreachable")
+    callbacks.last?(.init(epochKnown: true, serverReportsNoEpoch: false, discardedPendingChanges: 0, errorKind: nil))
+    callbacks.first?(failure)
+    #expect(session.connectionFailure == nil)
+
+    let search = DulcetReaderSearchModel()
+    search.open(in: session, query: "pavement")
+    session.reconnect()
+    let searchSub = try #require(reader.searches.last)
+    searchSub.publish(.init(query: "pavement", sequence: 4, scope: .serverAndDevice, rows: []))
+    searchSub.publish(.init(query: "pavement", sequence: 3, scope: .deviceServerFailed(.timeout, nil), rows: []))
+    reader.connectCompletions.last?(failure)
+    #expect(search.current?.scope == .serverAndDevice)
+    #expect(session.connectionFailure == nil, "the search already heard back from the server")
+
+    let artist = DulcetLibraryWindowModel(query: .artist(rawID: "artist"))
+    artist.open(in: session)
+    let artistSub = try #require(reader.windows.last)
+    artistSub.publish(window([], sequence: 7))
+    artistSub.publish(window([], freshness: .cached(.failed(.unreachable), asOf: nil), sequence: 6))
+    #expect(artist.window?.freshness == .live)
+}
+
+@Test
+func unavailableAlbumSongsUseTheDevicePathForTheirLabel() {
+    #expect(DulcetReaderCopy.trackUnavailable(deviceOffline: true) == "Unavailable offline")
+    #expect(DulcetReaderCopy.trackUnavailable(deviceOffline: false) == "Streaming unavailable")
 }

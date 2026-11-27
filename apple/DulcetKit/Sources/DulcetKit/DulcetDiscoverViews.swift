@@ -145,8 +145,7 @@ struct DulcetDiscoverStatusView: View {
                         dulcetReaderRetry(store)
                     } else { retry() }
                 })
-        } else if !status.serverReadFailed, status.connection != "offline",
-                  current.ageText != nil || current.notice != nil || status.error?.retryable == true {
+        } else if current.showsRefreshStatus(isSettlingConnection: store?.librarySession?.isSettlingConnection == true) {
             VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
                 if let notice = current.notice {
                     Text(notice).font(.callout).accessibilityIdentifier(prefix + ".error")

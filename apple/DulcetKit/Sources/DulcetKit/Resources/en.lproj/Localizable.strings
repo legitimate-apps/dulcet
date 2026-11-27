@@ -128,6 +128,7 @@
 "offline.title" = "Browsing saved library metadata";
 "offline.body" = "Album and song details are available. Music remains on your server, so playback returns when the connection does.";
 "offline.unavailable" = "Unavailable offline";
+"track.streamingUnavailable" = "Streaming unavailable";
 "offline.lastSynced" = "Last synced";
 "offline.lastSyncedValue" = "Last synced %@";
 "album.disc" = "Disc";

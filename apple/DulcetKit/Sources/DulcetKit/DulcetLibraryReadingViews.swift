@@ -2937,6 +2937,7 @@ struct DulcetReaderSearchScreen: View {
             reader: DulcetReaderSearchContent(
                 query: model.query,
                 publication: model.current,
+                isSettlingConnection: store.librarySession?.isSettlingConnection == true,
                 onActivate: { row in store.activateReaderSearchRow(row, in: model.current) }
             )
         )

@@ -154,6 +154,9 @@ internal abstract class ReaderHandle(
      */
     protected open fun owedFailure(): DomainError? = null
 
+    protected val hasUnansweredRead: Boolean
+        get() = failure == DomainError.Transport.Unreachable || failure == DomainError.Transport.Timeout
+
     /** Builds the publication from the cache as it stands now. */
     protected abstract fun snapshot(): LibraryPublication
 
@@ -571,7 +574,7 @@ internal class ListWindow(
     private val liveThisSession: Boolean get() = spec.listKey in reader.liveListReads
 
     override fun needsRevalidation(): Boolean {
-        if (query == LibraryQuery.ShuffleSongs) return true
+        if (query == LibraryQuery.ShuffleSongs || hasUnansweredRead) return true
         val epoch = reader.sessionEpoch ?: return true
         val state = cache.listState(spec.listKey) ?: return true
         return mustRebase(state, epoch) || !readRecently(state, epoch)
@@ -612,7 +615,7 @@ internal class ListWindow(
         if (!spec.paged) return true
         val epoch = reader.sessionEpoch ?: return true
         val state = cache.listState(spec.listKey) ?: return true
-        return cause == RevalidateCause.Refresh || mustRebase(state, epoch) || !readRecently(state, epoch)
+        return cause == RevalidateCause.Refresh || hasUnansweredRead || mustRebase(state, epoch) || !readRecently(state, epoch)
     }
 
     override suspend fun performRevalidate(requested: RevalidateCause) {
@@ -659,7 +662,9 @@ internal class ListWindow(
             val state = cache.listState(spec.listKey)
             val torn = state == null || mustRebase(state, epoch)
             // The 60-second rule spares a fresh window a re-read; it never spares a torn one.
-            if (!torn && state != null && cause != RevalidateCause.Refresh && readRecently(state, epoch)) return@live
+            if (!hasUnansweredRead && !torn && state != null &&
+                cause != RevalidateCause.Refresh && readRecently(state, epoch)
+            ) return@live
             if (torn || state == null) {
                 rebase(epoch, attempt = 0) // settled or not, what it read is this screen's read
             } else {
@@ -1313,7 +1318,7 @@ internal class AlbumDetailWindow(
 
     override fun needsRevalidation(): Boolean {
         val cached = cache.album(album.rawId) ?: return true
-        return !fresh(cached)
+        return hasUnansweredRead || !fresh(cached)
     }
 
     override fun awaitsQuietEpoch(): Boolean =
@@ -1329,7 +1334,7 @@ internal class AlbumDetailWindow(
         // A detail read live under the current epoch within the interval is not re-read — which is
         // what lets a looked-ahead album open with zero requests (CONF-87). Nothing is read, so
         // nothing is republished either — unless a `revalidating` it published must be taken back.
-        if (cause != RevalidateCause.Refresh && cached != null && fresh(cached)) {
+        if (cause != RevalidateCause.Refresh && !hasUnansweredRead && cached != null && fresh(cached)) {
             if (revalidationPending) {
                 revalidationPending = false
                 emitSnapshot()
