@@ -77,10 +77,46 @@ internal class DiscoverPages(
     fun playlist(mbid: String, cursor: String?, completion: (DiscoverResult<DiscoverPlaylist>)->Unit): DiscoverOperation = json(
         listKey("playlist",mbid,cursor), DiscoverPlaylist.serializer(), {it.copy(age=it.age.copy(fromDeviceCache=true))}, completion,
         cachedFailure={value,error -> value.copy(age=value.age.copy(fromDeviceCache=true),refreshError=error)}) {transport.playlist(mbid,cursor)}
+    /**
+     * A cover that fails for a passing reason (the server's artist-photo source was busy or briefly down, which the server
+     * reports as a retryable failure) is asked for again after a short wait, so a tile that is still on screen gets its
+     * picture instead of keeping its stand-in until someone scrolls away and back. A cover the server says it does not
+     * have, and every failure that retrying cannot change, is final at once.
+     */
     fun artwork(artworkId: String,completion: (DiscoverResult<ByteArray>)->Unit): DiscoverOperation = request(
         "artwork:$artworkId",true,{bytes -> if(!validDiscoverArtwork(bytes)) invalidDiscover();bytes},
-        {bytes -> if(!validDiscoverArtwork(bytes)) invalidDiscover();bytes},{it},completion,{true},cacheFirst=true) {transport.artwork(artworkId)}
-    fun close() {closed=true;operations.toList().forEach {it.cancel()};albumOperations.clear()}
+        {bytes -> if(!validDiscoverArtwork(bytes)) invalidDiscover();bytes},{it},completion,{true},cacheFirst=true) {
+        var result=transport.artwork(artworkId)
+        for(wait in ARTWORK_RETRY_DELAYS_MILLIS) {
+            val failure=(result as? DiscoverResult.Failed)?.error ?: break
+            if(!failure.retryable || failure.code !in ARTWORK_RETRYABLE_CODES || !online()) break
+            delay(wait)
+            if(closed || !active()) break
+            result=transport.artwork(artworkId)
+        }
+        result
+    }
+    /**
+     * Saves the covers a shelf names while the device is online, one at a time and behind whatever a visible tile asks for,
+     * so the same shelf read later from the device (offline, or after a restart) has its pictures, not only the ones that
+     * happened to scroll into view.
+     */
+    fun prefetchArtwork(artworkIds: List<String>) {
+        if(closed || !active()) return
+        val wanted=artworkIds.distinct().filter {store.read("artwork:$it")==null}
+        if(wanted.isEmpty()) return
+        prefetches.removeAll {it.isCompleted}
+        prefetches+=scope.launch {
+            for(id in wanted) {
+                if(closed || !active() || !online()) return@launch
+                val done=CompletableDeferred<Unit>()
+                artwork(id) {done.complete(Unit)}
+                done.await()
+            }
+        }
+    }
+    private val prefetches=mutableListOf<Job>()
+    fun close() {closed=true;operations.toList().forEach {it.cancel()};albumOperations.clear();prefetches.forEach {it.cancel()};prefetches.clear()}
 
     private fun <T> json(key: String,serializer: KSerializer<T>,cached: (T)->T,completion: (DiscoverResult<T>)->Unit,
         valid: ()->Boolean = {true},cachedFailure: (T,DiscoverFailure)->T = {value,_ -> cached(value)},fetch: suspend ()->DiscoverResult<T>): DiscoverOperation = request(key,false,
@@ -130,6 +166,8 @@ internal class DiscoverPages(
         override fun cancel() {job?.cancel();finish(DiscoverResult.Failed(DiscoverFailure("cancelled",null,false)))}
     }
 }
+private val ARTWORK_RETRY_DELAYS_MILLIS=listOf(2_000L,8_000L)
+private val ARTWORK_RETRYABLE_CODES=setOf("invalid-response","upstream-unavailable")
 internal fun validDiscoverArtwork(bytes: ByteArray): Boolean = bytes.size<=DISCOVER_ART_LIMIT && (
     bytes.matchesBytes(0,0xff,0xd8,0xff) || bytes.matchesBytes(0,137,80,78,71,13,10,26,10) ||
     bytes.matchesAscii(0,"GIF87a") || bytes.matchesAscii(0,"GIF89a") || (bytes.matchesAscii(0,"RIFF") && bytes.matchesAscii(8,"WEBP")))

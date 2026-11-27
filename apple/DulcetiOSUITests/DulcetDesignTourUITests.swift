@@ -125,6 +125,14 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
             app.debugDescription)
         _ = settle(app, seconds: 6)
         shoot("artist-art-\(phase)-discover", app)
+        if environment["DULCET_ARTIST_ART_RAIL"] == "1" {
+            // The artists further along the rail were never on screen: they show a photo only when it was saved.
+            let start = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.85, dy: 0.42))
+            let end = app.windows.firstMatch.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.42))
+            for _ in 0..<2 { start.press(forDuration: 0.1, thenDragTo: end) }
+            _ = settle(app, seconds: 2)
+            shoot("artist-art-\(phase)-discover-rail", app)
+        }
         print("ARTIST-ART phase=\(phase) artist=\(artist)")
     }
 
@@ -685,6 +693,13 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         let topResult = app.buttons["dulcet.search.topResult"].firstMatch
         XCTAssertTrue(topResult.waitForExistence(timeout: 20), app.debugDescription)
         XCTAssertTrue(app.buttons["dulcet.search.topResult.play"].firstMatch.exists, "an album's card has Play")
+        // A song title shared by an original and a cover: the card must lead with the version named here
+        // (the original, which more people play), not the one the listener happened to play twice.
+        if let lead = environment["DULCET_SEARCH_TOP_RESULT_LEAD"] {
+            print("DULCET SEARCH TOP RESULT label=\(topResult.label)")
+            XCTAssertTrue(topResult.label.contains(lead) && !topResult.label.contains("Like a Version"),
+                          "the Top Result leads with \(lead): \(topResult.label)")
+        }
         let songs = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'dulcet.search.result.' AND label ENDSWITH ', Song'"))
         XCTAssertTrue(songs.firstMatch.waitForExistence(timeout: 20), app.debugDescription)

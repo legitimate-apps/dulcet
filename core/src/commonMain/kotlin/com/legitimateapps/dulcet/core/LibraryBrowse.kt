@@ -851,6 +851,23 @@ internal fun parseReaderSearch3(body: String): CacheEntities {
     )
 }
 
+/**
+ * The `dulcetListens` figure of each song in a `search3` answer: its worldwide listens, written by Dulcet Server from the
+ * artist's stored popularity (spec §28, 2026-11-26). Songs without the field, and every other server, are absent from the
+ * map, never zero. It is never stored in the seen-cache: it only orders one search's Top Result, so a malformed figure
+ * is skipped rather than failing the search.
+ */
+internal fun parseReaderSearch3Listens(body: String): Map<String, Long> {
+    val result = parseLibraryEnvelope(body)?.payload?.get("searchResult3") as? JsonObject ?: return emptyMap()
+    val listens = HashMap<String, Long>()
+    for (song in result.arrayOrEmpty("song")) {
+        val row = song as? JsonObject ?: continue
+        val id = row.string("id")?.takeIf(String::isNotBlank) ?: continue
+        row.long("dulcetListens")?.takeIf { it > 0 }?.let { listens[id] = it }
+    }
+    return listens
+}
+
 /** One `getDulcetLibrary` page (spec §29.9), as seen-cache records plus the library's totals and clock. */
 internal data class DulcetLibraryPageBody(
     val libraryClock: String?,
