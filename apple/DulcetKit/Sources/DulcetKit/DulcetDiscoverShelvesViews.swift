@@ -5,10 +5,11 @@ struct DulcetDiscoverHomeView: View {
     @Environment(DulcetPresentationStore.self) private var store
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var model: DulcetDiscoverModel
-    @State private var showInitialProgress = false
     @Bindable var navigation: DulcetDiscoverNavigation
-    init(reader: any DulcetDiscoverReading, navigation: DulcetDiscoverNavigation) {
-        _model = State(initialValue: .init(reader: reader)); self.navigation = navigation
+    init(reader: any DulcetDiscoverReading, navigation: DulcetDiscoverNavigation,
+         initialPublication: DulcetDiscoverPublication? = nil) {
+        _model = State(initialValue: .init(reader: reader, initialPublication: initialPublication))
+        self.navigation = navigation
     }
     var body: some View {
         let publication = model.publication
@@ -37,8 +38,8 @@ struct DulcetDiscoverHomeView: View {
                         }
                     }
                     if model.publication?.access.wishlistAvailable == true { wishes(home).id("recentWishes") }
-                } else if showInitialProgress {
-                    ProgressView(DulcetStrings.discoverLoading)
+                } else {
+                    shelfView(.trendingArtists, .init(id: DulcetDiscoverShelf.trendingArtists.rawValue, loading: true))
                 }
                 Text(DulcetStrings.discoverCredit).font(.caption).accessibilityIdentifier("discover.credit")
             }
@@ -56,13 +57,6 @@ struct DulcetDiscoverHomeView: View {
         .accessibilityIdentifier("discover.home")
         .navigationTitle(DulcetStrings.discoverTitle)
         .dulcetForeground(.primaryTextOnWindow)
-        .task(id: model.publication?.home == nil) {
-            // Give the local snapshot a frame to restore before drawing a cold-load spinner.
-            showInitialProgress = false
-            guard model.publication?.home == nil else { return }
-            try? await Task.sleep(for: .milliseconds(200))
-            if !Task.isCancelled { showInitialProgress = true }
-        }
         .onAppear { model.open(); model.reader.openHome() }
         .onDisappear { model.close() }
     }
@@ -105,8 +99,12 @@ struct DulcetDiscoverHomeView: View {
             if shelf == .similarArtists {
                 Text(DulcetStrings.discoverSuggestionsCredit).font(.caption).accessibilityIdentifier("discover.suggestionsCredit")
             }
-            DulcetDiscoverShelfPlaceholder(loading: state.loading && state.page == nil,
-                empty: presentation.isEmpty, emptyText: shelf.emptyText, prefix: prefix)
+            if state.loading && state.page == nil {
+                loadingShelf(shelf, prefix: prefix)
+            } else {
+                DulcetDiscoverShelfPlaceholder(loading: false, empty: presentation.isEmpty,
+                    emptyText: shelf.emptyText, prefix: prefix)
+            }
             if let page = state.page {
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: DulcetSpacing.xs) {
@@ -124,6 +122,35 @@ struct DulcetDiscoverHomeView: View {
             }
         }.accessibilityElement(children: .contain).accessibilityIdentifier(prefix)
     }
+    private func loadingShelf(_ shelf: DulcetDiscoverShelf, prefix: String) -> some View {
+        let side = DulcetDiscoverMetrics.tileSide
+        let isArtist = shelf == .similarArtists || shelf == .trendingArtists
+        let outline = isArtist ? AnyShape(Circle()) :
+            AnyShape(RoundedRectangle(cornerRadius: DulcetDiscoverMetrics.artworkCornerRadius(forSize: side)))
+        return ScrollView(.horizontal) {
+            HStack(alignment: .top, spacing: DulcetSpacing.xs) {
+                ForEach(0..<2) { index in
+                    VStack(alignment: .leading, spacing: DulcetSpacing.xxs) {
+                        outline.fill(Color.dulcetControl)
+                            .frame(width: side, height: side)
+                            .overlay {
+                                if index == 0 {
+                                    ProgressView().accessibilityLabel(DulcetStrings.discoverLoading)
+                                        .accessibilityIdentifier(prefix + ".loading")
+                                }
+                            }
+                        Text(DulcetStrings.discoverLoading).font(.subheadline.weight(.semibold)).lineLimit(1)
+                            .frame(width: side, alignment: isArtist ? .center : .leading)
+                            .dulcetForeground(.secondaryTextOnWindow)
+                            .opacity(index == 0 ? 1 : 0)
+                            .accessibilityHidden(true)
+                    }
+                }
+            }
+        }
+        .scrollDisabled(true)
+    }
+
     private func playlistButton(_ playlist: DulcetDiscoverPlaylistSummary, prefix: String) -> some View {
         Button { navigation.path.append(.playlist(playlist.id)) } label: { DulcetDiscoverPlaylistTile(summary: playlist) }
             .buttonStyle(.plain).accessibilityIdentifier(prefix + playlist.id)
@@ -406,8 +433,8 @@ struct DulcetDiscoverHomeDestination: View {
     @Environment(DulcetPresentationStore.self) private var store
     var route: DulcetDiscoverHomeRoute?
     var body: some View {
-        if let session = store.librarySession, session.discoverPublication?.access.discoverAvailable == true,
-           let reader = session.discover {
+        if let session = store.librarySession, let publication = session.discoverPublication,
+           publication.access.discoverAvailable, let reader = session.discover {
             Group {
                 if let route {
                     switch route {
@@ -416,7 +443,10 @@ struct DulcetDiscoverHomeDestination: View {
                             openMetadata: { store.discoverNavigation.path.append(.metadata($0, source)) }, wishSourceOverride: source)
                     default: DulcetDiscoverListView(page: store.discoverNavigation.page(route, reader: reader), navigation: store.discoverNavigation)
                     }
-                } else { DulcetDiscoverHomeView(reader: reader, navigation: store.discoverNavigation) }
+                } else {
+                    DulcetDiscoverHomeView(reader: reader, navigation: store.discoverNavigation,
+                                           initialPublication: publication)
+                }
             }.id(session.readerGeneration)
         }
     }

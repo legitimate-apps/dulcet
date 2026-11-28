@@ -140,7 +140,10 @@ public struct DulcetDiscoverStatus: Sendable {
     @ObservationIgnored private var subscription: (any DulcetLibraryReaderCancellable)?
     @ObservationIgnored private var operations: [any DulcetLibraryReaderCancellable] = []
     @ObservationIgnored private var active = false
-    init(reader: any DulcetDiscoverReading) { self.reader = reader }
+    init(reader: any DulcetDiscoverReading, initialPublication: DulcetDiscoverPublication? = nil) {
+        self.reader = reader
+        self.publication = initialPublication
+    }
     func open() {
         guard !active else { return }; active = true
         subscription = reader.observe { [weak self] publication in

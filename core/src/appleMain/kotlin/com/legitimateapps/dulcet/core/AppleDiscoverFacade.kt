@@ -19,7 +19,7 @@ public class AppleDiscoverClient(private val reader:AppleLibraryReaderClient) {
     init { if(!reader.registerDiscover(this)) closed.store(true) }
 
     private fun core(session:LibraryReaderSession):DiscoverClient =
-        client ?: session.openDiscoverClient().also { client=it }
+        client ?: session.openDiscoverClient(prepareHome = true).also { client=it }
 
     public fun observe(listener:AppleDiscoverListener):AppleDiscoverSubscription {
         val subscription=AppleDiscoverSubscription(reader,this,listener)

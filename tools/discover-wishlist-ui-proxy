@@ -163,7 +163,9 @@ class Handler(BaseHTTPRequestHandler):
                         state.effect(endpoint,revision,name,expired=True)
                         return self.reply(504,{'error':'new query did not release old query'})
                     time.sleep(.75)
-                if (name=='held-detail' and endpoint in {'getDulcetDiscoverAlbum','getDulcetDiscoverArtist'}) or (name=='held-wishlist' and endpoint=='getDulcetWishlist'):
+                if ((name=='held-detail' and endpoint in {'getDulcetDiscoverAlbum','getDulcetDiscoverArtist'})
+                    or (name=='held-wishlist' and endpoint=='getDulcetWishlist')
+                    or (name=='held-shelves' and endpoint=='getDulcetDiscoverShelf')):
                     with state.lock:release=state.detail_release
                     state.effect(endpoint,revision,name,held=True)
                     released=release.wait(90)
