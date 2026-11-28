@@ -886,13 +886,15 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
             -parallel-testing-enabled NO \
             -only-testing:DulcetiOSUITests/DulcetiOSUITests/testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar \
-            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testUpNextHandleDragLandsTheRowWhereTheFingerLifts 2>&1 | \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testUpNextHandleDragLandsTheRowWhereTheFingerLifts \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testUpNextHandleDragCarriesTheRowPastTheLowerEdge 2>&1 | \
           tee "$RUNNER_TEMP/dulcet-ios-compact-nav.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
             testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar \
-            testUpNextHandleDragLandsTheRowWhereTheFingerLifts
+            testUpNextHandleDragLandsTheRowWhereTheFingerLifts \
+            testUpNextHandleDragCarriesTheRowPastTheLowerEdge
       - name: Upload the Up Next drag screenshots
         # The handle-drag proof keeps its before and after screenshots in this result bundle on
         # every verdict; the failure-diagnostics upload below carries it only on failure.
