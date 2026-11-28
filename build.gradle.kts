@@ -19,3 +19,16 @@ abstract class DisposableServerAccount : BuildService<BuildServiceParameters.Non
 gradle.sharedServices.registerIfAbsent("disposableServerAccount", DisposableServerAccount::class) {
     maxParallelUsages.set(1)
 }
+
+// Robolectric downloads its Android runtime jars (android-all-instrumented, one per SDK level) while
+// tests run, outside Gradle's dependency cache, from repo1.maven.org by default. Hosted runners get
+// HTTP 429 from it: on 2026-11-28 three pull requests' core-build jobs failed 35 Android host tests
+// each in setup, with no test body run. Google's mirror of Maven Central serves the same artifacts.
+subprojects {
+    tasks.withType<Test>().configureEach {
+        systemProperty(
+            "robolectric.dependency.repo.url",
+            "https://maven-central.storage-download.googleapis.com/maven2",
+        )
+    }
+}
