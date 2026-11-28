@@ -37,6 +37,61 @@ class ReaderReachabilityTest {
 
     private fun List<LibrarySearchRow>.ids() = map { it.item.id.rawId }
 
+    @Test
+    fun firstCatalogOpenShowsSeenAlbumsBeforeItsOwnPageCanAnswer() = sessionTest { env ->
+        MyLibraryStore(env.database.database, env.cache()).setAdvertised(true)
+        val reader = env.session().reader
+        reader.connect()
+        // Browse's Recently Added shelf belongs to a different list. It can seed a preview,
+        // but cannot count as any segment of the alphabetical server window.
+        val recent = LibraryHomeRow.Albums(AlbumListType.Newest)
+        reader.openHome(listOf(recent)) { _, _ -> }.also { advanceUntilIdle() }.close()
+        assertEquals(20L, env.cache().counts().albums)
+
+        val before = env.server.log.size
+        env.server.holdBeforeApply += "getAlbumList2"
+        val publications = Recorder<LibraryPublication>(env.server)
+        val gridHandle = reader.open(grid, publications)
+        val preview = publications.last
+        assertEquals(before, publications.all.first().requestsIssued)
+        assertEquals(20, preview.items.size)
+        assertEquals(LibraryFreshness.Loading, preview.freshness)
+        assertEquals(LibraryItemsOrder.LocalView, preview.order)
+        assertEquals(null, preview.coverage)
+
+        runCurrent()
+        assertEquals(1, env.server.heldCount)
+        gridHandle.setViewport(16, 19)
+        env.server.holdBeforeApply.clear()
+        env.server.release()
+        advanceUntilIdle()
+
+        assertEquals(listOf("getAlbumList2", "getScanStatus"), env.server.endpoints().drop(before))
+        assertEquals("0", env.server.log[before].parameters["offset"])
+        assertEquals((0 until 100).map(::albumId), publications.last.items.map { it.rawId })
+        assertEquals(LibraryFreshness.Live, publications.last.freshness)
+        assertEquals(LibraryItemsOrder.Server, publications.last.order)
+        assertEquals(null, publications.last.anchor, "A preview tile must not re-anchor the server grid")
+    }
+
+    @Test
+    fun unsplitLibraryDoesNotPreviewTheAlbumCatalog() = sessionTest { env ->
+        MyLibraryStore(env.database.database, env.cache()).setAdvertised(false)
+        val reader = env.session().reader
+        reader.connect()
+        reader.openHome(listOf(LibraryHomeRow.Albums(AlbumListType.Newest))) { _, _ -> }
+            .also { advanceUntilIdle() }.close()
+        assertEquals(20L, env.cache().counts().albums)
+
+        val publications = Recorder<LibraryPublication>(env.server)
+        reader.open(grid, publications)
+        assertEquals(LibraryFreshness.Loading, publications.last.freshness)
+        assertTrue(publications.last.items.isEmpty())
+        advanceUntilIdle()
+        assertEquals(100, publications.last.items.size)
+        assertEquals(LibraryItemsOrder.Server, publications.last.order)
+    }
+
     // ---- (a) Every calling order: nothing before the flush --------------------------------------------
 
     private enum class CallingOrder { SetOnlineThenReconnect, ReconnectAlone, SetOnlineAlone }

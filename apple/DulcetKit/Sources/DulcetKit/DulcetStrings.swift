@@ -21,6 +21,13 @@ enum DulcetStrings {
     static func myLibraryRefreshFailed(_ phrase: String) -> String {
         formatted("myLibrary.refreshFailed", "Couldn\u{2019}t refresh your library. %@", phrase)
     }
+    static let myLibraryTitle = text("myLibrary.title", "My Library")
+    static let myLibraryAlbums = text("myLibrary.albums", "Library Albums")
+    static let loadingServerAlbums = text("reader.loadingServerAlbums", "Loading all server albums…")
+    static let serverAlbums = text("reader.serverAlbums", "Server Albums")
+    static let browseServerAlbums = text("myLibrary.browseServerAlbums", "Browse Server Albums")
+    static let myLibraryAlbumHint = text("myLibrary.albumHint", "Albums you add show up here.")
+    static let myLibrarySongHint = text("myLibrary.songHint", "Songs you add show up here.")
     static let myLibrarySongs = text("myLibrary.songs", "Songs")
     static let offlineMusic = text("offline.music", "Offline Music")
     static let offlineAutomaticDownloads = text("offline.automaticDownloads", "Automatic Downloads")

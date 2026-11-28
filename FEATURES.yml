@@ -3297,6 +3297,12 @@
               "test": "DulcetMyLibraryIPhoneUITests/testBrowseAddRemoveRelaunchAndOfflineReplay"
             },
             {
+              "observes": "the production iPhone app against disposable Dulcet Server opens Server Albums from a one-album Library, goes straight to the catalog grid on its first visit, and adds an album using the tile control. On returning, Library Albums shows the new member without refresh, and the server confirms it",
+              "workflow": "apple-ci",
+              "job": "apple-ci",
+              "test": "DulcetMyLibraryIPhoneUITests/testSparseLibraryLeadsToServerAlbumsAndQuickAddAppearsInLibrary"
+            },
+            {
               "observes": "a populated disposable Navidrome catalog retains the original Library navigation with no Browse destination or membership controls",
               "workflow": "apple-ci",
               "job": "apple-ci",

@@ -4566,7 +4566,7 @@ holds tens of megabytes. So the bound exists to make growth finite, not to ratio
 | `live` | read from the server in this session under the current epoch | nothing extra |
 | `cached(asOf?, reason)` | served from the seen-cache. `asOf` is the wall-clock of its live read, **or absent** when the age is unknown (rows seeded on upgrade, §16.17). `reason` is `revalidating` (a live read is in flight), `offline` (the server is unreachable), `failed(kind)` (the live read failed with that §18.12 kind), `stale` (the epoch moved and no live read has landed yet), or `owed` (read live, but a "load more" or "load before" the screen owes is not yet made, and did not fail — below) | the content plus one line, the reason first: "Couldn't reach your server. Last updated 3 days ago", with no age under a minute (Android), or with no `asOf`, "Couldn't reach your server. Showing what this device had saved, age unknown". Apple draws one connection status per screen when a read cannot reach the server or the device has no network path. A non-transport refresh error can still say "Couldn't refresh · <reason>" with Try Again. `revalidating`, `stale` and `owed` show nothing, the age stays in the accessibility value, and Downloaded never shows a connection status (§28, 2026-11-27) |
 | `unavailable(reason)` | nothing cached and nothing can be read | a statement of fact, never a spinner: "You haven't opened this album on this device. Connect to your server to see it." |
-| `loading` | nothing cached, and a live read is in flight | the only state in which a loading indicator may show — for the whole screen, or (as `itemsState`) for a detail's child list whose header is cached |
+| `loading` | the requested content has no cached page and a live read is in flight | the only state in which a loading indicator may show. A detail can show it for a child list whose header is cached, and the title-sorted album catalog can show it beside the device preview below |
 
 A detail whose header is shown but whose child list cannot be has `itemsState` `unavailable`, and
 the publication says why in `itemsUnavailableReason`: offline, the reader's own failure, or the
@@ -4607,6 +4607,12 @@ cached. So an album seen only in a grid opens online with its cached summary hea
 and only its track list shows loading until `getAlbum` lands. The acceptance tests assert the whole
 publication sequence, not just its last element, because a spinner frame between two correct states
 passes every test that only checks the end.
+
+On accounts that offer My Library (§29.9), the first online open of the unfiltered, title-sorted
+album catalog can already have albums from other device reads. While the catalog reads its first page and scan stamp, it publishes
+a locally sorted preview of up to one home row from the current account’s seen albums. The
+preview carries `loading` freshness and `localView` order, with no server coverage, total or offsets.
+Its rows cannot drive look-ahead or anchors. The checked page replaces the preview with server order.
 
 **Reconnect**, in order, when reachability returns or the app returns to the foreground online:
 
@@ -8098,6 +8104,15 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-28 — Make My Library and the server catalog distinct (§16.14, §29.9).**
+iPhone, iPad and Mac label the personal and server album grids Library Albums and Server Albums. The empty
+and sparse personal album pages link directly to the server grid. On iPhone and iPad, album
+tiles, Search result rows and album pages expose direct membership controls. These use the same
+per-account outbox and optimistic publication as the menus. For those accounts the title-sorted
+catalog can first publish a small device view of album metadata already seen by this account while it reads the
+real first page and checks its scan stamp. The preview has no server coverage, offsets or anchor.
+The checked page determines the catalog's order and pagination.
 
 **2026-11-27 — Search holds onto the original across device and server results (§18.1).**
 The previous three-play threshold could promote a marked cover played three times over the original
@@ -15773,6 +15788,12 @@ album is `added` when it is a member, `partial` when only some of its songs are,
 complete read says neither, and `unknown` before any complete read or flag. Items the device has no
 details for count toward membership but are left out of the lists until a read brings them. Sorts:
 newest added (by local rank; a pending add is newest) and alphabetical (case-folded, then id).
+
+A new account starts with no explicit My Library members. On iPhone, iPad and Mac, Library shows
+My Library and its Library Albums page; Browse shows the server catalog. An empty or sparse
+Library Albums page explains how saved albums appear and links directly to Server Albums. On
+iPhone and iPad, add controls in Browse, Search results and the album page show the existing
+membership state and write through the same outbox as the corresponding menus.
 
 **Limits, ASSUMED until the server says otherwise.** The wire carries no added time, and each list
 is ordered within its kind only. Ranks from one full read are aligned from the newest of each kind,

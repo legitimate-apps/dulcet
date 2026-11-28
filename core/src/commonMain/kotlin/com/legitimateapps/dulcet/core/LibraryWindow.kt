@@ -1150,7 +1150,7 @@ internal class ListWindow(
     override fun snapshot(): LibraryPublication {
         val state = cache.listState(spec.listKey)
         if (state == null || (state.endLoadedOffset == state.firstLoadedOffset && !liveThisSession && state.coverage != CacheCoverage.Complete)) {
-            return localViewOrEmpty()
+            return catalogPreview() ?: localViewOrEmpty()
         }
         touchShown(spec.listKey)
         val (read, readPositions) = itemsOf(cache.listRows(spec.listKey), dedupe = true)
@@ -1181,6 +1181,30 @@ internal class ListWindow(
             order = if (items !== read) LibraryItemsOrder.LocalView else LibraryItemsOrder.Server,
             anchor = anchor,
             leadingOffset = positions.minOrNull() ?: state.firstLoadedOffset,
+        )
+    }
+
+    /**
+     * In the split Library/Browse shell, Listen Now and Browse can have seen albums before the
+     * title-sorted catalog opens. Paint a small device view while the first real page is read and scan-checked.
+     * Its order and indices can differ from the catalog, so it owns neither paging nor an anchor.
+     */
+    private fun catalogPreview(): LibraryPublication? {
+        if (query != LibraryQuery.AlbumList(AlbumListType.AlphabeticalByName) ||
+            !spec.paged || emptyFreshness() != LibraryFreshness.Loading || !reader.hasPersonalLibrary()) return null
+        val albums = cache.previewAlbums(reader.config.homeRowSize)
+        if (albums.isEmpty()) return null
+        val pending = reader.overlay.pending(cache.serverId, albums.mapTo(mutableSetOf()) {
+            CacheListMember(CacheItemKind.Album, it.record.rawId)
+        })
+        val items = reader.applyCategory(albums.map {
+            it.toItem(pending[CacheListMember(CacheItemKind.Album, it.record.rawId)])
+        }, "albums")
+        if (items.isEmpty()) return null
+        publishedPositions = emptyList()
+        return LibraryPublication(
+            query, 0, LibraryFreshness.Loading, null, null, null,
+            items, LibraryItemsState.Loading, LibraryItemsOrder.LocalView,
         )
     }
 
@@ -1250,7 +1274,7 @@ internal class ListWindow(
     private data class AnchorSource(val firstVisibleIndex: Int, val firstVisiblePosition: Int, val order: List<String>)
 
     private fun firstVisibleAnchorSource(): AnchorSource? {
-        if (published.isEmpty()) return null
+        if (publishedPositions.isEmpty()) return null
         val index = published.indexOfFirst { it.rawId == viewportFirstRawId }.takeIf { it >= 0 }
             ?: publishedPositions.indexOfFirst { it >= viewport.first }.takeIf { it >= 0 } ?: 0
         return AnchorSource(index, publishedPositions.getOrElse(index) { 0 }, published.map { it.rawId })
