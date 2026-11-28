@@ -947,7 +947,13 @@ internal class BoundSeenCache internal constructor(
 
     /** Every cached album, for the local "Available offline" view (§16.14), sorted locally. */
     fun localAlbums(): List<CachedAlbum> =
-        queries.selectLocalAlbums(serverId).executeAsList().map { it.toCached(credits("album", it.raw_id)) }
+        queries.selectLocalAlbums(serverId, -1).executeAsList().map { it.toCached(credits("album", it.raw_id)) }
+
+    /** A bounded first paint of the catalog uses the primary credit, just as a grid page does. */
+    fun previewAlbums(limit: Int): List<CachedAlbum> =
+        queries.selectLocalAlbums(serverId, limit.toLong()).executeAsList().map {
+            it.toCached(primaryCredit(CreditRole.AlbumArtist, it.artist_name, it.artist_raw_id))
+        }
 
     fun localArtists(): List<CachedArtist> =
         queries.selectLocalArtists(serverId).executeAsList().map { it.toCached() }

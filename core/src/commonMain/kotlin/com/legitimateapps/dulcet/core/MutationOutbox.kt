@@ -974,6 +974,7 @@ internal class LibraryReaderSession(
                 playlistsRef.overlayDetail(rawId, header, entries)
         },
         breaker = breaker,
+        hasPersonalLibrary = ::hasPersonalLibrary,
     )
 
     val favourites = LibraryFavourites(reader, outbox).also { favouritesRef = it }
@@ -986,6 +987,8 @@ internal class LibraryReaderSession(
      * any other server it reports [MyLibraryAvailability.Unavailable] and changes nothing.
      */
     val myLibrary = MyLibrary(reader, outbox.membership, favourites, outbox, config = myLibraryConfig)
+
+    private fun hasPersonalLibrary(): Boolean = myLibrary.availability() == MyLibraryAvailability.Available
 
     private val searches = mutableListOf<LibrarySearchSession>()
 

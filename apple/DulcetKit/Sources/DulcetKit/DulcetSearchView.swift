@@ -674,24 +674,25 @@ struct DulcetSearchView: View {
                 songRow(track, result: result, rank: index)
                     .dulcetSongRowSeparator(above: !startsKind, songRowShowingIndex: false, artwork: true)
             } else {
-                Button {
-                    activate(result.id)
-                } label: {
-                    DulcetSearchResultRowLabel(result: result, readerRow: readerRow(result.id))
-                }
-                .dulcetRowButtonStyle()
-                .accessibilityIdentifier("dulcet.search.result.\(index)")
-                .accessibilityLabel(resultAccessibilityLabel(result))
-                // The system preview lets album results lift out of the open menu for queue drag.
-                .contextMenu {
-                    DulcetSearchResultMenuItems(result: result, readerRow: readerRow(result.id)) {
+                let row = readerRow(result.id)
+                HStack(spacing: DulcetSpacing.xxs) {
+                    Button {
                         activate(result.id)
+                    } label: {
+                        DulcetSearchResultRowLabel(result: result, readerRow: row)
+                    }
+                    .dulcetRowButtonStyle()
+                    .accessibilityIdentifier("dulcet.search.result.\(index)")
+                    .accessibilityLabel(resultAccessibilityLabel(result))
+                    // Keep the preview and drag on the result, separate from the add button.
+                    .contextMenu {
+                        DulcetSearchResultMenuItems(result: result, readerRow: row) { activate(result.id) }
+                    }
+                    .modifier(DulcetSearchRowQueueDrag(result: result, isUnavailableOffline: row?.isUnavailableOffline == true))
+                    if result.kind != .artist, let target = row?.favouriteTarget {
+                        DulcetMyLibraryButton(target: target, quickAction: true, itemTitle: result.displayTitle)
                     }
                 }
-                .modifier(DulcetSearchRowQueueDrag(
-                    result: result,
-                    isUnavailableOffline: readerRow(result.id)?.isUnavailableOffline == true
-                ))
                 .dulcetSongRowSeparator(above: !startsKind, songRowShowingIndex: false, artwork: true)
             }
         }
@@ -723,6 +724,7 @@ struct DulcetSearchView: View {
                 DulcetFavouriteIndicator(id: row.id, published: row.isFavourite)
             }
         }
+        .libraryQuickAction(row?.favouriteTarget)
         .searchPresentation(
             deviceOnly: row?.source == .device,
             label: resultAccessibilityLabel(result),

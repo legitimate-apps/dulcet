@@ -1388,6 +1388,7 @@ for alias, methods in (
         "testNonDulcetServerKeepsTheOriginalLibraryNavigation",
         "testLibraryBrowseAndAlbumInLightDarkAndLargestText",
         "testAlbumAddRemainsVisibleAtLargestTextOnIPhone",
+        "testSparseLibraryLeadsToServerAlbumsAndQuickAddAppearsInLibrary",
     )),
     ("DulcetMyLibraryIPadUITests", (
         "testBrowseAddRemoveRelaunchAndOfflineReplay",

@@ -414,7 +414,7 @@ struct DulcetLibrarySongsPage: View {
     @ViewBuilder
     private func songRows(_ window: DulcetLibraryWindow, model: DulcetLibraryWindowModel) -> some View {
         ForEach(Array(window.items.enumerated()), id: \.element.id) { index, item in
-            DulcetReaderTrackRow(item: item, index: index + 1) { track in
+            DulcetReaderTrackRow(item: item, index: index + 1, showsLibraryQuickAction: !downloaded) { track in
                 store.playReaderTracks(window.playableTracks, startingAt: track, sourceKind: .library, sourceID: nil, sourceName: title)
             }
             .dulcetReaderRow(index, in: model)
