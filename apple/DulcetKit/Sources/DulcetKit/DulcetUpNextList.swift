@@ -120,10 +120,6 @@ public struct DulcetUpNextSection: View {
 #if os(iOS)
         let lifted = handleDrag?.source == offset
         baseRow(entry, offset: offset)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
-                rowFrames[entry.id] = frame
-                observeRowFrames()
-            }
             .onDisappear { rowFrames[entry.id] = nil }
             .background {
                 if lifted {
@@ -135,6 +131,13 @@ public struct DulcetUpNextSection: View {
             }
             .scaleEffect(lifted ? 1.03 : 1)
             .offset(y: lifted ? handleDrag?.liftedOffset ?? 0 : handleDrag?.displacement(of: offset) ?? 0)
+            // Read outside the offset: a frame read inside it moves with the drag, the drag reads
+            // the scroll from the frames, and the two chase each other without settling (the app
+            // never went idle after a drag in hosted CI, run 46094370027).
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                rowFrames[entry.id] = frame
+                observeRowFrames()
+            }
             .zIndex(lifted ? 1 : 0)
 #else
         baseRow(entry, offset: offset)
