@@ -375,6 +375,7 @@ struct DulcetMyLibrarySectionPage: View {
                 .dulcetForeground(.secondaryTextOnWindow)
             Button(action: action) {
                 Label(section == .albums ? DulcetStrings.browseServerAlbums : DulcetStrings.browseSection, systemImage: "globe")
+                    .dulcetForeground(.accentTextOnWindow)
                     .frame(minHeight: DulcetMetrics.minimumTouchTarget)
                     .contentShape(Rectangle())
             }

@@ -940,7 +940,7 @@ struct DulcetReaderTile: View {
                 Text(item.displayTitle)
                     .font(.subheadline.weight(compactAccessibilityAlbum ? .regular : .medium))
                     .dulcetForeground(.primaryTextOnWindow)
-                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : titleLineLimit)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : (offersLibraryQuickAction ? 2 : titleLineLimit))
                 Spacer(minLength: 0)
             }
 #if os(tvOS)

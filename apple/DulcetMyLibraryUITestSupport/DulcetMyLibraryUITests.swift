@@ -854,9 +854,12 @@ final class DulcetMyLibraryUITests: XCTestCase {
         let add = app.buttons[addID].firstMatch
         revealPhoneAlbumTile(add)
         XCTAssertTrue(add.waitForExistence(timeout: 20) && add.isHittable)
+        XCTAssertGreaterThanOrEqual(add.frame.width, 44)
+        XCTAssertGreaterThanOrEqual(add.frame.height, 44)
         XCTAssertTrue(add.label.contains("Add to Library"), add.label)
         activate(add)
         awaitLabel(add, "Remove from Library, " + album.title)
+        XCTAssertTrue(app.navigationBars["Server Albums"].exists)
         try capture("r9-03-catalog-album-added")
 
         try select("library")
