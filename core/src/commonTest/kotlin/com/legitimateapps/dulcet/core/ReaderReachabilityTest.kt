@@ -39,6 +39,7 @@ class ReaderReachabilityTest {
 
     @Test
     fun firstCatalogOpenShowsSeenAlbumsBeforeItsOwnPageCanAnswer() = sessionTest { env ->
+        MyLibraryStore(env.database.database, env.cache()).setAdvertised(true)
         val reader = env.session().reader
         reader.connect()
         // Browse's Recently Added shelf belongs to a different list. It can seed a preview,
@@ -71,6 +72,24 @@ class ReaderReachabilityTest {
         assertEquals(LibraryFreshness.Live, publications.last.freshness)
         assertEquals(LibraryItemsOrder.Server, publications.last.order)
         assertEquals(null, publications.last.anchor, "A preview tile must not re-anchor the server grid")
+    }
+
+    @Test
+    fun unsplitLibraryDoesNotPreviewTheAlbumCatalog() = sessionTest { env ->
+        MyLibraryStore(env.database.database, env.cache()).setAdvertised(false)
+        val reader = env.session().reader
+        reader.connect()
+        reader.openHome(listOf(LibraryHomeRow.Albums(AlbumListType.Newest))) { _, _ -> }
+            .also { advanceUntilIdle() }.close()
+        assertEquals(20L, env.cache().counts().albums)
+
+        val publications = Recorder<LibraryPublication>(env.server)
+        reader.open(grid, publications)
+        assertEquals(LibraryFreshness.Loading, publications.last.freshness)
+        assertTrue(publications.last.items.isEmpty())
+        advanceUntilIdle()
+        assertEquals(100, publications.last.items.size)
+        assertEquals(LibraryItemsOrder.Server, publications.last.order)
     }
 
     // ---- (a) Every calling order: nothing before the flush --------------------------------------------

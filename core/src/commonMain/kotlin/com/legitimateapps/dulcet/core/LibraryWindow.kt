@@ -1185,13 +1185,13 @@ internal class ListWindow(
     }
 
     /**
-     * Browse and Listen Now may already have seen albums before someone opens the title-sorted
-     * catalog. Paint a small device view while the first real page is read and scan-checked.
+     * In the split Library/Browse shell, Listen Now and Browse can have seen albums before the
+     * title-sorted catalog opens. Paint a small device view while the first real page is read and scan-checked.
      * Its order and indices can differ from the catalog, so it owns neither paging nor an anchor.
      */
     private fun catalogPreview(): LibraryPublication? {
         if (query != LibraryQuery.AlbumList(AlbumListType.AlphabeticalByName) ||
-            !spec.paged || emptyFreshness() != LibraryFreshness.Loading) return null
+            !spec.paged || emptyFreshness() != LibraryFreshness.Loading || !reader.hasPersonalLibrary()) return null
         val albums = cache.previewAlbums(reader.config.homeRowSize)
         if (albums.isEmpty()) return null
         val pending = reader.overlay.pending(cache.serverId, albums.mapTo(mutableSetOf()) {

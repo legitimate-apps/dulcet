@@ -70,6 +70,7 @@ internal class LibraryReader(
      * or [reconnect] was called.
      */
     internal val breaker: EndpointCircuitBreaker = EndpointCircuitBreaker(),
+    internal val hasPersonalLibrary: () -> Boolean = { false },
 ) {
     private val owner = currentThreadIdentity()
 

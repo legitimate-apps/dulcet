@@ -4608,8 +4608,8 @@ and only its track list shows loading until `getAlbum` lands. The acceptance tes
 publication sequence, not just its last element, because a spinner frame between two correct states
 passes every test that only checks the end.
 
-On the first online open of the unfiltered, title-sorted album catalog, the device can already
-have albums from other reads. While the catalog reads its first page and scan stamp, it publishes
+On accounts that offer My Library (§29.9), the first online open of the unfiltered, title-sorted
+album catalog can already have albums from other device reads. While the catalog reads its first page and scan stamp, it publishes
 a locally sorted preview of up to one home row from the current account’s seen albums. The
 preview carries `loading` freshness and `localView` order, with no server coverage, total or offsets.
 Its rows cannot drive look-ahead or anchors. The checked page replaces the preview with server order.
@@ -8109,8 +8109,8 @@ argue against the recorded rationale — not as filling in a blank.
 iPhone, iPad and Mac label the personal and server album grids Library Albums and Server Albums. The empty
 and sparse personal album pages link directly to the server grid. On iPhone and iPad, album
 tiles, Search result rows and album pages expose direct membership controls. These use the same
-per-account outbox and optimistic publication as the menus. The title-sorted catalog can first
-publish a small device view of album metadata already seen by this account while it reads the
+per-account outbox and optimistic publication as the menus. For those accounts the title-sorted
+catalog can first publish a small device view of album metadata already seen by this account while it reads the
 real first page and checks its scan stamp. The preview has no server coverage, offsets or anchor.
 The checked page determines the catalog's order and pagination.
 
