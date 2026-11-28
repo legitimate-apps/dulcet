@@ -504,6 +504,20 @@ public final class DulcetPresentationStore {
         selectDestination(destination)
     }
 
+    /// A Library shortcut always goes to the catalog grid, including after leaving Browse
+    /// on an artist or album. The regular Browse tab still remembers its current page.
+    func showServerAlbums() {
+        let previousWriter = navigationWriter
+        navigationWriter = "showServerAlbums"
+        defer { navigationWriter = previousWriter }
+        guard !isApplyingSourceSnapshot, readerOwnsLibrary else { return }
+        if selectedDestination != .browse { selectDestination(.browse) }
+        let route = DulcetReaderRoute.section(.albums)
+        readerReturn = nil
+        readerArrival = route
+        readerPath = [route]
+    }
+
     /// The back button or the edge swipe left the library stack at `path`, a prefix of the one
     /// it held. The store is asked for the page now on top, or for the grid.
     public func popLibrary(to path: [DulcetLibraryRoute]) {

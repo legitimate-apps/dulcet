@@ -1254,6 +1254,8 @@ public final class DulcetLibraryWindowModel {
 
     private func reportViewport() {
         guard let subscription, let window, let first = visible.min(), let last = visible.max() else { return }
+        // A device preview has no server positions. Report the viewport once the real page lands.
+        guard window.itemsState != .loading || window.order != .localView else { return }
         if lastViewport.map({ $0 != (first, last) }) ?? true {
             lastViewport = (first, last)
             subscription.setViewport(first: first, last: last)

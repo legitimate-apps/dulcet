@@ -628,7 +628,7 @@ DELETE FROM cache_artist WHERE server_id = ? AND raw_id = ?;
 
 selectLocalAlbums:
 SELECT * FROM cache_album WHERE server_id = ? AND gone = 0
-ORDER BY title COLLATE NOCASE, raw_id;
+ORDER BY title COLLATE NOCASE, raw_id LIMIT ?;
 
 selectLocalArtists:
 SELECT * FROM cache_artist WHERE server_id = ? AND gone = 0
