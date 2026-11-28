@@ -21,20 +21,21 @@ internal class WishlistReader(
     var error: DiscoverFailure?=null;private set
     val settled: Boolean get()=snapshot!=null
     val rows: List<WishRow> get()=outbox.overlay(snapshot,issue,filter)
+    fun clearError() {error=null}
     fun close() {closed=true;generation++;loading=false}
     private fun current(ticket: Long)=!closed && active() && generation==ticket
-    suspend fun refresh(filter: WishFilter) {
-        if(closed || !active()) return
+    suspend fun refresh(filter: WishFilter, valid: ()->Boolean = {true}) {
+        if(closed || !active() || !valid()) return
         val ticket=++generation
         this.filter=filter
         try {
             snapshot=store.snapshot(filter);issue=store.snapshotIssue(filter)
             if(!access().canReadWishlist) {error=DiscoverFailure("unsupported",null,false);changed();return}
             loading=true;error=null;changed()
-            if(!current(ticket)) return
+            if(!current(ticket) || !valid()) return
             val issued=store.nextIssue()
             val result=transport.snapshot(filter)
-            if(!current(ticket)) return
+            if(!current(ticket) || !valid()) return
             when(result) {
                 is DiscoverResult.Value -> {
                     val before=snapshot?.items.orEmpty().associateBy {it.id}
@@ -47,7 +48,7 @@ internal class WishlistReader(
                 is DiscoverResult.Failed -> error=result.error
             }
         } catch(cancelled: CancellationException) {throw cancelled}
-          catch(_: Exception) {if(current(ticket)) error=DiscoverFailure("storage",null,true)}
+          catch(_: Exception) {if(current(ticket) && valid()) error=DiscoverFailure("storage",null,true)}
           finally {if(current(ticket)){loading=false;changed()}}
     }
 }
