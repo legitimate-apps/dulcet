@@ -7734,6 +7734,94 @@ extension DulcetiOSUITests {
                       "A queue drag must leave the presentation open")
     }
 
+    /// Up Next's handle drag lands the row where the finger lifts: a slow three-row move, then a
+    /// fast one across every row on screen. On the test iPhone (2026-11-27) the
+    /// three-row move landed near the end of a 13-song queue: rows the lazy list had not laid out
+    /// counted as above every drop point. The fixture's 300-track album gives the long queue.
+    @MainActor
+    func testUpNextHandleDragLandsTheRowWhereTheFingerLifts() {
+        XCUIDevice.shared.orientation = .portrait
+        let app = XCUIApplication()
+        app.launchArguments = ["-dulcet-account-connect-layout-fixture", "-dulcet-layout-fixture-editable-queue"]
+        app.launch()
+        guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
+        guard width < 700 else {
+            XCTFail("This proof is the iPhone's compact Up Next; the destination was \(width) pt wide")
+            return
+        }
+        XCTAssertTrue(openDestination("Library", sidebarIdentifier: "dulcet.sidebar.library", in: app, compact: true))
+        let album = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Paging Atlas")).firstMatch
+        XCTAssertTrue(album.waitForExistence(timeout: 10))
+        XCTAssertTrue(scrollIntoView(album, in: app, probingBlockingSystemAlerts: false))
+        album.tap()
+        let first = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Paging Track 001")).firstMatch
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        first.tap()
+        let pause = app.buttons["dulcet.mini-player.play-pause"].firstMatch
+        XCTAssertTrue(pause.waitForExistence(timeout: 10))
+        pause.tap()
+        XCTAssertTrue(waitForLabel("Play", of: pause, timeout: 5))
+        app.buttons["dulcet.mini-player.open"].firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["dulcet.now-playing.title"].firstMatch.waitForExistence(timeout: 5))
+        app.buttons["dulcet.now-playing.up-next"].firstMatch.tap()
+
+        func row(_ offset: Int) -> XCUIElement { app.buttons["dulcet.upNext.row.\(offset)"].firstMatch }
+        /// The track number a row shows, from the "Paging Track NNN" in its label.
+        func number(_ element: XCUIElement) -> Int? {
+            guard element.exists,
+                  let range = element.label.range(of: #"Paging Track \d{3}"#, options: .regularExpression)
+            else { return nil }
+            return Int(element.label[range].suffix(3))
+        }
+        /// The point on a row's handle: the grabber sits after the row's More, at its trailing edge.
+        func handle(_ offset: Int) -> XCUICoordinate? {
+            let more = app.buttons["dulcet.upNext.more.\(offset)"].firstMatch
+            guard more.exists, row(offset).exists else { return nil }
+            let point = CGPoint(x: more.frame.maxX + 30, y: row(offset).frame.midY)
+            return app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: point.x, dy: point.y))
+        }
+        func capture(_ name: String) {
+            let shot = XCTAttachment(screenshot: app.screenshot())
+            shot.name = name
+            shot.lifetime = .keepAlways
+            add(shot)
+        }
+        XCTAssertTrue(row(3).waitForExistence(timeout: 10), "Up Next must show at least four rows")
+        XCTAssertEqual((0...3).compactMap { number(row($0)) }, [2, 3, 4, 5], "the control: the album order")
+        capture("Up Next before the drags")
+
+        // 1. The device's move: the first row to the gap after the third, slowly.
+        guard let shortStart = handle(0) else { return XCTFail("No handle on the first row: \(app.debugDescription)") }
+        let shortDistance = row(2).frame.midY - row(0).frame.midY + row(0).frame.height * 0.3
+        shortStart.press(forDuration: 0.15, thenDragTo: shortStart.withOffset(CGVector(dx: 0, dy: shortDistance)),
+                         withVelocity: XCUIGestureVelocity(250), thenHoldForDuration: 0.4)
+        sleep(1)
+        capture("Up Next after the first row was dragged to the gap after the third")
+        XCTAssertEqual((0...3).compactMap { number(row($0)) }, [3, 4, 2, 5],
+                       "The first row must land third, where the gap showed")
+
+        // 2. A long move, fast: the first row (track 3 now) across the whole visible list, lifted
+        // just past the middle of the last row that is fully on screen.
+        guard let longStart = handle(0) else { return XCTFail("No handle on the first row after the move") }
+        let list = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
+        let visibleBottom = list.frame.maxY
+        let lastVisible = (1..<12).last { row($0).exists && row($0).frame.maxY <= visibleBottom } ?? 0
+        guard lastVisible >= 3 else {
+            return XCTFail("The long move needs at least four rows on screen; the last was \(lastVisible)")
+        }
+        let orderBefore = (0...lastVisible).compactMap { number(row($0)) }
+        let longDistance = row(lastVisible).frame.midY - row(0).frame.midY + row(0).frame.height * 0.3
+        longStart.press(forDuration: 0.15, thenDragTo: longStart.withOffset(CGVector(dx: 0, dy: longDistance)),
+                        withVelocity: XCUIGestureVelocity(1500), thenHoldForDuration: 0.2)
+        sleep(1)
+        capture("Up Next after the first row was dragged fast to the last row on screen")
+        var expected = orderBefore
+        expected.append(expected.removeFirst())
+        XCTAssertEqual((0...lastVisible).compactMap { number(row($0)) }, expected,
+                       "The first row must land last on screen, where the gap showed when the finger lifted")
+        print("DULCET UPNEXT LONG DRAG lastVisible=\(lastVisible) before=\(orderBefore)")
+    }
+
     /// The same distance cancels at rest and finishes when flicked: distance alone is insufficient.
     @MainActor
     func testNowPlayingFastShortCloseUsesVelocity() {

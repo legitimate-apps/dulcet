@@ -48,7 +48,9 @@ public struct DulcetUpNextSection: View {
     @Environment(\.editMode) private var editMode
     /// The drag a row's handle is making, and every row's frame for it to measure against.
     @State private var handleDrag: DulcetQueueHandleDrag?
+    /// The rows the list has laid out now: a lazy list drops a row's view when it scrolls away.
     @State private var rowFrames: [DulcetQueueEntryID: CGRect] = [:]
+    /// Carries the list on while the dragged row is held at its top or bottom edge.
 #endif
 
     public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void, autoplay: DulcetAutoplayToggle? = nil) {
@@ -115,7 +117,12 @@ public struct DulcetUpNextSection: View {
 #if os(iOS)
         let lifted = handleDrag?.source == offset
         baseRow(entry, offset: offset)
-            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { rowFrames[entry.id] = $0 }
+            .onDisappear {
+                rowFrames[entry.id] = nil
+                // The handle's gesture lives in this row: once the list takes the row away, the
+                // gesture ends without telling anyone, so the drag ends here, where its gap shows.
+                if handleDrag?.source == offset { endHandleDrag() }
+            }
             .background {
                 if lifted {
                     RoundedRectangle(cornerRadius: DulcetMetrics.liftedRowCornerRadius, style: .continuous)
@@ -125,7 +132,14 @@ public struct DulcetUpNextSection: View {
                 }
             }
             .scaleEffect(lifted ? 1.03 : 1)
-            .offset(y: lifted ? handleDrag?.translation ?? 0 : handleDrag?.displacement(of: offset) ?? 0)
+            .offset(y: lifted ? handleDrag?.liftedOffset ?? 0 : handleDrag?.displacement(of: offset) ?? 0)
+            // Read outside the offset: a frame read inside it moves with the drag, the drag reads
+            // the scroll from the frames, and the two chase each other without settling (the app
+            // never went idle after a drag in hosted CI, run 46094370027).
+            .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { frame in
+                rowFrames[entry.id] = frame
+                observeRowFrames()
+            }
             .zIndex(lifted ? 1 : 0)
 #else
         baseRow(entry, offset: offset)
@@ -144,7 +158,7 @@ public struct DulcetUpNextSection: View {
         return AnyView(DulcetQueueReorderHandle(
             onChanged: { translation in
                 if handleDrag == nil {
-                    let frames = model.upcoming.map { rowFrames[$0.id] ?? .zero }
+                    let frames = model.upcoming.map { rowFrames[$0.id] }
                     guard let drag = DulcetQueueHandleDrag(source: offset, frames: frames) else { return }
                     DulcetHaptic.reorderLift.play()
                     withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { handleDrag = drag }
@@ -155,6 +169,16 @@ public struct DulcetUpNextSection: View {
             },
             onEnded: { endHandleDrag() }
         ))
+    }
+
+    /// The upcoming position of every row laid out now, for the drag to read the scroll from.
+    private func observeRowFrames() {
+        guard handleDrag != nil else { return }
+        var current: [Int: CGRect] = [:]
+        for (index, entry) in model.upcoming.enumerated() {
+            if let frame = rowFrames[entry.id] { current[index] = frame }
+        }
+        handleDrag?.observe(currentFrames: current)
     }
 
     private func endHandleDrag() {
@@ -564,6 +588,11 @@ public struct DulcetUpNextList: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dulcet.upNext")
         } else {
+        list
+        }
+    }
+
+    private var list: some View {
         List {
             if showsCurrentTrack, let current = nowPlaying {
                 Section(DulcetStrings.nowPlaying) {
@@ -610,7 +639,6 @@ public struct DulcetUpNextList: View {
         .environment(\.editMode, $editMode)
 #endif
         .accessibilityIdentifier("dulcet.upNext")
-        }
     }
 
     private var upcomingSection: DulcetUpNextSection {

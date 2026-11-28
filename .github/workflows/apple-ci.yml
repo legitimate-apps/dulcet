@@ -885,12 +885,25 @@ jobs:
             -derivedDataPath "$RUNNER_TEMP/DulcetiOSDerivedData" \
             -resultBundlePath "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
             -parallel-testing-enabled NO \
-            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar 2>&1 | \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar \
+            -only-testing:DulcetiOSUITests/DulcetiOSUITests/testUpNextHandleDragLandsTheRowWhereTheFingerLifts 2>&1 | \
           tee "$RUNNER_TEMP/dulcet-ios-compact-nav.log"
           python3 tools/verify-xcode-test-execution \
             "$RUNNER_TEMP/dulcet-ios-compact-nav.xcresult" \
             DulcetiOSUITests.DulcetiOSUITests \
-            testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar
+            testCompactShellKeepsTheAlbumAndOpensNowPlayingFromTheBar \
+            testUpNextHandleDragLandsTheRowWhereTheFingerLifts
+      - name: Upload the Up Next drag screenshots
+        # The handle-drag proof keeps its before and after screenshots in this result bundle on
+        # every verdict; the failure-diagnostics upload below carries it only on failure.
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: dulcet-ios-up-next-drag-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dulcet-ios-compact-nav.xcresult
+          if-no-files-found: warn
+          compression-level: 0
+          retention-days: 14
       - name: Assert Kotlin and Xcode OS floors
         run: >-
           python3 tools/verify_os_floors.py

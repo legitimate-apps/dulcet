@@ -233,14 +233,18 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
 
     public private(set) var currentSnapshot: DulcetSnapshot
     public let downloadsEnabled = true
-    public let queueEditingEnabled = false
+    /// Off by default, so the fixture's captures keep the read-only queue listing. A UI proof of
+    /// Up Next's reorder turns it on: the queue then carries entry identities and applies moves.
+    public let queueEditingEnabled: Bool
 
     public init(
         fixture: DulcetDeterministicFixture = DulcetDeterministicFixture(),
         initialState: DulcetPresentationState = .libraryBrowse,
         playbackStartNavigation: DulcetPlaybackStartNavigation = .platformDefault,
-        failingTrackTitles: Set<String> = []
+        failingTrackTitles: Set<String> = [],
+        queueEditingEnabled: Bool = false
     ) {
+        self.queueEditingEnabled = queueEditingEnabled
         self.fixture = fixture
         self.playbackStartNavigation = playbackStartNavigation
         self.failingTrackTitles = failingTrackTitles
@@ -273,7 +277,7 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
         case let .updateSearchQuery(query):
             currentSnapshot = currentSnapshot.replacingSearchQuery(query)
         case .loadMoreSearchResults, .retrySearch, .downloadTrack, .requestDownload, .activateSearchResult,
-             .retryAlbumTracks, .editQueue, .reportRefusedQueueEdit, .setSleepTimer:
+             .retryAlbumTracks, .reportRefusedQueueEdit, .setSleepTimer:
             // The fixture's albums always carry their tracks, so there is nothing to re-read.
             break
         case let .playLibrary(shuffle):
@@ -293,6 +297,8 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
             }
         case let .playbackControl(intent):
             applyPlaybackControl(intent)
+        case let .editQueue(intent):
+            applyQueueEdit(intent)
         case let .selectAlbum(id), let .showAlbum(id):
             if let album = currentSnapshot.albums.first(where: { $0.id == id })
                 ?? DulcetDeterministicFixture.library.first(where: { $0.id == id }) {
@@ -377,6 +383,10 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
             return
         }
         failed = nil
+        // One identity per position: a track queued twice is two entries.
+        let entries = queueEditingEnabled
+            ? tracks.enumerated().map { DulcetQueueEntry(id: DulcetQueueEntryID("fixture-\($0.offset)-\($0.element.id)"), track: $0.element) }
+            : []
         playing = DulcetNowPlaying(
             current: tracks[index],
             queue: tracks,
@@ -389,7 +399,26 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
             audioFormat: DulcetAudioFormat(codec: "FLAC", sampleRateKilohertz: 44.1),
             shuffleEnabled: shuffle,
             canGoNext: index + 1 < tracks.count,
-            canGoPrevious: index > 0
+            canGoPrevious: index > 0,
+            queueEntries: entries,
+            currentEntryIndex: entries.isEmpty ? nil : index
+        )
+    }
+
+    /// Reorder only, which is what the fixture's queue proofs drive; other edits are ignored.
+    private func applyQueueEdit(_ intent: DulcetQueueEditIntent) {
+        guard queueEditingEnabled, let current = playing, let currentEntry = current.currentEntryIndex,
+              case let .move(id, toIndex) = intent,
+              let from = current.queueEntries.firstIndex(where: { $0.id == id }),
+              current.queueEntries.indices.contains(toIndex) else { return }
+        var entries = current.queueEntries
+        let moved = entries.remove(at: from)
+        entries.insert(moved, at: toIndex)
+        let currentID = current.queueEntries[currentEntry].id
+        playing = current.replacing(
+            isPlaying: current.isPlaying,
+            queueEntries: entries,
+            currentEntryIndex: entries.firstIndex { $0.id == currentID }
         )
     }
 
@@ -447,12 +476,19 @@ public final class DulcetDeterministicDataSource: DulcetDataSource, DulcetLibrar
 }
 
 private extension DulcetNowPlaying {
-    func replacing(isPlaying: Bool, elapsed newElapsed: Duration? = nil) -> DulcetNowPlaying {
-        DulcetNowPlaying(
+    func replacing(
+        isPlaying: Bool,
+        elapsed newElapsed: Duration? = nil,
+        queueEntries newEntries: [DulcetQueueEntry]? = nil,
+        currentEntryIndex newCurrentEntry: Int? = nil
+    ) -> DulcetNowPlaying {
+        let entries = newEntries ?? queueEntries
+        let entryIndex = newEntries == nil ? currentEntryIndex : newCurrentEntry
+        return DulcetNowPlaying(
             sessionID: sessionID,
             current: current,
-            queue: queue,
-            currentIndex: currentIndex,
+            queue: newEntries.map { $0.map(\.track) } ?? queue,
+            currentIndex: entryIndex ?? currentIndex,
             sourceDisplayName: sourceDisplayName,
             elapsed: newElapsed ?? elapsed,
             isPlaying: isPlaying,
@@ -465,7 +501,9 @@ private extension DulcetNowPlaying {
             repeatMode: repeatMode,
             shuffleEnabled: shuffleEnabled,
             canGoNext: canGoNext,
-            canGoPrevious: canGoPrevious
+            canGoPrevious: canGoPrevious,
+            queueEntries: entries,
+            currentEntryIndex: entryIndex
         )
     }
 }

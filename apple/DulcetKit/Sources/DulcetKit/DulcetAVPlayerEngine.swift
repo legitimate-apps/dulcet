@@ -23,6 +23,13 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     public static let sampleInterval: TimeInterval = 0.5
     public static let cadenceMaximum: TimeInterval = 2
     public static let emptyQueueAudioSessionGracePeriod: TimeInterval = 10
+    /// How long the system's Now Playing entry and the audio session outlive a `stop`. Every
+    /// start -- a skip, a tap on another song -- stops the engine and then prepares the next entry,
+    /// and the prepare that follows replaces the entry in place. Withdrawing it at the stop instead
+    /// left the iPhone lock screen on "Not Playing" after a paused Next (OBSERVED 2026-11-27). Why is
+    /// ASSUMED, not traced on a device: the deactivated session gave up Now Playing, and a paused
+    /// prepare plays nothing to take it back.
+    static let stopHandoverGracePeriod: TimeInterval = 2
     static let startupRecoveryDelay: TimeInterval = 2
     static let startupRecoveryVerdictBudget: TimeInterval = 120
 
@@ -243,7 +250,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     public func stopForAccountChange() {
         performOnQueueSynchronously { [self] in
             guard !released else { return }
-            stop(reason: .user)
+            stop(reason: .user, withdrawsSystemEntry: .immediately)
         }
     }
 
@@ -460,7 +467,7 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
             pause(context: current)
             completion(.completed(commandID: commandID, result: .withoutData))
         case let .stop(commandID):
-            stop(reason: .user)
+            stop(reason: .user, withdrawsSystemEntry: .afterHandover)
             completion(.completed(commandID: commandID, result: .withoutData))
         case let .seek(commandID, position):
             seek(commandID: commandID, position: position, completion: completion)
@@ -697,33 +704,53 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
-    private func stop(reason: DulcetPlaybackSkipReason) {
+    private enum SystemEntryWithdrawal {
+        /// Account change: nothing of the old account stays on the lock screen.
+        case immediately
+        /// A `stop` the next start may follow: the entry and the session stay for
+        /// `stopHandoverGracePeriod`, and a prepare within it takes them over.
+        case afterHandover
+    }
+
+    private func stop(reason: DulcetPlaybackSkipReason, withdrawsSystemEntry withdrawal: SystemEntryWithdrawal) {
         interruptionWasPlaying = false
         endOverlap()
         crossfadeDuration = 0
         discardPreparedIncomingPlayer()
         removeCrossfadeTimeObserver()
-        guard let current else {
+        if let current {
+            let position = currentPosition(for: current)
             player.pause()
-            preloaded?.invalidate()
-            preloaded = nil
-            artworkBySession = [:]
-            player.removeAllItems()
-            deactivateAudioSessionImmediately()
-            systemMediaControls.clear()
-            return
+            emit(.skipped(attemptID: current.plan.attemptID, position: position, reason: reason))
+            // The audio stopped: until the entry is replaced or withdrawn it reads paused.
+            systemMediaControls.updateTransport(
+                sessionID: current.plan.playbackSessionID,
+                position: position,
+                rate: 0,
+                isPlaying: false
+            )
+            current.invalidate()
+            self.current = nil
+        } else {
+            player.pause()
         }
-        let position = currentPosition(for: current)
-        player.pause()
-        emit(.skipped(attemptID: current.plan.attemptID, position: position, reason: reason))
-        current.invalidate()
         preloaded?.invalidate()
-        self.current = nil
         preloaded = nil
         artworkBySession = [:]
         player.removeAllItems()
-        deactivateAudioSessionImmediately()
-        systemMediaControls.clear()
+        switch withdrawal {
+        case .immediately:
+            deactivateAudioSessionImmediately()
+            systemMediaControls.clear()
+        case .afterHandover:
+            if activeAudioSessionID == nil {
+                systemMediaControls.clear()
+            } else {
+                scheduleAudioSessionDeactivationAfterGrace(
+                    min(audioSessionGracePeriod, Self.stopHandoverGracePeriod)
+                )
+            }
+        }
     }
 
     private func releaseEngine() {
@@ -1480,12 +1507,19 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         commandID: DulcetPlaybackCommandID,
         completion: @escaping DulcetPlaybackCommandCompletion
     ) -> Bool {
-        cancelAudioSessionGrace?()
-        cancelAudioSessionGrace = nil
-        guard activeAudioSessionID != plan.playbackSessionID else { return true }
+        guard activeAudioSessionID != plan.playbackSessionID else {
+            cancelAudioSessionGrace?()
+            cancelAudioSessionGrace = nil
+            return true
+        }
         do {
             try audioSession.activate()
             activeAudioSessionID = plan.playbackSessionID
+            // Only now: a pending withdrawal -- a stop's handover among them -- must survive an
+            // activation that fails, or the old entry would stay on the lock screen with nothing
+            // left to clear it.
+            cancelAudioSessionGrace?()
+            cancelAudioSessionGrace = nil
             return true
         } catch {
             emit(.failedBeforeStart(attemptID: plan.attemptID, error: .engine))
@@ -1494,11 +1528,11 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         }
     }
 
-    private func scheduleAudioSessionDeactivationAfterGrace() {
+    private func scheduleAudioSessionDeactivationAfterGrace(_ grace: TimeInterval? = nil) {
         cancelAudioSessionGrace?()
         cancelAudioSessionGrace = clock.scheduleOnce(
             on: queue,
-            after: audioSessionGracePeriod
+            after: grace ?? audioSessionGracePeriod
         ) { [weak self] in
             guard let self, self.preloaded == nil, self.player.items().isEmpty else { return }
             self.audioSession.deactivate()

@@ -47,7 +47,9 @@ struct DulcetiOSApp: App {
             _presentation = State(initialValue: DulcetPresentationStore(
                 source: DulcetDeterministicDataSource(
                     initialState: .accountConnectIdle,
-                    failingTrackTitles: failingTrack.map { [$0] } ?? []
+                    failingTrackTitles: failingTrack.map { [$0] } ?? [],
+                    // Up Next's reorder proof needs a queue with entry identities.
+                    queueEditingEnabled: arguments.contains("-dulcet-layout-fixture-editable-queue")
                 )
             ))
             downloadController = nil

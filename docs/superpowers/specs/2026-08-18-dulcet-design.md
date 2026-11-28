@@ -1998,7 +1998,9 @@ Listing route and interruption events is not a policy. The normative policy:
   route-sharing policy (the policy Apple defines for music apps, which routes the session to AirPlay
   speakers the way Music is routed); the category is declared when the audio session object is
   created, before the first play. The session is activated on the first `prepare` of a session and
-  deactivated on `stop` or after a grace period with no queue. AirPlay is permitted. On
+  deactivated after a grace period with no queue; a `stop` that the next `prepare` may follow (every
+  start stops first, §12.10) waits at most 2 s, and a sign-out or account change deactivates at
+  once. AirPlay is permitted. On
   `InterruptionBegan` playback pauses; on `InterruptionEnded` it resumes **only** if the system
   indicates resumption is appropriate and no newer Pause, Stop, noisy-route pause or terminal
   playback failure revoked the earlier playing intent. A later explicit Play still starts playback.
@@ -2026,8 +2028,10 @@ Playing is updated after `Ready` and after each `AttemptReplaced`. A remote next
 the play state exactly as the in-app skip does (§14.1). Apple also publishes the known
 track metadata at `Preparing`, after audio-session activation, with elapsed time zero and playback
 rate zero until playback starts; stream readiness and artwork must not gate the entry's existence.
-Late duration and seekability update both the system entry and the core observation. Stop/release
-withdraw the entry, and transport samples restore an evicted system dictionary from retained
+Late duration and seekability update both the system entry and the core observation. Release
+withdraws the entry at once; a stop first marks it paused and withdraws it only if no `prepare`
+follows within the 2 s handover (§12.9), so the next start replaces the entry instead of leaving
+"Not Playing". Transport samples restore an evicted system dictionary from retained
 metadata. Commands arriving for a stale session are rejected, not applied to the current one.
 
 **Revision 106.** Rating and like are **not registered** with the system command centre until a
@@ -8115,6 +8119,26 @@ replaced connection path. When Home already has usable shelves, automatic refres
 shelves and Recent wishes stay quiet. The session still tells the person about a connection loss,
 and Home can report a failed refresh when the listener asked for it or there are no usable shelves.
 A source-reported freshness note can still describe older results.
+
+**2026-11-27 — A paused skip hands the lock screen to the next track; an Up Next drag lands under the finger (§12.9, §12.10, §14.1).**
+OBSERVED on the test iPhone, 2026-11-27: after a paused Next or Previous the lock screen and Control
+Center showed "Not Playing", and a three-row handle drag in a 13-song Up Next put the row near the end.
+Cause of the first, from the code: every start stops the engine before it prepares the next entry,
+and the engine's `stop` deactivated the audio session and cleared the system entry at once; a paused
+`prepare` then published to a session that had given up Now Playing and played nothing to reclaim it
+(the reclaim mechanism is ASSUMED, not traced on the device). Rule now: a user stop marks the entry
+paused and keeps the session for a handover of at most 2 s; the next `prepare` publishes the new
+track's title, artist and art paused and cancels the withdrawal; with nothing following, the session
+deactivates and the entry is withdrawn when the handover ends. Release, teardown and an account change
+still withdraw at once. Cause of the second, from the code: the drop index counted every row whose
+frame the lazy list had not laid out as sitting at y = 0, above any drop point, and rows that had
+scrolled away kept stale frames. The drag now lays out slots from the rows it has measured and
+estimates the rest at the measured pitch and follows the list's own scroll, so the gap the person sees
+is where the row lands. The list does not scroll on its own under a held row: the handle's gesture
+lives in the row's cell, and a hosted-CI run (46102176054) showed that once scrolling carried the cell
+away the gesture ended unseen and the drag never finished. A drag whose row leaves the list now ends
+where its gap shows. Carrying a row past the screen needs a gesture the list owns, not the row.
+
 
 **2026-11-27 — A skip keeps the play state; Up Next reorders from an always-visible handle (§14.1, §12.10).**
 OBSERVED on the test iPhone, 2026-11-27: with "¿Cómo así?" paused, a left swipe on the mini-player
