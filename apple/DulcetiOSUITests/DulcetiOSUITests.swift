@@ -7734,9 +7734,8 @@ extension DulcetiOSUITests {
                       "A queue drag must leave the presentation open")
     }
 
-    /// Up Next's handle drag lands the row where the finger lifts: a three-row move within the
-    /// screen, then a long one that holds the row at the list's bottom edge until the list has
-    /// scrolled it past rows that were never laid out. On the test iPhone (2026-11-27) the
+    /// Up Next's handle drag lands the row where the finger lifts: a slow three-row move, then a
+    /// fast one across every row on screen. On the test iPhone (2026-11-27) the
     /// three-row move landed near the end of a 13-song queue: rows the lazy list had not laid out
     /// counted as above every drop point. The fixture's 300-track album gives the long queue.
     @MainActor
@@ -7801,31 +7800,26 @@ extension DulcetiOSUITests {
         XCTAssertEqual((0...3).compactMap { number(row($0)) }, [3, 4, 2, 5],
                        "The first row must land third, where the gap showed")
 
-        // 2. A long move: hold the row at the bottom edge until the list scrolls, then lift.
+        // 2. A long move, fast: the first row (track 3 now) across the whole visible list, lifted
+        // just past the middle of the last row that is fully on screen.
         guard let longStart = handle(0) else { return XCTFail("No handle on the first row after the move") }
         let list = app.descendants(matching: .any)["dulcet.upNext"].firstMatch
-        let bottomEdge = min(list.frame.maxY, app.windows.firstMatch.frame.maxY) - 24
-        let liftY = bottomEdge
-        let longDistance = liftY - row(0).frame.midY
-        longStart.press(forDuration: 0.15, thenDragTo: longStart.withOffset(CGVector(dx: 0, dy: longDistance)),
-                        withVelocity: XCUIGestureVelocity(600), thenHoldForDuration: 2.5)
-        sleep(1)
-        capture("Up Next after the first row was held at the bottom edge and lifted")
-        // Find the dragged row (track 3) and check it sits under the lifted finger, deep in the queue.
-        var landed: Int?
-        for offset in 0..<300 where row(offset).exists && number(row(offset)) == 3 { landed = offset; break }
-        guard let landed else { return XCTFail("Track 3 must be on screen where it was dropped: \(app.debugDescription)") }
-        let frame = row(landed).frame
-        XCTAssertGreaterThan(landed, 5, "Holding at the edge must have scrolled the row past the first screen")
-        // The drop takes the slot the lifted row's middle had crossed, so the row settles within a
-        // row's height of the finger, never a screen away from it.
-        XCTAssertLessThanOrEqual(abs(frame.midY - liftY), frame.height * 1.5,
-                                 "The row must land where the finger lifted: lifted at \(liftY), row \(landed) at \(frame)")
-        // Order elsewhere is kept: the rows around the drop are consecutive album tracks.
-        if let above = number(row(landed - 1)), let below = number(row(landed + 1)) {
-            XCTAssertEqual(below, above + 1, "Only the dragged row moved")
+        let visibleBottom = list.frame.maxY
+        let lastVisible = (1..<12).last { row($0).exists && row($0).frame.maxY <= visibleBottom } ?? 0
+        guard lastVisible >= 3 else {
+            return XCTFail("The long move needs at least four rows on screen; the last was \(lastVisible)")
         }
-        print("DULCET UPNEXT LONG DRAG landed=\(landed) frame=\(frame) lift=\(liftY)")
+        let orderBefore = (0...lastVisible).compactMap { number(row($0)) }
+        let longDistance = row(lastVisible).frame.midY - row(0).frame.midY + row(0).frame.height * 0.3
+        longStart.press(forDuration: 0.15, thenDragTo: longStart.withOffset(CGVector(dx: 0, dy: longDistance)),
+                        withVelocity: XCUIGestureVelocity(1500), thenHoldForDuration: 0.2)
+        sleep(1)
+        capture("Up Next after the first row was dragged fast to the last row on screen")
+        var expected = orderBefore
+        expected.append(expected.removeFirst())
+        XCTAssertEqual((0...lastVisible).compactMap { number(row($0)) }, expected,
+                       "The first row must land last on screen, where the gap showed when the finger lifted")
+        print("DULCET UPNEXT LONG DRAG lastVisible=\(lastVisible) before=\(orderBefore)")
     }
 
     /// The same distance cancels at rest and finishes when flicked: distance alone is insufficient.

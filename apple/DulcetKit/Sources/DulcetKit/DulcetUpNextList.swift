@@ -51,9 +51,6 @@ public struct DulcetUpNextSection: View {
     /// The rows the list has laid out now: a lazy list drops a row's view when it scrolls away.
     @State private var rowFrames: [DulcetQueueEntryID: CGRect] = [:]
     /// Carries the list on while the dragged row is held at its top or bottom edge.
-    @State private var autoscroll: Task<Void, Never>?
-    @State private var autoscrollDirection: DulcetQueueHandleDrag.AutoscrollDirection?
-    @Environment(\.dulcetQueueScroller) private var scroller
 #endif
 
     public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void, autoplay: DulcetAutoplayToggle? = nil) {
@@ -120,7 +117,12 @@ public struct DulcetUpNextSection: View {
 #if os(iOS)
         let lifted = handleDrag?.source == offset
         baseRow(entry, offset: offset)
-            .onDisappear { rowFrames[entry.id] = nil }
+            .onDisappear {
+                rowFrames[entry.id] = nil
+                // The handle's gesture lives in this row: once the list takes the row away, the
+                // gesture ends without telling anyone, so the drag ends here, where its gap shows.
+                if handleDrag?.source == offset { endHandleDrag() }
+            }
             .background {
                 if lifted {
                     RoundedRectangle(cornerRadius: DulcetMetrics.liftedRowCornerRadius, style: .continuous)
@@ -164,7 +166,6 @@ public struct DulcetUpNextSection: View {
                 withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.86)) {
                     handleDrag?.translation = translation
                 }
-                updateAutoscroll()
             },
             onEnded: { endHandleDrag() }
         ))
@@ -180,39 +181,7 @@ public struct DulcetUpNextSection: View {
         handleDrag?.observe(currentFrames: current)
     }
 
-    /// Scrolls the list a row at a time while the dragged row is held near its top or bottom, the
-    /// way the system list carries a dragged row on; the drag's target follows the scroll.
-    private func updateAutoscroll() {
-        let direction = scroller.flatMap { scroller in
-            handleDrag?.autoscrollDirection(viewport: scroller.viewport, margin: Self.autoscrollMargin)
-        }
-        guard direction != autoscrollDirection else { return }
-        autoscrollDirection = direction
-        autoscroll?.cancel()
-        autoscroll = nil
-        guard let direction, let scroller else { return }
-        autoscroll = Task { @MainActor in
-            while !Task.isCancelled, let drag = handleDrag {
-                let upcoming = model.upcoming
-                let next = direction == .down
-                    ? min(drag.target + 2, upcoming.count - 1) : max(drag.target - 2, 0)
-                withAnimation(.linear(duration: Self.autoscrollStep)) {
-                    scroller.proxy.scrollTo(upcoming[next].id, anchor: direction == .down ? .bottom : .top)
-                }
-                try? await Task.sleep(for: .seconds(Self.autoscrollStep))
-                if handleDrag?.autoscrollDirection(viewport: scroller.viewport, margin: Self.autoscrollMargin)
-                    != direction { break }
-            }
-        }
-    }
-
-    private static let autoscrollMargin: CGFloat = 56 // design-token: allow scroll threshold, not layout
-    private static let autoscrollStep: TimeInterval = 0.18
-
     private func endHandleDrag() {
-        autoscroll?.cancel()
-        autoscroll = nil
-        autoscrollDirection = nil
         guard let drag = handleDrag else { return }
         if let destination = drag.moveDestination,
            let intent = model.moveIntent(fromOffsets: IndexSet(integer: drag.source), toOffset: destination) {
@@ -568,8 +537,6 @@ public struct DulcetUpNextList: View {
     private let showsCurrentTrack: Bool
 #if os(iOS)
     @State private var editMode: EditMode = .inactive
-    /// The list's visible frame, for a handle drag to scroll it from its edges.
-    @State private var viewport: CGRect = .zero
 #endif
 
     public init(
@@ -621,15 +588,7 @@ public struct DulcetUpNextList: View {
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("dulcet.upNext")
         } else {
-#if os(iOS)
-        ScrollViewReader { proxy in
-            list
-                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { viewport = $0 }
-                .environment(\.dulcetQueueScroller, DulcetQueueScroller(proxy: proxy, viewport: viewport))
-        }
-#else
         list
-#endif
         }
     }
 

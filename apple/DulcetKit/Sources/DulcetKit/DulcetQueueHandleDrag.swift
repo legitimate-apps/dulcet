@@ -137,43 +137,9 @@ struct DulcetQueueHandleDrag: Equatable {
         guard target != source else { return nil }
         return target > source ? target + 1 : target
     }
-
-    /// Which way the list should scroll to carry the row on, or nil: when the dragged row's middle
-    /// is within `margin` of the visible list's top or bottom and rows remain that way.
-    func autoscrollDirection(viewport: CGRect, margin: CGFloat) -> AutoscrollDirection? {
-        guard viewport.height > 2 * margin else { return nil }
-        // On screen the row is where the finger holds it.
-        let onScreen = slots[source].midY + translation
-        let target = target
-        if onScreen > viewport.maxY - margin, target < slots.count - 1 { return .down }
-        if onScreen < viewport.minY + margin, target > 0 { return .up }
-        return nil
-    }
-
-    enum AutoscrollDirection: Equatable { case up, down }
 }
 
 #if os(iOS)
-/// What a handle drag needs from the list around it to carry a row past the screen's edge: the
-/// list's scroll proxy and its visible frame in the global space the rows measure in.
-struct DulcetQueueScroller {
-    let proxy: ScrollViewProxy
-    let viewport: CGRect
-}
-
-private struct DulcetQueueScrollerKey: EnvironmentKey {
-    // Nil, and only ever read and written by views on the main actor.
-    nonisolated(unsafe) static let defaultValue: DulcetQueueScroller? = nil
-}
-
-extension EnvironmentValues {
-    /// Set by the list that holds Up Next; without it a drag still lands right, within the screen.
-    var dulcetQueueScroller: DulcetQueueScroller? {
-        get { self[DulcetQueueScrollerKey.self] }
-        set { self[DulcetQueueScrollerKey.self] = newValue }
-    }
-}
-
 /// The grabber at a row's trailing edge. It starts a drag on touch, so a vertical scroll that
 /// begins on it moves the row instead -- the system player's handle does the same; the rest of
 /// the row scrolls the list.

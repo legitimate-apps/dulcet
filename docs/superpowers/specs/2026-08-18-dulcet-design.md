@@ -8114,8 +8114,11 @@ deactivates and the entry is withdrawn when the handover ends. Release, teardown
 still withdraw at once. Cause of the second, from the code: the drop index counted every row whose
 frame the lazy list had not laid out as sitting at y = 0, above any drop point, and rows that had
 scrolled away kept stale frames. The drag now lays out slots from the rows it has measured and
-estimates the rest at the measured pitch, follows the list's own scroll, and scrolls the list while
-the lifted row is held at its top or bottom edge, so the gap the person sees is where the row lands.
+estimates the rest at the measured pitch and follows the list's own scroll, so the gap the person sees
+is where the row lands. The list does not scroll on its own under a held row: the handle's gesture
+lives in the row's cell, and a hosted-CI run (46102176054) showed that once scrolling carried the cell
+away the gesture ended unseen and the drag never finished. A drag whose row leaves the list now ends
+where its gap shows. Carrying a row past the screen needs a gesture the list owns, not the row.
 
 
 **2026-11-27 — A skip keeps the play state; Up Next reorders from an always-visible handle (§14.1, §12.10).**

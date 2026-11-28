@@ -150,21 +150,6 @@ struct UpNextModelTests {
         #expect(drag.target == 1)
     }
 
-    /// The edge zone that scrolls the list: only near an edge, and only toward rows that remain.
-    @Test
-    func aHandleDragScrollsOnlyFromTheEdgesTowardRowsThatRemain() throws {
-        var drag = try #require(DulcetQueueHandleDrag(source: 1, frames: lazyFrames(count: 12, laidOut: 0...4)))
-        let viewport = CGRect(x: 0, y: 0, width: 320, height: 460)
-        #expect(drag.autoscrollDirection(viewport: viewport, margin: 56) == nil)
-        drag.translation = 300 // middle at 436, within 56 of 460
-        #expect(drag.autoscrollDirection(viewport: viewport, margin: 56) == .down)
-        drag.translation = -120 // middle at 16
-        #expect(drag.autoscrollDirection(viewport: viewport, margin: 56) == nil, "nothing above the first row")
-        var last = try #require(DulcetQueueHandleDrag(source: 11, frames: lazyFrames(count: 12, laidOut: 9...11)))
-        last.translation = -900
-        #expect(last.autoscrollDirection(viewport: CGRect(x: 0, y: 700, width: 320, height: 460), margin: 56) == .up)
-    }
-
     /// Rows 92 pt apart (88 tall, 4 between), with frames only for the rows the list laid out.
     private func lazyFrames(count: Int, laidOut: ClosedRange<Int>) -> [CGRect?] {
         (0..<count).map { index in
