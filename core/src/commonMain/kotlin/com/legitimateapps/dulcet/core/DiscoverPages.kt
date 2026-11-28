@@ -79,9 +79,10 @@ internal class DiscoverPages(
 
     private fun shelfKey(id: String, cursor: String?, limit: Int) = "shelf:${id.length}:$id:${cursor?.let { "${it.length}:$it" } ?: "null"}:$limit"
     private fun listKey(type: String, id: String, cursor: String?) = shelfKey("$type:$id", cursor, 20)
-    fun shelf(id: String, cursor: String?, completion: (DiscoverResult<DiscoverShelfPage>)->Unit, limit: Int = 20): DiscoverOperation = json(
+    fun shelf(id: String, cursor: String?, completion: (DiscoverResult<DiscoverShelfPage>)->Unit, limit: Int = 20,
+        valid: ()->Boolean = {true}): DiscoverOperation = json(
         shelfKey(id,cursor,limit), DiscoverShelfPage.serializer(), {it.copy(age=it.age.copy(fromDeviceCache=true))}, completion,
-        cachedFailure={value,error -> value.copy(age=value.age.copy(fromDeviceCache=true),refreshError=error)}) {transport.shelf(id,cursor,limit)}
+        valid=valid, cachedFailure={value,error -> value.copy(age=value.age.copy(fromDeviceCache=true),refreshError=error)}) {transport.shelf(id,cursor,limit)}
     fun playlists(query: String, cursor: String?, completion: (DiscoverResult<DiscoverPlaylistList>)->Unit): DiscoverOperation = json(
         listKey("playlists",query,cursor), DiscoverPlaylistList.serializer(), {it.copy(age=it.age.copy(fromDeviceCache=true))}, completion,
         cachedFailure={value,error -> value.copy(age=value.age.copy(fromDeviceCache=true),refreshError=error)}) {transport.playlists(query,cursor)}

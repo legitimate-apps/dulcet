@@ -8092,6 +8092,15 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-27 — Discover keeps its shelves through reconnect (§16.14, §29.10).**
+Home keeps the last shelves for the authorized account while it rechecks capabilities and refreshes.
+A failed capability check leaves those shelves visible and grants no new reads. A definitive loss
+of Discover support or of account authorization still removes them. Home ignores results from a
+replaced connection path. When Home already has usable shelves, automatic refresh failures from
+shelves and Recent wishes stay quiet. The session still tells the person about a connection loss,
+and Home can report a failed refresh when the listener asked for it or there are no usable shelves.
+A source-reported freshness note can still describe older results.
+
 **2026-11-27 — A paused skip hands the lock screen to the next track; an Up Next drag lands under the finger (§12.9, §12.10, §14.1).**
 OBSERVED on the test iPhone, 2026-11-27: after a paused Next or Previous the lock screen and Control
 Center showed "Not Playing", and a three-row handle drag in a 13-song Up Next put the row near the end.
@@ -8107,6 +8116,7 @@ frame the lazy list had not laid out as sitting at y = 0, above any drop point, 
 scrolled away kept stale frames. The drag now lays out slots from the rows it has measured and
 estimates the rest at the measured pitch, follows the list's own scroll, and scrolls the list while
 the lifted row is held at its top or bottom edge, so the gap the person sees is where the row lands.
+
 
 **2026-11-27 — A skip keeps the play state; Up Next reorders from an always-visible handle (§14.1, §12.10).**
 OBSERVED on the test iPhone, 2026-11-27: with "¿Cómo así?" paused, a left swipe on the mini-player
