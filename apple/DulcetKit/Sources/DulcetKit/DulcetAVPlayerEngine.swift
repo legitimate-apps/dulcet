@@ -26,8 +26,9 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
     /// How long the system's Now Playing entry and the audio session outlive a `stop`. Every
     /// start -- a skip, a tap on another song -- stops the engine and then prepares the next entry,
     /// and the prepare that follows replaces the entry in place. Withdrawing it at the stop instead
-    /// left the iPhone lock screen on "Not Playing" after a paused Next (OBSERVED 2026-11-27): the
-    /// deactivated session gave up Now Playing, and a paused prepare plays nothing to take it back.
+    /// left the iPhone lock screen on "Not Playing" after a paused Next (OBSERVED 2026-11-27). Why is
+    /// ASSUMED, not traced on a device: the deactivated session gave up Now Playing, and a paused
+    /// prepare plays nothing to take it back.
     static let stopHandoverGracePeriod: TimeInterval = 2
     static let startupRecoveryDelay: TimeInterval = 2
     static let startupRecoveryVerdictBudget: TimeInterval = 120
@@ -1506,12 +1507,19 @@ public final class DulcetAVPlayerEngine: DulcetApplePlaybackEngine, @unchecked S
         commandID: DulcetPlaybackCommandID,
         completion: @escaping DulcetPlaybackCommandCompletion
     ) -> Bool {
-        cancelAudioSessionGrace?()
-        cancelAudioSessionGrace = nil
-        guard activeAudioSessionID != plan.playbackSessionID else { return true }
+        guard activeAudioSessionID != plan.playbackSessionID else {
+            cancelAudioSessionGrace?()
+            cancelAudioSessionGrace = nil
+            return true
+        }
         do {
             try audioSession.activate()
             activeAudioSessionID = plan.playbackSessionID
+            // Only now: a pending withdrawal -- a stop's handover among them -- must survive an
+            // activation that fails, or the old entry would stay on the lock screen with nothing
+            // left to clear it.
+            cancelAudioSessionGrace?()
+            cancelAudioSessionGrace = nil
             return true
         } catch {
             emit(.failedBeforeStart(attemptID: plan.attemptID, error: .engine))

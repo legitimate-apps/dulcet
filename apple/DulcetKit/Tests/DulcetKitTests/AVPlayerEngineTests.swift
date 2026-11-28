@@ -2653,6 +2653,39 @@ struct AVPlayerEngineTests {
         _ = await execute(engine, .release(commandID: .init("release")))
     }
 
+    /// A stop's handover outlives a next prepare whose session cannot activate: the old entry is
+    /// still withdrawn when the handover ends, instead of staying on the lock screen for good.
+    @Test
+    func aStopsHandoverStillWithdrawsTheEntryWhenTheNextActivationFails() async {
+        let clock = ManualAVPlayerEngineClock()
+        let audioSession = RecordingAudioSession()
+        let mediaControls = RecordingSystemMediaControls()
+        let engine = DulcetAVPlayerEngine(
+            clock: clock,
+            usesAVFoundationMediaStack: false,
+            audioSession: audioSession,
+            systemMediaControls: mediaControls
+        )
+        let first = plan(session: "cut-your-hair", attempt: "attempt-one", title: "Cut Your Hair")
+        let second = plan(session: "range-life", attempt: "attempt-two", title: "Range Life")
+        _ = await execute(engine, .prepare(commandID: .init("prepare-1"), plan: first))
+        engine.reportCurrentItemReadyForTesting(duration: 2, seekability: .seekable)
+        _ = await execute(engine, .stop(commandID: .init("replace")))
+        #expect(clock.scheduledDelay == DulcetAVPlayerEngine.stopHandoverGracePeriod)
+
+        audioSession.failActivations()
+        let outcome = await execute(engine, .prepare(commandID: .init("prepare-2"), plan: second))
+
+        #expect(outcome == .rejected(commandID: .init("prepare-2"), reason: .failed(.engine)))
+        #expect(mediaControls.clearCount == 0, "the handover is still running")
+        #expect(clock.scheduledDelay == DulcetAVPlayerEngine.stopHandoverGracePeriod,
+                "the failed activation left the handover's deadline in place")
+        #expect(clock.fireScheduledDeadline())
+        #expect(mediaControls.clearCount == 1, "the old entry is withdrawn when the handover ends")
+        #expect(audioSession.deactivationCount == 1)
+        _ = await execute(engine, .release(commandID: .init("release")))
+    }
+
     @Test
     func audioSessionActivationFailureIsClosedAndRejectsPreparation() async {
         let audioSession = RecordingAudioSession(failsActivation: true)
@@ -4245,7 +4278,7 @@ private func makeMP3Tone() -> Data {
 
 private final class RecordingAudioSession: DulcetAudioSessionManaging, @unchecked Sendable {
     private let lock = NSLock()
-    private let failsActivation: Bool
+    private var failsActivation: Bool
     private var handler: (@Sendable (DulcetAudioSessionEvent) -> Void)?
     private var activations = 0
     private var deactivations = 0
@@ -4258,6 +4291,13 @@ private final class RecordingAudioSession: DulcetAudioSessionManaging, @unchecke
         lock.lock()
         defer { lock.unlock() }
         return activations
+    }
+
+    /// Makes later activations fail, as an interruption or a system refusal does mid-session.
+    func failActivations() {
+        lock.lock()
+        failsActivation = true
+        lock.unlock()
     }
 
     var deactivationCount: Int {
@@ -4275,8 +4315,9 @@ private final class RecordingAudioSession: DulcetAudioSessionManaging, @unchecke
     func activate() throws {
         lock.lock()
         activations += 1
+        let fails = failsActivation
         lock.unlock()
-        if failsActivation { throw DulcetPlaybackFailure.engine }
+        if fails { throw DulcetPlaybackFailure.engine }
     }
 
     func deactivate() {
