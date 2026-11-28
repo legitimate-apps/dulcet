@@ -802,6 +802,7 @@ struct DulcetReaderTile: View {
     /// The first tile of a page whose sort control comes before it: a remote arrives on the content.
     var takesFocusOnArrival = false
     var showsTVActionsMenu = false
+    var showsLibraryQuickAction = false
 #if os(tvOS)
     @State private var presentsTVActions = false
 #endif
@@ -841,6 +842,21 @@ struct DulcetReaderTile: View {
         styledAction
             .dulcetReaderItemContextMenu(item) { menuOpen = $0 }
             .dulcetReaderQueueDragSource(item)
+#if os(iOS)
+            .overlay(alignment: .bottomTrailing) {
+                if offersLibraryQuickAction, let target = item.favouriteTarget {
+                    DulcetMyLibraryButton(target: target, quickAction: true, itemTitle: item.displayTitle)
+                }
+            }
+#endif
+#endif
+    }
+
+    private var offersLibraryQuickAction: Bool {
+#if os(iOS)
+        showsLibraryQuickAction && store.myLibraryAvailable
+#else
+        false
 #endif
     }
 
@@ -945,6 +961,8 @@ struct DulcetReaderTile: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .padding(.trailing, offersLibraryQuickAction ? DulcetMetrics.minimumTouchTarget : 0)
+        .frame(minHeight: offersLibraryQuickAction ? DulcetMetrics.minimumTouchTarget : nil, alignment: .center)
     }
 
     private var resolvedSubtitle: String {
@@ -1116,6 +1134,7 @@ struct DulcetReaderTrackRow: View {
     var showsArtwork = true
     var showsDuration = true
     var albumArtists: [String] = []
+    var showsLibraryQuickAction = false
     /// The row's collection origin, captured in both menu and drag queue actions.
     var queueAddition: DulcetQueueAddition? = nil
     let onPlay: (DulcetTrack) -> Void
@@ -1256,6 +1275,7 @@ struct DulcetReaderTrackRow: View {
             activationIdentifier: "dulcet.reader.track"
         )
         .showingDuration(showsDuration)
+        .libraryQuickAction(showsLibraryQuickAction ? item.favouriteTarget : nil)
     }
 
     /// The track as its download stands now: the reader's rows carry none of their own.
@@ -1473,12 +1493,13 @@ struct DulcetReaderGrid: View {
     /// The tiles' line under the title, when the item's own would repeat the page's; nil leaves
     /// each item's own line.
     var tileSubtitle: ((DulcetReaderItem) -> String)? = nil
+    var showsLibraryQuickActions = false
 
     var body: some View {
         DulcetArtworkGrid(items: model.window?.items ?? [], width: width) { item, index, size in
             DulcetReaderTile(item: item, width: size, subtitle: tileSubtitle?(item),
                 rank: model.query == .albums(.frequent) ? index + 1 : nil,
-                takesFocusOnArrival: index == 0)
+                takesFocusOnArrival: index == 0, showsLibraryQuickAction: showsLibraryQuickActions)
                 .dulcetReaderRow(index, in: model)
         }
     }
@@ -2015,8 +2036,16 @@ struct DulcetReaderAlbumsView: View {
         }
     }
 
+    private var title: String {
+#if os(tvOS)
+        DulcetStrings.readerAlbums
+#else
+        store.myLibraryAvailable ? DulcetStrings.serverAlbums : DulcetStrings.readerAlbums
+#endif
+    }
+
     var body: some View {
-        DulcetReaderAlbumGridView(type: sort, title: DulcetStrings.readerAlbums, category: "albums")
+        DulcetReaderAlbumGridView(type: sort, title: title, category: "albums")
             .id(sort)
     }
 }
@@ -2040,8 +2069,15 @@ struct DulcetReaderAlbumGridView: View {
                 // it three times on a tvOS 27 simulator); the same control in the page does.
                 if let category { DulcetLibraryCategoryControls(category: category, albumSort: true) }
 #endif
+                if let window = model.window, window.freshness == .loading,
+                   window.order == .localView, window.hasContent {
+                    Text(DulcetStrings.loadingServerAlbums)
+                        .font(.footnote)
+                        .dulcetForeground(.secondaryTextOnWindow)
+                        .accessibilityIdentifier("dulcet.reader.albums.preview")
+                }
                 DulcetReaderListBody(model: model) { _ in
-                    DulcetReaderGrid(model: model, width: width)
+                    DulcetReaderGrid(model: model, width: width, showsLibraryQuickActions: true)
                 }
             }
 #if !os(tvOS)
@@ -2437,6 +2473,13 @@ struct DulcetReaderTrackListPage: View {
     @ToolbarContentBuilder
     private func pageToolbar(_ item: DulcetReaderItem?) -> some ToolbarContent {
         if let item {
+#if os(iOS)
+            if kind == .album, store.myLibraryAvailable, let target = item.favouriteTarget {
+                ToolbarItem(placement: .primaryAction) {
+                    DulcetMyLibraryButton(target: target, quickAction: true, itemTitle: item.displayTitle)
+                }
+            }
+#endif
             ToolbarItem(placement: .primaryAction) {
                 Menu { DulcetReaderItemMenuItems(item: item) }
                 label: { Label(DulcetStrings.more, systemImage: "ellipsis") }
@@ -2519,7 +2562,8 @@ struct DulcetReaderTrackListPage: View {
                 showsIndex: Self.numbersTracks(kind),
                 showsAlbum: kind != .album,
                 showsArtwork: kind != .album,
-                albumArtists: albumArtists
+                albumArtists: albumArtists,
+                showsLibraryQuickAction: kind == .album || kind == .genre
             ) { track in
                 store.playReaderTracks(playable, startingAt: track, sourceKind: sourceKind, sourceID: id, sourceName: title(window))
             }

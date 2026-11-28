@@ -402,6 +402,13 @@
 "action.library.add" = "Add to Library";
 "action.library.remove" = "Remove from Library";
 "myLibrary.songs" = "Songs";
+"myLibrary.title" = "My Library";
+"myLibrary.albums" = "Library Albums";
+"reader.loadingServerAlbums" = "Loading all server albums…";
+"reader.serverAlbums" = "Server Albums";
+"myLibrary.browseServerAlbums" = "Browse Server Albums";
+"myLibrary.albumHint" = "Albums you add show up here.";
+"myLibrary.songHint" = "Songs you add show up here.";
 "myLibrary.empty.title" = "Your Library Starts Here";
 "myLibrary.empty.body" = "Find music in Browse and add the albums, artists and songs you want to keep here.";
 

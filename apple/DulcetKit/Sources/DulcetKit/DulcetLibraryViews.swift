@@ -819,6 +819,7 @@ struct DulcetTrackRow<Trailing: View>: View {
     /// Trailing content -- the reader's favourite heart. At the accessibility text sizes the row
     /// stacks and it sits on the meta line under the full-width title instead of crowding it.
     let trailing: Trailing
+    private var libraryQuickTarget: DulcetFavouriteTarget?
 #if os(tvOS)
     @State private var trackMenuPresented = false
 #endif
@@ -857,6 +858,12 @@ struct DulcetTrackRow<Trailing: View>: View {
     }
 
     private var managedByTable: Bool { searchPresentation?.tableSelection != nil }
+
+    func libraryQuickAction(_ target: DulcetFavouriteTarget?) -> Self {
+        var copy = self
+        copy.libraryQuickTarget = target
+        return copy
+    }
 
     /// Leaves the duration off the row's trailing edge.
     func showingDuration(_ shows: Bool) -> Self {
@@ -999,6 +1006,9 @@ struct DulcetTrackRow<Trailing: View>: View {
                 trackMenuItems
             }
 #else
+            if let libraryQuickTarget {
+                DulcetMyLibraryButton(target: libraryQuickTarget, quickAction: true, itemTitle: track.title)
+            }
             Menu {
                 trackMenuItems
             } label: {

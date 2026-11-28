@@ -811,6 +811,63 @@ final class DulcetMyLibraryUITests: XCTestCase {
     }
 #endif
 
+#if os(iOS)
+    func testSparseLibraryLeadsToServerAlbumsAndQuickAddAppearsInLibrary() throws {
+        guard UIDevice.current.userInterfaceIdiom == .phone else { throw XCTSkip("iPhone catalog and Library proof") }
+        continueAfterFailure = false
+        try setOffline(false)
+        let album = try fixtureAlbum()
+        let response = try rest("getAlbumList2", params: ["type": "alphabeticalByName", "size": "500"])
+        let list = try XCTUnwrap(response["albumList2"] as? [String: Any])
+        let entries = try XCTUnwrap(list["album"] as? [[String: Any]])
+        let seed = try XCTUnwrap(entries.first { $0["id"] as? String != album.id && $0["name"] as? String == "Double Lines" })
+        let seedID = try XCTUnwrap(seed["id"] as? String)
+        let seedTitle = try XCTUnwrap(seed["name"] as? String)
+        defer {
+            try? removeAlbum(album.id)
+            try? removeAlbum(seedID)
+        }
+        try removeAlbum(album.id)
+        _ = try rest("addToDulcetLibrary", params: ["albumId": seedID])
+
+        try launch()
+        try select("library")
+        let albums = app.buttons["dulcet.myLibrary.section.albums"].firstMatch
+        XCTAssertTrue(albums.waitForExistence(timeout: 30))
+        activate(albums)
+        let browse = app.buttons["dulcet.myLibrary.albums.browse"].firstMatch
+        XCTAssertTrue(browse.waitForExistence(timeout: 30))
+        XCTAssertTrue(app.navigationBars["Library Albums"].exists)
+        XCTAssertTrue(albumTile(seedTitle).exists)
+        XCTAssertFalse(albumTile(album.title).exists)
+        try capture("r9-01-sparse-library-albums")
+
+        let began = ProcessInfo.processInfo.systemUptime
+        activate(browse)
+        XCTAssertTrue(app.navigationBars["Server Albums"].firstMatch.waitForExistence(timeout: 30))
+        let firstTile = app.buttons["dulcet.library.album"].firstMatch
+        XCTAssertTrue(firstTile.waitForExistence(timeout: 30))
+        print("R9 FIRST CATALOG TILE observedAfterShortcutSeconds=\(ProcessInfo.processInfo.systemUptime - began)")
+        try capture("r9-02-first-server-albums")
+
+        let addID = "dulcet.membership.quick.album.\(album.id)"
+        let add = app.buttons[addID].firstMatch
+        revealPhoneAlbumTile(add)
+        XCTAssertTrue(add.waitForExistence(timeout: 20) && add.isHittable)
+        XCTAssertTrue(add.label.contains("Add to Library"), add.label)
+        activate(add)
+        awaitLabel(add, "Remove from Library, " + album.title)
+        try capture("r9-03-catalog-album-added")
+
+        try select("library")
+        XCTAssertTrue(app.navigationBars["Library Albums"].firstMatch.waitForExistence(timeout: 20))
+        XCTAssertTrue(albumTile(album.title).waitForExistence(timeout: 20),
+                      "Returning to Library should show the added album without a manual refresh")
+        try capture("r9-04-library-album-added")
+        try awaitServerMembership(album.id, added: true)
+    }
+#endif
+
     @MainActor
     func testBrowseAddRemoveRelaunchAndOfflineReplay() throws {
         continueAfterFailure = false

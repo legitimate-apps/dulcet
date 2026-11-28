@@ -2101,7 +2101,7 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30) }
             let link = app.buttons["dulcet.reader.section.albums"].firstMatch
             return self.openSectionLink(link, in: app)
-                && app.navigationBars["Albums"].firstMatch.waitForExistence(timeout: 15)
+                && app.navigationBars[nativeAccount ? "Server Albums" : "Albums"].firstMatch.waitForExistence(timeout: 15)
                 && app.buttons["dulcet.library.album"].firstMatch.waitForExistence(timeout: 30)
         }
         if nativeAccount {
