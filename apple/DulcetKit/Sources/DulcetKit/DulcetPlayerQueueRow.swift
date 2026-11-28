@@ -120,7 +120,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .accessibilityValue(compact ? albumLine ?? "" : "")
+        .modifier(DulcetQueueRowAlbumValue(album: compact ? albumLine : nil))
         .accessibilityIdentifier(activationIdentifier)
     }
 
@@ -151,6 +151,15 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
         DulcetTrackMenuItems(track: track, onPlay: onActivate, queueAddition: nil,
             offersAlbum: true, publishedRating: nil, onDownload: nil, onNavigate: {})
         menuActions()
+    }
+}
+
+/// The album a compact row no longer shows, read to VoiceOver as the row's value.
+private struct DulcetQueueRowAlbumValue: ViewModifier {
+    let album: String?
+
+    func body(content: Content) -> some View {
+        if let album { content.accessibilityValue(album) } else { content }
     }
 }
 

@@ -208,12 +208,12 @@ final class DulcetQueueHandleMarkerView: UIView {
 /// bottom edge it scrolls the list itself, so a row can be carried past the screen in one drag.
 final class DulcetQueueCarryRecognizer: UIGestureRecognizer {
     /// How near the list's top or bottom edge the finger carries the list on, in points.
-    static let edgeZone: CGFloat = 56
+    static let edgeZone: CGFloat = 56 // design-token: allow gesture zone, not layout
     /// How long the finger rests in an edge zone before the list starts to move, so a drop on the
     /// last row in view does not scroll it away.
     static let edgeDwell: CFTimeInterval = 0.45
     /// The fastest the list scrolls, in points a second, with the finger at or past the edge.
-    static let maximumSpeed: CGFloat = 900
+    static let maximumSpeed: CGFloat = 900 // design-token: allow scroll speed, not layout
 
     static func install(on scrollView: UIScrollView) {
         guard !(scrollView.gestureRecognizers ?? []).contains(where: { $0 is DulcetQueueCarryRecognizer }) else { return }
