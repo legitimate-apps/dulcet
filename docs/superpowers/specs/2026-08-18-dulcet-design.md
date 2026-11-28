@@ -8105,6 +8105,13 @@ argue against the recorded rationale — not as filling in a blank.
 
 ## 28. Revision record
 
+**2026-11-28 — Discover paints saved shelves on the first Apple frame (§16.14, §29.10).**
+The account reader includes Discover Home in its first publication that advertises Discover.
+It restores the account's existing shelf pages from the device cache on the reader owner.
+Opening the destination uses that publication in its first render. A shelf awaiting its first
+answer reserves the tile row and shows progress. Opening Home starts the usual age-based refresh.
+A definitive loss of Discover support or account authorization removes the shelves.
+
 **2026-11-28 — Make My Library and the server catalog distinct (§16.14, §29.9).**
 iPhone, iPad and Mac label the personal and server album grids Library Albums and Server Albums. The empty
 and sparse personal album pages link directly to the server grid. On iPhone and iPad, album

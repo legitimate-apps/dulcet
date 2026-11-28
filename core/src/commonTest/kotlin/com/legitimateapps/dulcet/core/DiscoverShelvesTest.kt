@@ -211,6 +211,40 @@ class DiscoverShelvesTest {
         client.close();parent.closeDiscoverClients()
     }
 
+    @Test fun coldHomePublishesPersistedShelvesBeforeOpeningOrReadingTheServer() = readerTest { env ->
+        val first = homeRecoverySession(env, HomeRecoveryWire())
+        val firstClient = first.openDiscoverClient(prepareHome = true)
+        val firstPublications = mutableListOf<DiscoverPublication>()
+        firstClient.observe(firstPublications::add)
+        firstClient.refreshWishlist(WishFilter()) // Account startup discovers the available surfaces.
+        runCurrent()
+        val firstAvailable = firstPublications.first { it.access.discoverAvailable }
+        firstClient.openHome()
+        runCurrent()
+        val original = assertNotNull(firstPublications.last().home)
+        val originalPages = original.shelves.map { assertNotNull(it.page) }
+        assertEquals(discoverShelfIds, originalPages.map { it.id })
+        assertTrue(originalPages.any { it.items.isNotEmpty() })
+        first.closeDiscoverClients()
+
+        // The previous client is gone. Only the SQLite cache and account binding survive.
+        val coldWire = HomeRecoveryWire()
+        val cold = homeRecoverySession(env, coldWire)
+        val requestsBeforeObservation = coldWire.server.requests.toList()
+        val coldClient = cold.openDiscoverClient(prepareHome = true)
+        val coldPublications = mutableListOf<DiscoverPublication>()
+        coldClient.observe(coldPublications::add)
+        val initial = assertNotNull(coldPublications.single().home, "the first Discover publication must contain Home")
+        assertEquals(originalPages.map { it.items }, initial.shelves.map { assertNotNull(it.page).items })
+        assertTrue(initial.shelves.all { it.page?.age?.fromDeviceCache == true && !it.loading })
+        assertEquals(requestsBeforeObservation, coldWire.server.requests)
+        cold.closeDiscoverClients()
+
+        val firstVisit = assertNotNull(firstAvailable.home, "the first-ever publication must show loading")
+        assertEquals(discoverShelfIds, firstVisit.shelves.map { it.id })
+        assertTrue(firstVisit.shelves.all { it.page == null && it.loading && it.error == null })
+    }
+
     @Test fun reconnectKeepsHomeShelvesAcrossAnUnresolvedExtensionCheck() = readerTest { env ->
         val wire = HomeRecoveryWire()
         val parent = homeRecoverySession(env, wire)

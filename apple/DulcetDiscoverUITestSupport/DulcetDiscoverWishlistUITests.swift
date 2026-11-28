@@ -760,6 +760,54 @@ import UIKit
         XCTAssertTrue(rows.contains { ($0["source"] as? [String: Any])?["type"] as? String == "playlist" && ($0["source"] as? [String: Any])?["id"] as? String == id })
         print("DISCOVER_SHELVES_IOS mixed=true shelfPaging=24 playlistPositions=24 duplicate=true missingMbidUnwishable=true sources=shelf,playlist largest=\(largest)")
     }
+#if os(iOS)
+    func shelvesPaintOnFirstCaptureAfterRelaunch() throws {
+        try launch()
+        let populated = try control("populate-personal", [:])
+        XCTAssertEqual(populated["populated"] as? Bool, true)
+        let firstHold = try scenario("held-shelves")
+        let tab = app.tabBars.buttons["Discover"].firstMatch
+        XCTAssertTrue(tab.waitForExistence(timeout: 30))
+        activate(tab)
+        try capture("Discover-01-First-Visit-Loading")
+        let firstFrame = descendants(try app.snapshot())
+        XCTAssertTrue(firstFrame.contains { $0.identifier == "discover.shelf.trendingArtists.loading" })
+        try effect("held-shelves", revision: firstHold, flag: "held")
+        _ = try control("release-read", [:])
+
+        let trendingPrefix = "discover.shelf.trendingArtists.item."
+        let personalPrefix = "discover.shelf.similarArtists.item."
+        func firstTile(_ prefix: String) -> XCUIElement {
+            app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND NOT identifier ENDSWITH %@",
+                                             prefix, ".wish")).firstMatch
+        }
+        let personal = firstTile(personalPrefix)
+        let trending = firstTile(trendingPrefix)
+        XCTAssertTrue(personal.waitForExistence(timeout: 30))
+        XCTAssertTrue(trending.waitForExistence(timeout: 30))
+        let savedIDs = [personal.identifier, trending.identifier]
+
+        app.terminate()
+        let coldHold = try scenario("held-shelves")
+        try launch(connect: false)
+        XCTAssertTrue(waitForCatalog(timeout: 90), "The saved account must reopen on a fresh process")
+        XCTAssertTrue(tab.waitForExistence(timeout: 30))
+        XCTAssertFalse(tab.isSelected)
+        activate(tab)
+        try capture("Discover-02-Relaunch-Cached-Shelves")
+        let coldFrame = descendants(try app.snapshot())
+        for id in savedIDs {
+            XCTAssertTrue(coldFrame.contains { $0.identifier == id }, "Missing cached tile \(id)")
+        }
+        XCTAssertFalse(coldFrame.contains { $0.identifier == "discover.home.retry" })
+        let fixture = try control("state")
+        XCTAssertEqual(fixture["revision"] as? Int, coldHold)
+        let effects = try XCTUnwrap(fixture["effects"] as? [[String: Any]])
+        XCTAssertFalse(effects.contains { $0["released"] != nil }, "Shelf reads cannot have answered before the capture")
+        _ = try control("release-read", [:])
+    }
+#endif
+
     func shelvesEmptyFailureAndNavidrome() throws {
         try launch()
         let empty = try scenario("shelves-empty")
@@ -1209,6 +1257,7 @@ import UIKit
 private final class ResponseBox: @unchecked Sendable { var data: Data?; var ok = false }
 #if os(iOS)
 @MainActor final class DulcetDiscoverWishlistUITests: DulcetDiscoverWishlistProof {
+    func testDiscoverShelvesPaintOnFirstCaptureAfterRelaunch() throws { try shelvesPaintOnFirstCaptureAfterRelaunch() }
     func testIPhoneDiscoverShelvesLargestTextPagesAndSources() throws { try shelvesMixedPagesPlaylistAndWishes(largest: true) }
     func testDiscoverShelvesEmptyCachedFailureAndNavidrome() throws { try shelvesEmptyFailureAndNavidrome() }
     func testEverywhereQueryPagesAndHeldRouting() throws { try everywherePagesAndHeldRouting() }

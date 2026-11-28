@@ -99,16 +99,16 @@ internal class DiscoverAccount(
         changed()
         clients.toList().forEach {it.revalidate()}
     }
-    fun open():DiscoverClient {
+    fun open(prepareHome: Boolean): DiscoverClient {
         reader.checkConfined()
-        return SessionDiscoverClient().also {if(!retired)clients+=it else it.close()}
+        return SessionDiscoverClient(prepareHome).also {if(!retired)clients+=it else it.close()}
     }
     fun close(){retired=true;reader.cancelWishRetry();clients.toList().forEach {it.close()};outbox.close()}
     private fun <T> failed(code:String):DiscoverResult<T> = DiscoverResult.Failed(DiscoverFailure(code,null,false))
 
     private enum class HomeLoad { Open, Refresh, Reconnect }
 
-    private inner class SessionDiscoverClient:DiscoverClient {
+    private inner class SessionDiscoverClient(private val prepareHome: Boolean) : DiscoverClient {
         private var closed=false
         private val scope=CoroutineScope(reader.scope.coroutineContext+SupervisorJob(reader.scope.coroutineContext[Job]))
         private var generation=0L
@@ -127,7 +127,17 @@ internal class DiscoverAccount(
         private var homeWishes=newHomeWishes()
         private var homeWishlistJob:Job?=null
         private fun home():DiscoverHome? {
-            if(!visibleHome) return null
+            val available = active() && access.discoverAvailable
+            if (!visibleHome && !(prepareHome && available)) return null
+            // The Apple shell can render from its account publication before openHome runs.
+            // Prepare only local data here, on the reader owner that already holds the cache.
+            if (available && shelves.isEmpty()) {
+                shelves = try {
+                    cachedShelves(loading = !visibleHome || reader.online)
+                } catch (_: Exception) {
+                    homeStorageFailure()
+                }
+            }
             val onCurrentPath = homePathRevision == reader.networkPathRevision
             val hasContent = shelves.any { state ->
                 state.page?.let { it.items.isNotEmpty() || it.playlists.isNotEmpty() } == true
@@ -139,6 +149,20 @@ internal class DiscoverAccount(
             return DiscoverHome(visibleShelves,recentDiscoverWishes(homeWishes.rows),homeWishes.loading,
                 homeWishes.settled,homeWishes.error.takeIf {showsFailures})
         }
+        private fun cachedShelves(loading: Boolean = false) = discoverShelfIds.map { id ->
+            val current = shelves.firstOrNull { it.id == id }
+            val page = current?.page ?: pages.cachedShelf(id)
+            DiscoverShelfState(id, page, loading && page == null && current?.error == null, current?.error)
+        }
+
+        private fun homeStorageFailure(): List<DiscoverShelfState> {
+            val failure = DiscoverFailure("storage", null, true)
+            return discoverShelfIds.map { id ->
+                val page = shelves.firstOrNull { it.id == id }?.page
+                DiscoverShelfState(id, page?.copy(age = page.age.copy(fromDeviceCache = true)), false, failure)
+            }
+        }
+
         private fun DiscoverShelfState.withoutRefreshError() = copy(page=page?.copy(refreshError=null),error=null)
         private var visibleWishlist=false
         private var filter=WishFilter()
@@ -211,15 +235,9 @@ internal class DiscoverAccount(
             fun current() = !closed && active() && homeTicket==ticket && reader.networkPathRevision==pathRevision
             homeLoadJob=scope.launch {
               try {
-                fun cachedShelves() = discoverShelfIds.map { id ->
-                    val current = shelves.firstOrNull { it.id == id }
-                    DiscoverShelfState(id, current?.page ?: pages.cachedShelf(id), false, current?.error)
-                }
-                // Restore the previous answer while capability negotiation or a live read runs.
-                if(gates().discoverAvailable) {
-                    shelves = cachedShelves()
-                    publish()
-                }
+                // Publish the cached answer while capability negotiation or a live read runs.
+                // A prepared Home keeps its loading slots until the live requests are scheduled.
+                if(gates().discoverAvailable) publish()
                 detect()
                 if(!current()) return@launch
                 val access=gates()
@@ -256,8 +274,7 @@ internal class DiscoverAccount(
               } catch(cancelled:CancellationException){throw cancelled}
                 catch(_:Exception){
                     if(current()) {
-                        val failure=DiscoverFailure("storage",null,true)
-                        shelves=discoverShelfIds.map {id -> DiscoverShelfState(id,shelves.firstOrNull {it.id==id}?.page?.let {it.copy(age=it.age.copy(fromDeviceCache=true))},false,failure)}
+                        shelves=homeStorageFailure()
                         publish()
                     }
                 }

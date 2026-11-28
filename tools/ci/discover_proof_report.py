@@ -11,8 +11,10 @@ def expected_suite(mode):
 def shelf_tests(mode):
     if mode in {'mac','macos'}:
         return ['testDiscoverShelvesMixedPagingAndShelfWish', 'testDiscoverPublicPlaylistPositionsWishKeyboardAndResize', 'testDiscoverShelvesEmptyFailureCachedVariantsAndNavidrome']
-    return ['testDiscoverShelvesEmptyCachedFailureAndNavidrome',
-        'testIPadDiscoverShelvesSidebarCompactResizeAndBack' if mode=='ipad' else 'testIPhoneDiscoverShelvesLargestTextPagesAndSources']
+    if mode == 'ipad':
+        return ['testDiscoverShelvesEmptyCachedFailureAndNavidrome', 'testIPadDiscoverShelvesSidebarCompactResizeAndBack']
+    return ['testDiscoverShelvesEmptyCachedFailureAndNavidrome', 'testIPhoneDiscoverShelvesLargestTextPagesAndSources',
+            'testDiscoverShelvesPaintOnFirstCaptureAfterRelaunch']
 
 def selected_tests(mode, selected=None, shelves=False):
     """Keep the two proof inventories distinct even when they share a test class."""

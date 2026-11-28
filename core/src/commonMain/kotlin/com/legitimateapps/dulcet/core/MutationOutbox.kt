@@ -934,7 +934,10 @@ internal class LibraryReaderSession(
     private fun discoverAccount():DiscoverAccount = discoverAccountRef ?: DiscoverAccount(discoverDatabase,reader) {
         reader.scope.launch {myLibrary.refresh()}
     }.also {discoverAccountRef=it;if(discoverClosed)it.close()}
-    fun openDiscoverClient():DiscoverClient {reader.checkConfined();return discoverAccount().open()}
+    fun openDiscoverClient(prepareHome: Boolean = false): DiscoverClient {
+        reader.checkConfined()
+        return discoverAccount().open(prepareHome)
+    }
     fun closeDiscoverClients(){discoverClosed=true;discoverAccountRef?.close()}
     private lateinit var favouritesRef: LibraryFavourites
     private lateinit var playlistsRef: PlaylistEditor
