@@ -48,9 +48,14 @@ public struct DulcetUpNextSection: View {
     @Environment(\.editMode) private var editMode
     /// The drag a row's handle is making, and every row's frame for it to measure against.
     @State private var handleDrag: DulcetQueueHandleDrag?
+    @State private var displayedModel: DulcetUpNextModel?
+    /// The player can publish a new queue before SwiftUI refreshes the section.
+    var currentNowPlaying: (() -> DulcetNowPlaying?)?
     /// The rows the list has laid out now: a lazy list drops a row's view when it scrolls away.
     @State private var rowFrames: [DulcetQueueEntryID: CGRect] = [:]
-    /// Carries the list on while the dragged row is held at its top or bottom edge.
+    /// The lifted row as the list draws it, above every row: set by the list that holds this
+    /// section. Without one the row is drawn in its own place, moved by the drag.
+    var lift: DulcetQueueLift?
 #endif
 
     public init(nowPlaying: DulcetNowPlaying?, onEdit: @escaping (DulcetQueueEditIntent) -> Void, autoplay: DulcetAutoplayToggle? = nil) {
@@ -80,6 +85,14 @@ public struct DulcetUpNextSection: View {
                 rows
             }
         } header: { header.dulcetQueueRowInsets(vertical: 0, isHeader: true) }
+#if os(iOS)
+        .onChange(of: model, initial: true) { _, model in
+            displayedModel = model
+            if let drag = handleDrag, model.upcoming.map(\.id) != drag.entryIDs {
+                endHandleDrag(.cancelled)
+            }
+        }
+#endif
     }
 
     var header: some View {
@@ -115,24 +128,23 @@ public struct DulcetUpNextSection: View {
     @ViewBuilder
     private func row(_ entry: DulcetQueueEntry, offset: Int) -> some View {
 #if os(iOS)
-        let lifted = handleDrag?.source == offset
+        let lifted = handleDrag?.sourceID == entry.id
+        // With a list drawing the lifted row above the rows, its own place stays empty: the list
+        // may take this row's view away as it scrolls under the finger, and the drag goes on.
+        let floats = lift != nil
         baseRow(entry, offset: offset)
-            .onDisappear {
-                rowFrames[entry.id] = nil
-                // The handle's gesture lives in this row: once the list takes the row away, the
-                // gesture ends without telling anyone, so the drag ends here, where its gap shows.
-                if handleDrag?.source == offset { endHandleDrag() }
-            }
+            .onDisappear { rowFrames[entry.id] = nil }
+            .opacity(lifted && floats ? 0 : 1)
             .background {
-                if lifted {
+                if lifted && !floats {
                     RoundedRectangle(cornerRadius: DulcetMetrics.liftedRowCornerRadius, style: .continuous)
                         .fill(.regularMaterial)
                         .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
                         .padding(.horizontal, -DulcetUpNextList.rowInset / 2)
                 }
             }
-            .scaleEffect(lifted ? 1.03 : 1)
-            .offset(y: lifted ? handleDrag?.liftedOffset ?? 0 : handleDrag?.displacement(of: offset) ?? 0)
+            .scaleEffect(lifted && !floats ? 1.03 : 1)
+            .offset(y: lifted ? (floats ? 0 : handleDrag?.liftedOffset ?? 0) : handleDrag?.displacement(of: offset) ?? 0)
             // Read outside the offset: a frame read inside it moves with the drag, the drag reads
             // the scroll from the frames, and the two chase each other without settling (the app
             // never went idle after a drag in hosted CI, run 46094370027).
@@ -153,48 +165,67 @@ public struct DulcetUpNextSection: View {
         !isEditing && !dynamicTypeSize.isAccessibilitySize && model.upcoming.count > 1
     }
 
-    private func reorderHandle(offset: Int) -> AnyView? {
+    private func reorderHandle(entryID: DulcetQueueEntryID) -> AnyView? {
         guard showsReorderHandle else { return nil }
-        return AnyView(DulcetQueueReorderHandle(
-            onChanged: { translation in
-                if handleDrag == nil {
-                    let frames = model.upcoming.map { rowFrames[$0.id] }
-                    guard let drag = DulcetQueueHandleDrag(source: offset, frames: frames) else { return }
-                    DulcetHaptic.reorderLift.play()
-                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { handleDrag = drag }
-                }
+        return AnyView(DulcetQueueReorderHandle(callbacks: DulcetQueueHandleCallbacks(
+            began: { beginHandleDrag(entryID: entryID) },
+            changed: { translation in
+                guard handleDrag != nil else { return }
+                lift?.translation = translation
                 withAnimation(.interactiveSpring(response: 0.22, dampingFraction: 0.86)) {
                     handleDrag?.translation = translation
                 }
             },
-            onEnded: { endHandleDrag() }
-        ))
+            isActive: { handleDrag != nil },
+            finished: { endHandleDrag($0) }
+        )))
+    }
+
+    private var liveModel: DulcetUpNextModel {
+        if let currentNowPlaying { return DulcetUpNextModel(nowPlaying: currentNowPlaying()) }
+        return displayedModel ?? model
+    }
+
+    private func beginHandleDrag(entryID: DulcetQueueEntryID) -> Bool {
+        guard handleDrag == nil else { return false }
+        let entryIDs = model.upcoming.map(\.id)
+        guard entryIDs == liveModel.upcoming.map(\.id),
+              let offset = entryIDs.firstIndex(of: entryID),
+              let origin = rowFrames[entryID] else { return false }
+        let frames = entryIDs.map { rowFrames[$0] }
+        guard let drag = DulcetQueueHandleDrag(source: offset, entryIDs: entryIDs, frames: frames) else { return false }
+        let entry = model.upcoming[offset]
+        DulcetHaptic.reorderLift.play()
+        lift?.begin(entry: entry, origin: origin)
+        withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { handleDrag = drag }
+        return true
     }
 
     /// The upcoming position of every row laid out now, for the drag to read the scroll from.
     private func observeRowFrames() {
-        guard handleDrag != nil else { return }
+        guard let drag = handleDrag else { return }
         var current: [Int: CGRect] = [:]
-        for (index, entry) in model.upcoming.enumerated() {
-            if let frame = rowFrames[entry.id] { current[index] = frame }
+        for (index, id) in drag.entryIDs.enumerated() {
+            if let frame = rowFrames[id] { current[index] = frame }
         }
         handleDrag?.observe(currentFrames: current)
     }
 
-    private func endHandleDrag() {
+    private func endHandleDrag(_ completion: DulcetQueueCarryCompletion) {
         guard let drag = handleDrag else { return }
-        if let destination = drag.moveDestination,
-           let intent = model.moveIntent(fromOffsets: IndexSet(integer: drag.source), toOffset: destination) {
+        if let intent = drag.moveIntent(completion: completion, in: liveModel) {
             DulcetHaptic.reorder.play()
             // The queue reorders in this same update, so the rows take their new places without
             // first springing back to the old ones.
             var transaction = Transaction()
             transaction.disablesAnimations = true
             withTransaction(transaction) {
-                onEdit(intent)
                 handleDrag = nil
+                lift?.end()
+                onEdit(intent)
             }
         } else {
+            lift?.end()
             withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) { handleDrag = nil }
         }
     }
@@ -237,7 +268,7 @@ public struct DulcetUpNextSection: View {
                 .buttonStyle(.borderless)
                 .frame(minHeight: 44)
             },
-            reorderHandle: platformReorderHandle(offset: offset)
+            reorderHandle: platformReorderHandle(entryID: entry.id)
         )
         // Reordering is a drag, which VoiceOver and Switch Control cannot perform on a row, so
         // Move Up and Move Down are named actions. Removal needs one only where the platform does
@@ -267,9 +298,9 @@ public struct DulcetUpNextSection: View {
         .contextMenu { rowActions(entry, offset: offset) }
     }
 
-    private func platformReorderHandle(offset: Int) -> AnyView? {
+    private func platformReorderHandle(entryID: DulcetQueueEntryID) -> AnyView? {
 #if os(iOS)
-        reorderHandle(offset: offset)
+        reorderHandle(entryID: entryID)
 #else
         nil
 #endif
@@ -410,7 +441,7 @@ extension View {
     /// The queue's one horizontal edge, on a row or a section header. Apple TV's focus platters
     /// keep the list's own insets.
     @ViewBuilder
-    func dulcetQueueRowInsets(vertical: CGFloat = DulcetSpacing.xs, isHeader: Bool = false) -> some View {
+    func dulcetQueueRowInsets(vertical: CGFloat = DulcetUpNextList.rowVerticalInset, isHeader: Bool = false) -> some View {
 #if os(tvOS)
         self
 #elseif os(macOS)
@@ -528,6 +559,30 @@ struct DulcetAutoplaySection: View {
     }
 }
 
+#if os(iOS)
+/// The Up Next row a grabber drag holds, shared by the section that runs the drag and the list
+/// that draws the row above its rows.
+@MainActor @Observable
+final class DulcetQueueLift {
+    private(set) var entry: DulcetQueueEntry?
+    /// The row's frame in the global space when it was lifted.
+    private(set) var origin: CGRect = .zero
+    /// How far the finger has moved since.
+    var translation: CGFloat = 0
+
+    func begin(entry: DulcetQueueEntry, origin: CGRect) {
+        self.entry = entry
+        self.origin = origin
+        translation = 0
+    }
+
+    func end() {
+        entry = nil
+        translation = 0
+    }
+}
+#endif
+
 /// A standalone Up Next list, for a sheet or a column. Rows stay tappable: on iOS a long press
 /// drags a row and a swipe removes it without entering edit mode, which would disable the tap.
 public struct DulcetUpNextList: View {
@@ -535,8 +590,13 @@ public struct DulcetUpNextList: View {
     private let onEdit: (DulcetQueueEditIntent) -> Void
     private let autoplay: DulcetAutoplayToggle?
     private let showsCurrentTrack: Bool
+    private let currentNowPlaying: (() -> DulcetNowPlaying?)?
 #if os(iOS)
     @State private var editMode: EditMode = .inactive
+    /// The row a grabber drag holds, drawn above the list so it stays under the finger while the
+    /// list scrolls its own place away.
+    @State private var lift = DulcetQueueLift()
+    @State private var listFrame: CGRect = .zero
 #endif
 
     public init(
@@ -545,10 +605,27 @@ public struct DulcetUpNextList: View {
         autoplay: DulcetAutoplayToggle? = nil,
         showsCurrentTrack: Bool = true
     ) {
+        self.init(
+            nowPlaying: nowPlaying,
+            onEdit: onEdit,
+            autoplay: autoplay,
+            showsCurrentTrack: showsCurrentTrack,
+            currentNowPlaying: nil
+        )
+    }
+
+    init(
+        nowPlaying: DulcetNowPlaying?,
+        onEdit: @escaping (DulcetQueueEditIntent) -> Void,
+        autoplay: DulcetAutoplayToggle?,
+        showsCurrentTrack: Bool,
+        currentNowPlaying: (() -> DulcetNowPlaying?)?
+    ) {
         self.nowPlaying = nowPlaying
         self.onEdit = onEdit
         self.autoplay = autoplay
         self.showsCurrentTrack = showsCurrentTrack
+        self.currentNowPlaying = currentNowPlaying
     }
 
     /// The queue's rows and headers from the list's edge, set rather than inherited: the plain
@@ -560,6 +637,16 @@ public struct DulcetUpNextList: View {
         DulcetSpacing.md
 #else
         8
+#endif
+    }
+
+    /// The space above and below each row inside the list. A phone's rows sit closer, with no
+    /// padding of their own (``DulcetPlayerQueueRow``), so the queue reads as a long list.
+    static var rowVerticalInset: CGFloat {
+#if os(iOS)
+        6
+#else
+        DulcetSpacing.xs
 #endif
     }
 
@@ -637,12 +724,57 @@ public struct DulcetUpNextList: View {
 #endif
 #if os(iOS)
         .environment(\.editMode, $editMode)
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { listFrame = $0 }
+        .overlay(alignment: .topLeading) { liftedRow }
 #endif
         .accessibilityIdentifier("dulcet.upNext")
     }
 
+#if os(iOS)
+    /// The held row, where the finger holds it: its place when lifted, moved by the finger's
+    /// travel. It draws only; the drag belongs to the list (``DulcetQueueCarryRecognizer``).
+    @ViewBuilder
+    private var liftedRow: some View {
+        if let entry = lift.entry {
+            DulcetPlayerQueueRow(
+                track: entry.track,
+                sourceDisplayName: DulcetUpNextModel(nowPlaying: nowPlaying).sourceDisplayName,
+                accessibilityLayout: false,
+                isEditing: false,
+                activationIdentifier: "dulcet.upNext.lifted",
+                moreIdentifier: "dulcet.upNext.lifted.more",
+                onActivate: {},
+                menuActions: { EmptyView() },
+                editingActions: { EmptyView() },
+                reorderHandle: AnyView(
+                    Image(systemName: "line.3.horizontal")
+                        .font(.body.weight(.medium))
+                        .dulcetForeground(.primaryTextOnWindow)
+                        .frame(minWidth: DulcetMetrics.minimumTouchTarget, minHeight: DulcetMetrics.minimumTouchTarget)
+                )
+            )
+            .frame(width: lift.origin.width, height: lift.origin.height)
+            .background {
+                RoundedRectangle(cornerRadius: DulcetMetrics.liftedRowCornerRadius, style: .continuous)
+                    .fill(.regularMaterial)
+                    .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+                    .padding(.horizontal, -Self.rowInset / 2)
+            }
+            .scaleEffect(1.03)
+            .offset(x: lift.origin.minX - listFrame.minX,
+                    y: lift.origin.minY - listFrame.minY + lift.translation)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+        }
+    }
+#endif
+
     private var upcomingSection: DulcetUpNextSection {
         var section = DulcetUpNextSection(nowPlaying: nowPlaying, onEdit: onEdit, autoplay: autoplay)
+#if os(iOS)
+        section.lift = lift
+        section.currentNowPlaying = currentNowPlaying
+#endif
         // AutoPlay's rows answer an empty queue; with none, a list holding only Previously Played
         // or the current track still says so (OBSERVED on iPhone and iPad: a bare header).
         section.showsEmptyState = autoplay?.isOn != true || DulcetUpNextModel(nowPlaying: nowPlaying).autoplay.isEmpty

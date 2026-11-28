@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum DulcetQueueCarryCompletion: Equatable {
+    case dropped
+    case cancelled
+}
+
 /// Up Next's reorder handle, as the system player's queue has it: every row shows a grabber, and a
 /// drag that starts on it moves the row at once -- no Edit first, and no long press. The row's
 /// tap, its swipe to remove and its context menu stay as they are, because the List never enters
@@ -9,8 +14,10 @@ import SwiftUI
 /// produces: which upcoming position the dragged row reaches, how far each row it passes steps
 /// aside to show the gap, and the `onMove`-style destination the model turns into a core move.
 struct DulcetQueueHandleDrag: Equatable {
-    /// The upcoming row being dragged, by its position when the drag began.
+    /// The upcoming order behind the geometry, captured at the start of the carry.
+    let entryIDs: [DulcetQueueEntryID]
     let source: Int
+    var sourceID: DulcetQueueEntryID { entryIDs[source] }
     /// Where every upcoming row sat when the drag began, in the list's space and upcoming order.
     /// A lazy list lays out only the rows near the screen, so a row it has not laid out has no
     /// frame; its slot is estimated from its neighbours until the list lays it out (`observe`).
@@ -28,8 +35,10 @@ struct DulcetQueueHandleDrag: Equatable {
 
     /// `frames` holds each upcoming row's frame in the list's space, nil for a row the list has not
     /// laid out. The dragged row is always laid out: the finger is on it.
-    init?(source: Int, frames: [CGRect?]) {
-        guard frames.indices.contains(source), let anchor = frames[source], anchor.height > 0 else { return nil }
+    init?(source: Int, entryIDs: [DulcetQueueEntryID], frames: [CGRect?]) {
+        guard frames.count == entryIDs.count, frames.indices.contains(source),
+              let anchor = frames[source], anchor.height > 0 else { return nil }
+        self.entryIDs = entryIDs
         // Before this, a row without a frame counted as one at the top of the list, above any
         // drop point, so every unlaid row below the screen pushed the drop one place further:
         // in a 13-song queue a three-row drag landed near the end (OBSERVED on iPhone, 2026-11-27).
@@ -137,34 +146,207 @@ struct DulcetQueueHandleDrag: Equatable {
         guard target != source else { return nil }
         return target > source ? target + 1 : target
     }
+
+    /// The gap is meaningful while the upcoming order matches the layout the finger moved through.
+    /// History may still have changed, so translate the gap using the live model's queue base.
+    func moveIntent(
+        completion: DulcetQueueCarryCompletion, in model: DulcetUpNextModel
+    ) -> DulcetQueueEditIntent? {
+        guard completion == .dropped, let moveDestination,
+              model.upcoming.map(\.id) == entryIDs,
+              let from = model.upcoming.firstIndex(where: { $0.id == sourceID }) else { return nil }
+        return model.moveIntent(fromOffsets: IndexSet(integer: from), toOffset: moveDestination)
+    }
 }
 
 #if os(iOS)
-/// The grabber at a row's trailing edge. It starts a drag on touch, so a vertical scroll that
-/// begins on it moves the row instead -- the system player's handle does the same; the rest of
-/// the row scrolls the list.
+import UIKit
+
+/// What a row's grabber does with a drag that starts on it. `began` answers whether a drag began;
+/// `changed` takes the finger's travel since then, in points, positive downward.
+struct DulcetQueueHandleCallbacks {
+    let began: () -> Bool
+    let changed: (CGFloat) -> Void
+    let isActive: () -> Bool
+    let finished: (DulcetQueueCarryCompletion) -> Void
+}
+
+/// The grabber at a row's trailing edge. A drag that starts on it moves the row at once, as the
+/// system player's handle does; the rest of the row scrolls the list.
+///
+/// The grabber does not hold the drag itself. A gesture on a row lives in that row's cell, and a
+/// lazy list takes the cell away once the list scrolls it off screen, ending the gesture without a
+/// word (hosted CI run 46102176054), so a row could never be carried past the screen's edge. The
+/// grabber only marks where a drag may start; the list's own scroll view owns the drag
+/// (``DulcetQueueCarryRecognizer``), which outlives every cell and can scroll the list beneath it.
 struct DulcetQueueReorderHandle: View {
-    let onChanged: (CGFloat) -> Void
-    let onEnded: () -> Void
-    /// Down while the finger is: it resets on its own when the system cancels the drag, where
-    /// `onEnded` never runs, so a cancelled drag still ends.
-    @GestureState private var pressed = false
+    let callbacks: DulcetQueueHandleCallbacks
 
     var body: some View {
         Image(systemName: "line.3.horizontal")
             .font(.body.weight(.medium))
             .dulcetForeground(.primaryTextOnWindow)
             .frame(minWidth: DulcetMetrics.minimumTouchTarget, minHeight: DulcetMetrics.minimumTouchTarget)
-            .contentShape(Rectangle())
-            .gesture(
-                DragGesture(minimumDistance: 0, coordinateSpace: .global)
-                    .updating($pressed) { _, pressed, _ in pressed = true }
-                    .onChanged { onChanged($0.translation.height) }
-                    .onEnded { _ in onEnded() }
-            )
-            .onChange(of: pressed) { _, down in if !down { onEnded() } }
+            .overlay { DulcetQueueHandleMarker(callbacks: callbacks) }
             // VoiceOver and Switch Control move a row with its Move Up and Move Down actions.
             .accessibilityHidden(true)
+    }
+}
+
+/// The grabber's touch area as a UIKit view, so the list's recognizer can tell from the touched
+/// view that a touch began on a grabber, and which one.
+private struct DulcetQueueHandleMarker: UIViewRepresentable {
+    let callbacks: DulcetQueueHandleCallbacks
+
+    func makeUIView(context: Context) -> DulcetQueueHandleMarkerView {
+        let view = DulcetQueueHandleMarkerView()
+        view.backgroundColor = .clear
+        view.isAccessibilityElement = false
+        return view
+    }
+
+    func updateUIView(_ view: DulcetQueueHandleMarkerView, context: Context) {
+        view.callbacks = callbacks
+    }
+}
+
+final class DulcetQueueHandleMarkerView: UIView {
+    var callbacks: DulcetQueueHandleCallbacks?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        guard window != nil else { return }
+        // The nearest scroll view above a row is the list's own.
+        var ancestor = superview
+        while let view = ancestor, !(view is UIScrollView) { ancestor = view.superview }
+        if let scrollView = ancestor as? UIScrollView { DulcetQueueCarryRecognizer.install(on: scrollView) }
+    }
+}
+
+/// The Up Next reorder drag, owned by the list's scroll view rather than by a row: it begins only
+/// on a touch that lands on a grabber, takes the touch from the list's own pan (so the list does
+/// not scroll under the finger as well), and while the finger holds the row near the list's top or
+/// bottom edge it scrolls the list itself, so a row can be carried past the screen in one drag.
+final class DulcetQueueCarryRecognizer: UIGestureRecognizer {
+    /// How near the list's top or bottom edge the finger carries the list on, in points.
+    static let edgeZone: CGFloat = 56 // design-token: allow gesture zone, not layout
+    /// How long the finger rests in an edge zone before the list starts to move, so a drop on the
+    /// last row in view does not scroll it away.
+    static let edgeDwell: CFTimeInterval = 0.45
+    /// The fastest the list scrolls, in points a second, with the finger at or past the edge.
+    static let maximumSpeed: CGFloat = 900 // design-token: allow scroll speed, not layout
+
+    static func install(on scrollView: UIScrollView) {
+        guard !(scrollView.gestureRecognizers ?? []).contains(where: { $0 is DulcetQueueCarryRecognizer }) else { return }
+        let recognizer = DulcetQueueCarryRecognizer(target: nil, action: nil)
+        recognizer.delaysTouchesBegan = false
+        scrollView.addGestureRecognizer(recognizer)
+    }
+
+    private var touch: UITouch?
+    private var callbacks: DulcetQueueHandleCallbacks?
+    private var startY: CGFloat = 0
+    private var displayLink: CADisplayLink?
+    private var lastTick: CFTimeInterval?
+    private var zoneEntered: CFTimeInterval?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        if touch != nil {
+            touches.forEach { ignore($0, for: event) }
+            return
+        }
+        guard state == .possible, touches.count == 1, let first = touches.first,
+              let marker = Self.marker(above: first.view), let callbacks = marker.callbacks,
+              callbacks.began()
+        else {
+            state = .failed
+            return
+        }
+        touch = first
+        self.callbacks = callbacks
+        startY = first.location(in: nil).y
+        state = .began
+        let link = CADisplayLink(target: self, selector: #selector(tick(_:)))
+        link.add(to: .main, forMode: .common)
+        displayLink = link
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let touch, touches.contains(touch) else { return }
+        callbacks?.changed(touch.location(in: nil).y - startY)
+        state = .changed
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let touch, touches.contains(touch) else { return }
+        finish(.dropped)
+        state = .ended
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let touch, touches.contains(touch) else { return }
+        finish(.cancelled)
+        state = .cancelled
+    }
+
+    override func reset() {
+        super.reset()
+        finish(.cancelled)
+        touch = nil
+        lastTick = nil
+        zoneEntered = nil
+    }
+
+    private func finish(_ completion: DulcetQueueCarryCompletion) {
+        displayLink?.invalidate()
+        displayLink = nil
+        let callbacks = callbacks
+        self.callbacks = nil
+        callbacks?.finished(completion)
+    }
+
+    /// Scrolls the list while the finger rests near its top or bottom edge, faster the deeper
+    /// the finger is in the edge zone. The rows report their new frames as the list scrolls, and
+    /// the drag reads its scroll from them, so the gap follows the finger through the list.
+    @objc private func tick(_ link: CADisplayLink) {
+        guard let touch else { return }
+        guard callbacks?.isActive() == true, let scrollView = view as? UIScrollView,
+              scrollView.window != nil else {
+            finish(.cancelled)
+            state = .cancelled
+            return
+        }
+        let now = link.timestamp
+        defer { lastTick = now }
+        let point = touch.location(in: scrollView)
+        let bounds = scrollView.bounds
+        let zone = min(Self.edgeZone, bounds.height / 4)
+        var depth: CGFloat = 0
+        if point.y > bounds.maxY - zone {
+            depth = min(1, (point.y - (bounds.maxY - zone)) / zone)
+        } else if point.y < bounds.minY + zone {
+            depth = -min(1, ((bounds.minY + zone) - point.y) / zone)
+        }
+        guard depth != 0 else { zoneEntered = nil; return }
+        let entered = zoneEntered ?? now
+        zoneEntered = entered
+        guard now - entered >= Self.edgeDwell, let last = lastTick else { return }
+        let inset = scrollView.adjustedContentInset
+        let lowest = -inset.top
+        let highest = max(lowest, scrollView.contentSize.height + inset.bottom - bounds.height)
+        let step = depth * abs(depth) * Self.maximumSpeed * CGFloat(min(now - last, 1.0 / 30))
+        let next = min(highest, max(lowest, scrollView.contentOffset.y + step))
+        guard next != scrollView.contentOffset.y else { return }
+        scrollView.contentOffset.y = next
+    }
+
+    private static func marker(above view: UIView?) -> DulcetQueueHandleMarkerView? {
+        var candidate = view
+        while let current = candidate, !(current is UIScrollView) {
+            if let marker = current as? DulcetQueueHandleMarkerView { return marker }
+            candidate = current.superview
+        }
+        return nil
     }
 }
 #endif

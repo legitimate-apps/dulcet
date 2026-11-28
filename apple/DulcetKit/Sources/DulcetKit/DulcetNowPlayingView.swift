@@ -711,7 +711,8 @@ struct DulcetNowPlayingView: View {
                             set: { store.setAutoplay($0) }
                         )
                     },
-                    showsCurrentTrack: false
+                    showsCurrentTrack: false,
+                    currentNowPlaying: { [store] in store.snapshot.nowPlaying }
                 )
 #if !os(tvOS)
                     .scrollContentBackground(.hidden)

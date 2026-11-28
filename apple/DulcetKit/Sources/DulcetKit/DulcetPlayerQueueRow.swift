@@ -45,7 +45,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                     // Read from across a room, beside a row this tall.
                     DulcetPlayerQueueArtwork(artwork: track.artwork, size: 88)
 #else
-                    DulcetPlayerQueueArtwork(artwork: track.artwork, size: 48)
+                    DulcetPlayerQueueArtwork(artwork: track.artwork, size: Self.compactArtworkSize)
 #endif
                     activation
                     if !isEditing {
@@ -66,7 +66,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
                 }
             }
         }
-        .padding(.vertical, DulcetSpacing.xs)
+        .padding(.vertical, accessibilityLayout ? DulcetSpacing.xs : Self.compactVerticalPadding)
         .dynamicTypeSize(...DynamicTypeSize.xxxLarge)
 #if os(macOS)
         .onHover { hovered = $0 }
@@ -76,18 +76,40 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
 
     private var moreIsShown: Bool { hovered || menuFocused }
 
+    /// A phone's queue is read down a long list, as the system player's Playing Next is: a row is
+    /// its title and artist on one line each beside a small cover, about 56 points, so a 14-song
+    /// queue shows seven rows where it showed four and a half (OBSERVED on iPhone, 2026-11-28: three
+    /// lines and a 48-point cover made a 90-point row). The album is spoken, not shown. Elsewhere,
+    /// and at accessibility sizes, the row keeps every line.
+#if os(iOS)
+    static var isCompact: Bool { true }
+    static var compactArtworkSize: CGFloat { 40 }
+    static var compactVerticalPadding: CGFloat { 0 }
+#else
+    static var isCompact: Bool { false }
+    static var compactArtworkSize: CGFloat { 48 }
+    static var compactVerticalPadding: CGFloat { DulcetSpacing.xs }
+#endif
+
+    private var compact: Bool { Self.isCompact && !accessibilityLayout }
+
+    private var albumLine: String? {
+        guard let album = track.albumTitle, album != sourceDisplayName else { return nil }
+        return album
+    }
+
     private var activation: some View {
         Button(action: onActivate) {
-            VStack(alignment: .leading, spacing: 4) {
+            VStack(alignment: .leading, spacing: compact ? 1 : 4) {
                 Text(track.title)
-                    .font(.headline)
-                    .lineLimit(accessibilityLayout ? nil : 2)
+                    .font(compact ? .body : .headline)
+                    .lineLimit(accessibilityLayout ? nil : (compact ? 1 : 2))
                     .fixedSize(horizontal: false, vertical: true)
                 Text(DulcetStrings.artistNames(track.artistNames))
                     .font(.subheadline)
                     .dulcetForeground(.primaryTextOnWindow)
                     .lineLimit(accessibilityLayout ? nil : 1)
-                if let album = track.albumTitle, album != sourceDisplayName {
+                if !compact, let album = albumLine {
                     Text(album)
                         .font(.caption)
                         .dulcetForeground(.primaryTextOnWindow)
@@ -98,6 +120,7 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .modifier(DulcetQueueRowAlbumValue(album: compact ? albumLine : nil))
         .accessibilityIdentifier(activationIdentifier)
     }
 
@@ -128,6 +151,15 @@ struct DulcetPlayerQueueRow<MenuActions: View, EditingActions: View>: View {
         DulcetTrackMenuItems(track: track, onPlay: onActivate, queueAddition: nil,
             offersAlbum: true, publishedRating: nil, onDownload: nil, onNavigate: {})
         menuActions()
+    }
+}
+
+/// The album a compact row no longer shows, read to VoiceOver as the row's value.
+private struct DulcetQueueRowAlbumValue: ViewModifier {
+    let album: String?
+
+    func body(content: Content) -> some View {
+        if let album { content.accessibilityValue(album) } else { content }
     }
 }
 

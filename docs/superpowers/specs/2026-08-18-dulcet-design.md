@@ -2949,7 +2949,12 @@ paused start, so a skip past that entry's own failure stays paused too (§12.12)
 presses Play. Android's controller already kept its play intent across a skip. Jump (tapping a queue
 row) still plays: it is a choice of what to hear now. On iOS every Up Next row carries a reorder
 handle: a drag that starts on it moves the row at once, without Edit, and the row's tap, swipe to
-remove and context menu stay.
+remove and context menu stay. The drag belongs to the list's scroll view, not to the row: held near
+the list's top or bottom edge, the row carries the list on beneath it, and it lands where the finger
+lifts. The carry captures the ordered Up Next entry IDs at its start. A drop resolves the held ID
+and the gap against the live queue while that order still matches. A change to the upcoming order
+or a system cancellation clears the carry without editing the queue. A phone row is a title and
+an artist on one line each beside a small cover, so a long queue reads as one.
 
 **Android (2026-09-30)** edits through the same core calls. Its shell differs in one respect: a
 new queue starts only once its first entry has been read from the server, so for that moment the
@@ -8104,6 +8109,19 @@ argue against the recorded rationale — not as filling in a blank.
 ---
 
 ## 28. Revision record
+
+**2026-11-28 — Up Next shows more of the queue, and a held row carries the list past its edge (§14.1).**
+OBSERVED on the test iPhone, 2026-11-28 (round 9): a 14-song Up Next showed four rows and a fifth under
+the controls, each about 90 points with title, artist and album; a row held at the lower edge for six
+seconds left the list where it was. Rule now: a phone row is its title and artist on one line each
+beside a 40-point cover, about 56 points, with the album read to VoiceOver as the row's value
+(accessibility sizes, the Mac and Apple TV keep their rows). The handle drag is owned by the list's
+scroll view -- a recognizer installed there begins only on a touch that lands on a handle -- so it
+outlives the row's cell, which a lazy list removes once scrolled away (the reason the 2026-11-27 entry
+gave for having no autoscroll). Held within 56 points of the top or bottom edge for 0.45 s, the list
+scrolls under the row, faster the deeper the finger, and the held row is drawn above the list so it
+stays under the finger. The drop uses the same slot arithmetic. Edit mode, the long-press system drag
+and the Move Up and Move Down actions are unchanged.
 
 **2026-11-28 — Make My Library and the server catalog distinct (§16.14, §29.9).**
 iPhone, iPad and Mac label the personal and server album grids Library Albums and Server Albums. The empty
