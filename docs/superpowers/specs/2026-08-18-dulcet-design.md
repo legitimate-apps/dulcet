@@ -2951,8 +2951,10 @@ row) still plays: it is a choice of what to hear now. On iOS every Up Next row c
 handle: a drag that starts on it moves the row at once, without Edit, and the row's tap, swipe to
 remove and context menu stay. The drag belongs to the list's scroll view, not to the row: held near
 the list's top or bottom edge, the row carries the list on beneath it, and it lands where the finger
-lifts. A phone row is a title and an artist on one line each beside a small cover, so a long queue
-reads as one.
+lifts. The carry captures the ordered Up Next entry IDs at its start. A drop resolves the held ID
+and the gap against the live queue while that order still matches. A change to the upcoming order
+or a system cancellation clears the carry without editing the queue. A phone row is a title and
+an artist on one line each beside a small cover, so a long queue reads as one.
 
 **Android (2026-09-30)** edits through the same core calls. Its shell differs in one respect: a
 new queue starts only once its first entry has been read from the server, so for that moment the

@@ -1,5 +1,10 @@
 import SwiftUI
 
+enum DulcetQueueCarryCompletion: Equatable {
+    case dropped
+    case cancelled
+}
+
 /// Up Next's reorder handle, as the system player's queue has it: every row shows a grabber, and a
 /// drag that starts on it moves the row at once -- no Edit first, and no long press. The row's
 /// tap, its swipe to remove and its context menu stay as they are, because the List never enters
@@ -9,8 +14,10 @@ import SwiftUI
 /// produces: which upcoming position the dragged row reaches, how far each row it passes steps
 /// aside to show the gap, and the `onMove`-style destination the model turns into a core move.
 struct DulcetQueueHandleDrag: Equatable {
-    /// The upcoming row being dragged, by its position when the drag began.
+    /// The upcoming order behind the geometry, captured at the start of the carry.
+    let entryIDs: [DulcetQueueEntryID]
     let source: Int
+    var sourceID: DulcetQueueEntryID { entryIDs[source] }
     /// Where every upcoming row sat when the drag began, in the list's space and upcoming order.
     /// A lazy list lays out only the rows near the screen, so a row it has not laid out has no
     /// frame; its slot is estimated from its neighbours until the list lays it out (`observe`).
@@ -28,8 +35,10 @@ struct DulcetQueueHandleDrag: Equatable {
 
     /// `frames` holds each upcoming row's frame in the list's space, nil for a row the list has not
     /// laid out. The dragged row is always laid out: the finger is on it.
-    init?(source: Int, frames: [CGRect?]) {
-        guard frames.indices.contains(source), let anchor = frames[source], anchor.height > 0 else { return nil }
+    init?(source: Int, entryIDs: [DulcetQueueEntryID], frames: [CGRect?]) {
+        guard frames.count == entryIDs.count, frames.indices.contains(source),
+              let anchor = frames[source], anchor.height > 0 else { return nil }
+        self.entryIDs = entryIDs
         // Before this, a row without a frame counted as one at the top of the list, above any
         // drop point, so every unlaid row below the screen pushed the drop one place further:
         // in a 13-song queue a three-row drag landed near the end (OBSERVED on iPhone, 2026-11-27).
@@ -137,6 +146,17 @@ struct DulcetQueueHandleDrag: Equatable {
         guard target != source else { return nil }
         return target > source ? target + 1 : target
     }
+
+    /// The gap is meaningful while the upcoming order matches the layout the finger moved through.
+    /// History may still have changed, so translate the gap using the live model's queue base.
+    func moveIntent(
+        completion: DulcetQueueCarryCompletion, in model: DulcetUpNextModel
+    ) -> DulcetQueueEditIntent? {
+        guard completion == .dropped, let moveDestination,
+              model.upcoming.map(\.id) == entryIDs,
+              let from = model.upcoming.firstIndex(where: { $0.id == sourceID }) else { return nil }
+        return model.moveIntent(fromOffsets: IndexSet(integer: from), toOffset: moveDestination)
+    }
 }
 
 #if os(iOS)
@@ -147,7 +167,8 @@ import UIKit
 struct DulcetQueueHandleCallbacks {
     let began: () -> Bool
     let changed: (CGFloat) -> Void
-    let ended: () -> Void
+    let isActive: () -> Bool
+    let finished: (DulcetQueueCarryCompletion) -> Void
 }
 
 /// The grabber at a row's trailing edge. A drag that starts on it moves the row at once, as the
@@ -258,39 +279,43 @@ final class DulcetQueueCarryRecognizer: UIGestureRecognizer {
 
     override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
         guard let touch, touches.contains(touch) else { return }
-        finish()
+        finish(.dropped)
         state = .ended
     }
 
     override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
         guard let touch, touches.contains(touch) else { return }
-        finish()
+        finish(.cancelled)
         state = .cancelled
     }
 
     override func reset() {
         super.reset()
-        displayLink?.invalidate()
-        displayLink = nil
+        finish(.cancelled)
         touch = nil
-        callbacks = nil
         lastTick = nil
         zoneEntered = nil
     }
 
-    private func finish() {
+    private func finish(_ completion: DulcetQueueCarryCompletion) {
         displayLink?.invalidate()
         displayLink = nil
         let callbacks = callbacks
         self.callbacks = nil
-        callbacks?.ended()
+        callbacks?.finished(completion)
     }
 
     /// Scrolls the list while the finger rests near its top or bottom edge, faster the deeper
     /// the finger is in the edge zone. The rows report their new frames as the list scrolls, and
     /// the drag reads its scroll from them, so the gap follows the finger through the list.
     @objc private func tick(_ link: CADisplayLink) {
-        guard let touch, let scrollView = view as? UIScrollView else { return }
+        guard let touch else { return }
+        guard callbacks?.isActive() == true, let scrollView = view as? UIScrollView,
+              scrollView.window != nil else {
+            finish(.cancelled)
+            state = .cancelled
+            return
+        }
         let now = link.timestamp
         defer { lastTick = now }
         let point = touch.location(in: scrollView)

@@ -49,7 +49,8 @@ struct UpNextModelTests {
         ]
 
         // Row 0 dragged down past row 1's middle (100) but not row 2's (170): it lands second.
-        var down = try #require(DulcetQueueHandleDrag(source: 0, frames: frames))
+        let order = model.upcoming.map(\.id)
+        var down = try #require(DulcetQueueHandleDrag(source: 0, entryIDs: order, frames: frames))
         down.translation = 80
         #expect(down.target == 1)
         #expect(down.displacement(of: 1) == -60, "the row it passed steps up by the dragged row's height")
@@ -59,7 +60,7 @@ struct UpNextModelTests {
         #expect(model.moveIntent(fromOffsets: [0], toOffset: downMove) == .move(.init("entry-2"), toIndex: 3))
 
         // Row 3 dragged all the way up: it lands first and every row above steps down.
-        var up = try #require(DulcetQueueHandleDrag(source: 3, frames: frames))
+        var up = try #require(DulcetQueueHandleDrag(source: 3, entryIDs: order, frames: frames))
         up.translation = -230
         #expect(up.target == 0)
         #expect((0...2).map(up.displacement(of:)) == [60, 60, 60])
@@ -67,17 +68,17 @@ struct UpNextModelTests {
         #expect(model.moveIntent(fromOffsets: [3], toOffset: upMove) == .move(.init("entry-5"), toIndex: 2))
 
         // Past the bottom: the last place, and no further.
-        var end = try #require(DulcetQueueHandleDrag(source: 1, frames: frames))
+        var end = try #require(DulcetQueueHandleDrag(source: 1, entryIDs: order, frames: frames))
         end.translation = 900
         #expect(end.target == 3)
         let endMove = try #require(end.moveDestination)
         #expect(model.moveIntent(fromOffsets: [1], toOffset: endMove) == .move(.init("entry-3"), toIndex: 5))
 
         // A small wobble is no move at all, and a row that is not there is no drag.
-        var wobble = try #require(DulcetQueueHandleDrag(source: 2, frames: frames))
+        var wobble = try #require(DulcetQueueHandleDrag(source: 2, entryIDs: order, frames: frames))
         wobble.translation = 20
         #expect(wobble.moveDestination == nil)
-        #expect(DulcetQueueHandleDrag(source: 4, frames: frames) == nil)
+        #expect(DulcetQueueHandleDrag(source: 4, entryIDs: order, frames: frames) == nil)
     }
 
     /// The iPhone case: a lazy list has laid out only the rows on screen (here rows 0...4 of 12,
@@ -89,7 +90,8 @@ struct UpNextModelTests {
         let frames = lazyFrames(count: 12, laidOut: 0...4)
         let model = DulcetUpNextModel(nowPlaying: nowPlaying(["cur"] + (0..<12).map { "u\($0)" }, current: 0))
 
-        var drag = try #require(DulcetQueueHandleDrag(source: 0, frames: frames))
+        let order = model.upcoming.map(\.id)
+        var drag = try #require(DulcetQueueHandleDrag(source: 0, entryIDs: order, frames: frames))
         #expect(drag.spacing == 4)
         // Each distance by the row middles it passes: 92 pt a row.
         for (distance, landing) in [(40, 0), (100, 1), (180, 1), (190, 2), (228, 2), (280, 3), (400, 4), (700, 7)] {
@@ -106,7 +108,7 @@ struct UpNextModelTests {
         // from: their stale frames are dropped for estimates where they are now.
         var stale = frames
         stale[0] = CGRect(x: 0, y: -900, width: 320, height: 88)
-        var up = try #require(DulcetQueueHandleDrag(source: 4, frames: stale))
+        var up = try #require(DulcetQueueHandleDrag(source: 4, entryIDs: order, frames: stale))
         up.translation = -200
         #expect(up.target == 2)
         up.translation = -400
@@ -119,7 +121,8 @@ struct UpNextModelTests {
     @Test
     func aHandleDragThatScrollsTheListLandsWhereTheFingerIsInTheContent() throws {
         let model = DulcetUpNextModel(nowPlaying: nowPlaying(["cur"] + (0..<12).map { "u\($0)" }, current: 0))
-        var drag = try #require(DulcetQueueHandleDrag(source: 0, frames: lazyFrames(count: 12, laidOut: 0...4)))
+        let order = model.upcoming.map(\.id)
+        var drag = try #require(DulcetQueueHandleDrag(source: 0, entryIDs: order, frames: lazyFrames(count: 12, laidOut: 0...4)))
         // The finger holds at the bottom edge, 380 pt down; the list scrolls 460 pt (five rows).
         drag.translation = 380
         #expect(drag.target == 4)
@@ -148,6 +151,56 @@ struct UpNextModelTests {
         #expect(drag.scroll == 0)
         drag.translation = 100
         #expect(drag.target == 1)
+    }
+
+    @Test
+    func cancellingAMovedHandleDragDoesNotEditTheQueue() throws {
+        let model = DulcetUpNextModel(nowPlaying: nowPlaying(["cur", "a", "b", "c"], current: 0))
+        let order = model.upcoming.map(\.id)
+        var drag = try #require(DulcetQueueHandleDrag(source: 0, entryIDs: order, frames: lazyFrames(count: 3, laidOut: 0...2)))
+        drag.translation = 130
+        #expect(drag.moveIntent(completion: .dropped, in: model) == .move(.init("entry-1"), toIndex: 2))
+        #expect(drag.moveIntent(completion: .cancelled, in: model) == nil)
+    }
+
+    @Test
+    func aHandleDragDoesNotMoveAnotherEntryWhenPlaybackAdvancesOrTheQueueChanges() throws {
+        let initial = nowPlaying(["cur", "a", "b", "b", "c"], current: 0)
+        let entries = initial.queueEntries
+        let order = entries.dropFirst().map(\.id)
+        var drag = try #require(DulcetQueueHandleDrag(source: 1, entryIDs: order, frames: lazyFrames(count: 4, laidOut: 0...3)))
+        drag.translation = 130
+        #expect(drag.moveIntent(completion: .dropped, in: DulcetUpNextModel(nowPlaying: initial))
+            == .move(.init("entry-2"), toIndex: 3))
+
+        let advanced = DulcetUpNextModel(nowPlaying: nowPlaying(entries: entries, current: 1))
+        #expect(drag.moveIntent(completion: .dropped, in: advanced) == nil)
+
+        let inserted = DulcetQueueEntry(id: .init("inserted"), track: entries[2].track)
+        let edited = DulcetUpNextModel(nowPlaying: nowPlaying(
+            entries: [entries[0], inserted] + Array(entries.dropFirst()),
+            current: 0
+        ))
+        #expect(drag.moveIntent(completion: .dropped, in: edited) == nil)
+
+        // The two copies have the same track and row count. Their entry IDs still distinguish
+        // the held row from its neighbour.
+        var reordered = entries
+        reordered.swapAt(2, 3)
+        let swapped = DulcetUpNextModel(nowPlaying: nowPlaying(entries: reordered, current: 0))
+        #expect(drag.moveIntent(completion: .dropped, in: swapped) == nil)
+    }
+
+    @Test
+    func aHandleDragUsesTheCurrentQueueBaseWhenTheUpcomingOrderStillMatches() throws {
+        let initial = nowPlaying(["history", "cur", "a", "b", "c"], current: 1)
+        let order = initial.queueEntries.suffix(3).map(\.id)
+        var drag = try #require(DulcetQueueHandleDrag(source: 0, entryIDs: order, frames: lazyFrames(count: 3, laidOut: 0...2)))
+        drag.translation = 130
+        let withoutHistory = DulcetUpNextModel(nowPlaying: nowPlaying(
+            entries: Array(initial.queueEntries.dropFirst()), current: 0
+        ))
+        #expect(drag.moveIntent(completion: .dropped, in: withoutHistory) == .move(.init("entry-2"), toIndex: 2))
     }
 
     /// Rows 92 pt apart (88 tall, 4 between), with frames only for the rows the list laid out.
@@ -192,7 +245,11 @@ struct UpNextModelTests {
         let entries = titles.enumerated().map { offset, title in
             DulcetQueueEntry(id: .init("entry-\(offset)"), track: track(title))
         }
-        return DulcetNowPlaying(
+        return nowPlaying(entries: entries, current: current)
+    }
+
+    private func nowPlaying(entries: [DulcetQueueEntry], current: Int?) -> DulcetNowPlaying {
+        DulcetNowPlaying(
             current: entries[current ?? 0].track,
             queue: entries.map(\.track),
             currentIndex: current ?? 0,
