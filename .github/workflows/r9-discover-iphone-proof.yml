@@ -1,0 +1,54 @@
+name: r9-discover-iphone-proof
+on:
+  push:
+    branches: [proof/r9-discover-first-frame]
+permissions:
+  contents: read
+concurrency:
+  group: r9-discover-iphone-proof-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  iphone:
+    runs-on: xcode-27
+    timeout-minutes: 65
+    env:
+      TZ: UTC
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961
+        with:
+          distribution: temurin
+          java-version: '21'
+      - uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb
+      - name: Provision the disposable music fixture
+        timeout-minutes: 12
+        run: |
+          sudo xcode-select -s /Applications/Xcode_27.0.app/Contents/Developer
+          out="$RUNNER_TEMP/discover-iphone"
+          mkdir -p "$out"
+          git rev-parse HEAD HEAD^ > "$out/revisions.txt"
+          xcodebuild -version > "$out/toolchain.txt"
+          tools/conformance-env/prepare-darwin --output "$RUNNER_TEMP/discover-bin"
+          command -v ffmpeg || brew install ffmpeg
+          echo "DULCET_DISCOVER_NAVIDROME_BIN=$RUNNER_TEMP/discover-bin/navidrome" >> "$GITHUB_ENV"
+          echo "DULCET_DISCOVER_PROOF_OUTPUT=$out/native" >> "$GITHUB_ENV"
+      - name: Compile the iPhone test and Kotlin framework
+        timeout-minutes: 30
+        run: |
+          tools/run-gradle-exclusive --no-daemon --max-workers=2 :server:installDist :core:linkDebugFrameworkIosSimulatorArm64
+          tools/ci/run-discover-wishlist-proofs iphone --build-for-testing
+      - name: Capture Discover on first visit and after relaunch
+        timeout-minutes: 20
+        env:
+          DULCET_DISCOVER_PREBUILT: "true"
+          DULCET_DISCOVER_ONLY_TEST: DulcetDiscoverWishlistUITests/testDiscoverShelvesPaintOnFirstCaptureAfterRelaunch
+        run: tools/ci/with-discover-wishlist-fixture --evidence "$RUNNER_TEMP/discover-iphone/fixture" -- tools/ci/run-discover-wishlist-proofs iphone
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: r9-discover-iphone
+          path: ${{ runner.temp }}/discover-iphone
+          retention-days: 14
