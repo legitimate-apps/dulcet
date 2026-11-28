@@ -7743,7 +7743,7 @@ extension DulcetiOSUITests {
     func testUpNextHandleDragLandsTheRowWhereTheFingerLifts() {
         XCUIDevice.shared.orientation = .portrait
         let app = XCUIApplication()
-        app.launchArguments = ["-dulcet-account-connect-layout-fixture"]
+        app.launchArguments = ["-dulcet-account-connect-layout-fixture", "-dulcet-layout-fixture-editable-queue"]
         app.launch()
         guard let width = settledWindowWidth(app.windows.firstMatch) else { return }
         guard width < 700 else {

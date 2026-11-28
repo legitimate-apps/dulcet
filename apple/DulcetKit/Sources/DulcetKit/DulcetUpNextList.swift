@@ -203,7 +203,7 @@ public struct DulcetUpNextSection: View {
         }
     }
 
-    private static let autoscrollMargin: CGFloat = 56
+    private static let autoscrollMargin: CGFloat = 56 // design-token: allow scroll threshold, not layout
     private static let autoscrollStep: TimeInterval = 0.18
 
     private func endHandleDrag() {
