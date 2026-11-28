@@ -88,6 +88,42 @@ class LibrarySearchSessionTest {
     }
 
     @Test
+    fun threePlaysOfTheCoverAndTwoOfTheOriginalKeepTheOriginalOnDeviceAndServer() = sessionTest { env ->
+        val session = primed(env)
+        val query = "Gold Soundz"
+        val original = """{"id":"a-original","title":"$query","albumId":"studio-album","album":"Studio Album","artist":"Original Artist","playCount":2}"""
+        val cover = """{"id":"z-cover","title":"$query","albumId":"session-album","album":"Gold Soundz (triple j Like a Version)","artist":"Cover Artist","playCount":3}"""
+        fun answer(vararg songs: String) = LibraryEndpointResponse(
+            200,
+            """{"subsonic-response":{"status":"ok","version":"1.16.1","searchResult3":{"song":[${songs.joinToString(",")}]}}}""",
+            "https://music.example/rest/search3",
+        )
+        val cache = env.cache()
+        val device = parseReaderSearch3(answer(cover, original).body)
+        cache.writeEntities(
+            CacheWriteStamp(cache.issue(), cache.now(), null), CacheEntitySource.Search,
+            device.copy(albums = listOf(CacheAlbumRecord("studio-album", "Studio Album", artworkKey = "studio-art"))),
+        )
+        val pubs = Recorder<LibrarySearchPublication>(env.server)
+        val search = session.openSearch(listener = pubs)
+        val coverWithListens = cover.dropLast(1) + ""","dulcetListens":114}"""
+        for (server in listOf(answer(coverWithListens, original), answer(original, cover))) {
+            env.server.answerInstead = { endpoint -> server.takeIf { endpoint == "search3" } }
+            val first = pubs.all.size
+            search.updateQuery(query)
+            advanceUntilIdle()
+
+            val publications = pubs.all.drop(first).map { it.value }
+            assertEquals(listOf(SearchScope.DeviceWhileServerPending, SearchScope.ServerAndDevice), publications.map { it.scope })
+            assertEquals(listOf("a-original", "z-cover"), publications.first().rows.ids())
+            assertEquals(listOf(2L, 3L), publications.first().rows.map { it.playCount })
+            assertEquals(listOf("a-original", "a-original"), publications.map { it.rows[it.topResultIndex!!].item.id.rawId })
+            assertEquals(listOf("studio-art", "studio-art"), publications.map { it.rows[it.topResultIndex!!].item.artworkKey },
+                "the track can use its known album cover across both publications")
+        }
+    }
+
+    @Test
     fun conf79ServerAndDeviceMarksEachRowsSourceAndKeepsLocalOnlyRows() = sessionTest { env ->
         val session = primed(env)
         env.server.searchExcludes += albumId(5) // the server's matcher does not return it
