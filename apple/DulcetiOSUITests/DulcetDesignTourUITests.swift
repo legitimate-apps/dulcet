@@ -728,17 +728,21 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
 
     @MainActor
     func testSearchKeepsTheOriginalBeforeAndAfterTheServerAnswer() throws {
+        continueAfterFailure = false
         let environment = ProcessInfo.processInfo.environment
         guard environment["DULCET_SEARCH_STABILITY_PROOF"] == "1" else { throw XCTSkip("Requires a disposable fixture") }
         let proxy = try XCTUnwrap(environment["DULCET_UI_TEST_SERVER_URL"])
+        let host = URLComponents(string: proxy)?.host ?? ""
+        XCTAssertTrue(host == "localhost" || host.hasPrefix("127."))
         let app = XCUIApplication()
         app.launchArguments = ["-AppleLanguages", "(en)", "-AppleLocale", "en_US",
-            "-dulcet-debug-in-memory", "-dulcet-debug-account-server-url", proxy,
+            "-dulcet-debug-connect-account", "-dulcet-debug-account-fixture", UUID().uuidString,
+            "-dulcet-debug-account-server-url", proxy,
             "-dulcet-debug-account-username", try XCTUnwrap(environment["DULCET_UI_TEST_USERNAME"]),
             "-dulcet-debug-account-password", try XCTUnwrap(environment["DULCET_UI_TEST_PASSWORD"])]
         launchInInteractionScope(app)
         let compact = try XCTUnwrap(settledWindowWidth(app.windows.firstMatch)) < 700
-        XCTAssertTrue(awaitConnection(in: app, compact: compact))
+        XCTAssertTrue(awaitConnection(in: app, compact: compact), app.debugDescription)
         XCTAssertTrue(openDestination("Search", sidebar: "dulcet.sidebar.search", in: app, compact: compact))
 
         let field = dulcetSearchField(in: app)
@@ -756,7 +760,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         field.typeText("Harbor Signal")
         XCTAssertTrue(studio.waitForExistence(timeout: 20))
         XCTAssertTrue(cover.waitForExistence(timeout: 20))
-        XCTAssertTrue(waitFor(timeout: 15) { coverRelease.label.hasSuffix(", Album") }, "the warm-up answer reached Search")
+        XCTAssertTrue(waitFor(timeout: 15) { coverRelease.exists && coverRelease.label.hasSuffix(", Album") },
+                      "the warm-up answer reached Search")
 
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Harbor Signal".count))
         XCTAssertTrue(top.waitForNonExistence(timeout: 5))
@@ -776,7 +781,8 @@ final class DulcetDesignTourUITests: PlayerHittabilityTestCase {
         shoot("search-original-device", app, includeMetadata: false)
 
         XCTAssertTrue(setTourRule(proxy, action: "hold", enabled: false))
-        XCTAssertTrue(waitFor(timeout: 15) { coverRelease.label.hasSuffix(", Album") }, "the server answer reached Search")
+        XCTAssertTrue(waitFor(timeout: 15) { coverRelease.exists && coverRelease.label.hasSuffix(", Album") },
+                      "the server answer reached Search")
         XCTAssertTrue(studio.exists && cover.exists)
         print("DULCET SEARCH SERVER TOP RESULT \(top.label)")
         XCTAssertTrue(top.label.contains("Original Artist"), top.label)
