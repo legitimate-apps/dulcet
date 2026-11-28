@@ -68,13 +68,19 @@ class TopResultTest {
     private val original = row("t-original", SearchResultType.Track, "Gold Soundz", credit = "Pavement", album = "Crooked Rain, Crooked Rain")
 
     @Test
-    fun anOriginalThatMorePeoplePlayLeadsItsCoverWhateverTheListsOrder() {
+    fun worldwideListensRankRecordingsInTheSameVersionTier() {
         val coverFirst = listOf(cover.copy(listens = 3_000), original.copy(listens = 2_400_000))
         assertEquals(1, topResultIndex("gold soundz", coverFirst))
-        assertEquals(0, topResultIndex("gold soundz", coverFirst.reversed()), "the same pick when the server lists them the other way round")
-        // Control: with no figure for either, the pick is not the original by luck of order; the cover stays first here.
-        val noFigures = listOf(cover.inAlbum("Singles"), original.inAlbum("Crooked Rain, Crooked Rain"))
-        assertEquals(0, topResultIndex("gold soundz", noFigures))
+        val comparable = listOf(original.copy(listens = 2_400_000), cover.inAlbum("Singles").copy(listens = 3_000))
+        assertEquals(0, topResultIndex("gold soundz", comparable))
+        assertEquals(1, topResultIndex("gold soundz", comparable.reversed()))
+    }
+
+    @Test
+    fun aMarkedAlternateDoesNotLeadOnTheStrengthOfItsWorldwideCount() {
+        val popularCover = cover.copy(listens = 3_000)
+        assertEquals(1, topResultIndex("gold soundz", listOf(popularCover, original)))
+        assertEquals(0, topResultIndex("gold soundz", listOf(original.copy(listens = 1), popularCover)))
     }
 
     @Test
@@ -84,6 +90,9 @@ class TopResultTest {
         assertEquals(1, topResultIndex("gold soundz", stray))
         val habit = listOf(cover.copy(playCount = 9, listens = 3_000), original.copy(playCount = 1, listens = 2_400_000))
         assertEquals(0, topResultIndex("gold soundz", habit), "nine plays is the person's own pick")
+        val close = listOf(cover.copy(playCount = 4), original.copy(playCount = 2))
+        assertEquals(1, topResultIndex("gold soundz", close), "two extra plays fall short")
+        assertEquals(0, topResultIndex("gold soundz", listOf(close[0].copy(playCount = 5), close[1])), "three extra plays establish a preference")
         val starred = listOf(cover.copy(favourite = true), original.copy(listens = 2_400_000))
         assertEquals(0, topResultIndex("gold soundz", starred), "a favourite still beats what is popular")
     }
@@ -95,9 +104,9 @@ class TopResultTest {
         assertEquals(0, topResultIndex("gold soundz", listOf(original, cover)))
         val live = row("t-live", SearchResultType.Track, "Gold Soundz", credit = "Pavement", album = "Live at the Barrowlands")
         assertEquals(1, topResultIndex("gold soundz", listOf(live, original)))
-        // Control: when neither is marked, the list's order stands.
+        // Control: when neither is marked and there is no other signal, opaque id settles the tie.
         val other = row("t-other", SearchResultType.Track, "Gold Soundz", credit = "Cover Band", album = "Tributes")
-        assertEquals(0, topResultIndex("gold soundz", listOf(other.inAlbum("Hits"), original)))
+        assertEquals(1, topResultIndex("gold soundz", listOf(other.inAlbum("Hits"), original)))
     }
 
     @Test
@@ -112,12 +121,13 @@ class TopResultTest {
     }
 
     @Test
-    fun aTieOnEverythingKeepsTheListsOrder() {
+    fun aTieOnEverythingPicksTheSameRowInBothOrders() {
         val rows = listOf(
             row("t1", SearchResultType.Track, "Gold Soundz", credit = "A"),
             row("t2", SearchResultType.Track, "Gold Soundz", credit = "B"),
         )
         assertEquals(0, topResultIndex("gold soundz", rows))
+        assertEquals(1, topResultIndex("gold soundz", rows.reversed()))
     }
 
     @Test
